@@ -77,6 +77,11 @@
   button.pill.danger { background: var(--danger); color: #fff; }
   button.pill:disabled { opacity: 0.5; cursor: not-allowed; }
   button.pill.small { padding: 6px 12px; font-size: 0.75rem; }
+  .install-cta {
+    font-size: 0.75rem; font-weight: 700; color: #ffffff; background: var(--accent2-fill); border: none;
+    border-radius: 999px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(30, 111, 184, 0.3);
+  }
 
   input, select, textarea {
     width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border);
@@ -159,7 +164,10 @@
         <div class="brand">Family Chores</div>
         <h1 id="pageTitle">Home</h1>
       </div>
-      <button class="pill small" id="signOutBtn">Sign out</button>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button id="installBtn" class="install-cta" style="display:none;"></button>
+        <button class="pill small" id="signOutBtn">Sign out</button>
+      </div>
     </div>
 
     <section class="tab-page" data-page="home" id="page-home"></section>
@@ -330,6 +338,50 @@ document.getElementById('signInBtn').addEventListener('click', async () => {
 });
 document.getElementById('signOutBtn').addEventListener('click', () => signOut(auth));
 document.getElementById('setupSignOutBtn').addEventListener('click', () => signOut(auth));
+
+// ---------- Install prompt (friendlier than expecting people to find the
+// browser's menu themselves) -- same pattern as the sibling pitchschedule app.
+let deferredInstallPrompt = null;
+const installBtn = document.getElementById('installBtn');
+
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+function isIOS() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+
+function updateInstallUI() {
+  if (isStandalone()) { installBtn.style.display = 'none'; return; } // already installed
+  if (deferredInstallPrompt) {
+    // Android/Chrome: real install flow, one tap
+    installBtn.textContent = '📲 Install App';
+    installBtn.style.display = 'inline-flex';
+    installBtn.onclick = async () => {
+      installBtn.style.display = 'none';
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+    };
+  } else if (isIOS()) {
+    // iOS: no install API exists at all -- show plain instructions instead
+    installBtn.textContent = '📲 Add to Home Screen';
+    installBtn.style.display = 'inline-flex';
+    installBtn.onclick = () => {
+      alert('On iPhone:\n\n1. Tap the Share icon (square with an arrow up) at the bottom of Safari\n2. Scroll down and tap "Add to Home Screen"\n3. Tap "Add"');
+    };
+  } else {
+    installBtn.style.display = 'none';
+  }
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  updateInstallUI();
+});
+window.addEventListener('appinstalled', () => { installBtn.style.display = 'none'; });
+updateInstallUI(); // covers iOS immediately; Android updates if/when the browser fires the event
 
 document.getElementById('createFamilyForm').addEventListener('submit', async (event) => {
   event.preventDefault();
