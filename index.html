@@ -182,12 +182,7 @@
     background: var(--bg); border-radius: 16px; padding: 28px 22px; width: 100%;
     max-width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
   }
-  .credential-callout {
-    background: var(--panel2); border: 2px solid var(--accent2); border-radius: 12px;
-    padding: 14px 16px; margin-bottom: 10px;
-  }
-  .credential-callout .cred-line { font-size: 1.15rem; font-weight: 800; font-family: ui-monospace, Menlo, Consolas, monospace; }
-  .credential-callout .cred-label { font-size: 0.8rem; color: var(--muted); font-weight: 700; text-transform: uppercase; }
+
 </style>
 </head>
 <body>
@@ -254,8 +249,8 @@
   </div>
 
   <div id="changePasswordScreen" class="center-screen" hidden>
-    <h1>You're using a temporary password</h1>
-    <p>Set a new password now, or keep using the temporary one -- either way you can change it again anytime.</p>
+    <h1>Change your password</h1>
+    <p>Pick a new password. You'll use it next time you sign in.</p>
     <form id="changePasswordForm" style="width:100%;max-width:280px;text-align:left;">
       <div class="field">
         <label for="newPasswordInput">New password</label>
@@ -263,7 +258,7 @@
       </div>
       <button class="pill primary" type="submit" style="width:100%;">Save new password</button>
     </form>
-    <button class="pill" id="keepTempPasswordBtn">Keep this password for now</button>
+    <button class="pill" id="cancelChangePasswordBtn">Cancel</button>
     <p class="error-text" id="changePasswordError" hidden></p>
   </div>
 
@@ -464,6 +459,18 @@ function formatCents(cents, currency) {
 function centsFromMajorUnits(value) {
   const n = parseFloat(value);
   return Number.isFinite(n) ? Math.round(n * 100) : 0;
+}
+
+// Optional convenience for an admin who doesn't want to make up a password
+// themselves -- not a security boundary (the "Generate" button is just a
+// suggestion, shown in plain text so it can be typed to a child directly),
+// so a readable alphabet without ambiguous characters (0/O, 1/l/I) beats a
+// maximally-random one here.
+const SIMPLE_PASSWORD_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+function generateSimplePassword(length = 10) {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => SIMPLE_PASSWORD_ALPHABET[b % SIMPLE_PASSWORD_ALPHABET.length]).join('');
 }
 
 function el(tag, attrs, children) {
@@ -668,44 +675,32 @@ document.getElementById('changePasswordForm').addEventListener('submit', async (
   }
   try {
     await updatePassword(auth.currentUser, newPassword);
-    await clearMustChangePassword();
+    showScreen('app');
+    switchTab(state.currentTab);
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.hidden = false;
   }
 });
-document.getElementById('keepTempPasswordBtn').addEventListener('click', async () => {
-  try { await clearMustChangePassword(); } catch (err) { alert(err.message); }
-});
-async function clearMustChangePassword() {
-  const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-  await updateDoc(fsDoc(db, `families/${state.familyId}/members/${state.user.uid}`), { mustChangePassword: false });
+document.getElementById('cancelChangePasswordBtn').addEventListener('click', () => {
   showScreen('app');
   switchTab(state.currentTab);
-}
+});
 
-// A blocking modal, not an inline status line -- a new account's one-time
-// temp password was too easy to lose in an inline display that gets wiped
-// by the next re-render (adding a second person, or -- in the Admin
-// Dashboard's case -- the live members/ subscription firing and rebuilding
-// the whole panel). This overlay sits outside both the wizard and the
-// app's normal tab-rendering entirely, so nothing can silently clear it
-// out from under the admin before they've acknowledged it.
-function showCredentialModal({ title, created }) {
+// A blocking modal, not an inline status line -- an admin invite success
+// message was too easy to lose in an inline display that gets wiped by the
+// next re-render (adding a second person, or -- in the Admin Dashboard's
+// case -- the live members/ subscription firing and rebuilding the whole
+// panel). This overlay sits outside both the wizard and the app's normal
+// tab-rendering entirely, so nothing can silently clear it out from under
+// the admin before they've acknowledged it. Children are set up with a
+// password the admin already knows (they typed it in), so there's nothing
+// to reveal for that path -- this is only used for the admin-invite flow.
+function showCredentialModal({ title }) {
   document.getElementById('credentialModalTitle').textContent = title;
   const body = document.getElementById('credentialModalBody');
   body.innerHTML = '';
-  if (created) {
-    body.appendChild(el('div', { class: 'credential-callout' }, [
-      el('div', { class: 'cred-label' }, 'Username'),
-      el('div', { class: 'cred-line' }, created.username),
-      el('div', { class: 'cred-label', style: 'margin-top:8px;' }, 'Temporary password'),
-      el('div', { class: 'cred-line' }, created.tempPassword),
-    ]));
-    body.appendChild(el('p', {}, "Write this down now -- it won't be shown again. Give it to your child so they can use \"Kid sign-in.\""));
-  } else {
-    body.appendChild(el('p', {}, "They'll be added automatically the first time they sign in with Google."));
-  }
+  body.appendChild(el('p', {}, "They'll be added automatically the first time they sign in with Google."));
   document.getElementById('credentialModal').hidden = false;
 }
 document.getElementById('credentialModalDoneBtn').addEventListener('click', () => {
@@ -843,11 +838,6 @@ async function resolveMembership() {
   if (role === 'admin' && !onboardingDone) {
     showScreen('onboarding');
     renderWizardStep();
-    return;
-  }
-
-  if (role === 'child' && state.member && state.member.mustChangePassword) {
-    showScreen('changePassword');
     return;
   }
 
@@ -1373,6 +1363,10 @@ function renderMore() {
     class: 'pill', style: 'width:100%;margin-bottom:8px;',
     onclick: () => { showScreen('tour'); tourStep = 0; renderTourStep(); },
   }, 'Replay app tour'));
+  container.appendChild(el('button', {
+    class: 'pill', style: 'width:100%;margin-bottom:8px;',
+    onclick: () => showScreen('changePassword'),
+  }, 'Change password'));
   container.appendChild(el('button', { class: 'pill', style: 'width:100%;', onclick: () => signOut(auth) }, 'Sign out'));
 }
 
@@ -1445,6 +1439,9 @@ function renderAddMemberForm() {
   const roleSelect = el('select', {}, [el('option', { value: 'child' }, 'Child'), el('option', { value: 'admin' }, 'Admin')]);
   const emailInput = el('input', { type: 'email', placeholder: 'Email', required: true });
   const usernameInput = el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', required: true, hidden: true });
+  const passwordInput = el('input', { type: 'text', placeholder: 'Password (min. 6 characters)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', minlength: '6', required: true, hidden: true });
+  const generatePasswordBtn = el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;', hidden: true }, 'Generate a password');
+  generatePasswordBtn.addEventListener('click', () => { passwordInput.value = generateSimplePassword(); });
   const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
   const allowanceInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Weekly allowance (e.g. 25)', required: true });
 
@@ -1454,6 +1451,9 @@ function renderAddMemberForm() {
     emailInput.required = !isChild;
     usernameInput.hidden = !isChild;
     usernameInput.required = isChild;
+    passwordInput.hidden = !isChild;
+    passwordInput.required = isChild;
+    generatePasswordBtn.hidden = !isChild;
   }
   roleSelect.addEventListener('change', updateFieldsForRole);
   updateFieldsForRole();
@@ -1462,27 +1462,35 @@ function renderAddMemberForm() {
   form.appendChild(roleSelect);
   form.appendChild(emailInput);
   form.appendChild(usernameInput);
+  form.appendChild(passwordInput);
+  form.appendChild(generatePasswordBtn);
   form.appendChild(nameInput);
   form.appendChild(allowanceInput);
   const errorEl = el('p', { class: 'error-text', style: 'margin:0 0 8px;' });
   errorEl.hidden = true;
   form.appendChild(errorEl);
+  const successEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' });
+  successEl.hidden = true;
+  form.appendChild(successEl);
   form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add'));
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     errorEl.hidden = true;
+    successEl.hidden = true;
     const enteredEmail = emailInput.hidden ? '' : emailInput.value.trim();
     try {
       const result = await callAddFamilyMember({
         email: emailInput.hidden ? undefined : enteredEmail,
         username: usernameInput.hidden ? undefined : usernameInput.value.trim(),
+        password: passwordInput.hidden ? undefined : passwordInput.value,
         displayName: nameInput.value.trim(),
         role: roleSelect.value, baseWeeklyAllowanceCents: centsFromMajorUnits(allowanceInput.value),
       });
-      emailInput.value = ''; usernameInput.value = ''; nameInput.value = ''; allowanceInput.value = '';
+      emailInput.value = ''; usernameInput.value = ''; passwordInput.value = ''; nameInput.value = ''; allowanceInput.value = '';
       if (result.data.mode === 'created') {
-        showCredentialModal({ title: 'Account created', created: { username: result.data.username, tempPassword: result.data.tempPassword } });
+        successEl.textContent = `Added "${result.data.username}" -- they can sign in now with the username and password you set.`;
+        successEl.hidden = false;
       } else {
         showCredentialModal({ title: 'Invite created' });
       }
@@ -1898,37 +1906,49 @@ function renderWizardStep() {
     card.appendChild(el('h1', {}, isAdminStep ? 'Add other admins' : 'Add your kids'));
     card.appendChild(el('p', {}, isAdminStep
       ? 'Optional -- add another parent/guardian who should also manage the app.'
-      : "Pick a username and weekly allowance for each child -- no email needed. You'll get a temporary password to give them."));
+      : 'Pick a username and password for each child -- no email needed. They\'ll sign in with these directly.'));
 
     const emailInput = isAdminStep ? el('input', { type: 'email', placeholder: 'Email' }) : null;
     const usernameInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
+    const passwordInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Password (min. 6 characters)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', minlength: '6' });
+    const generatePasswordBtn = isAdminStep ? null : el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;' }, 'Generate a password');
+    if (generatePasswordBtn) generatePasswordBtn.addEventListener('click', () => { passwordInput.value = generateSimplePassword(); });
     const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
     const allowanceInput = isAdminStep ? null : el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Weekly allowance (e.g. 25)' });
     if (emailInput) card.appendChild(emailInput);
     if (usernameInput) card.appendChild(usernameInput);
+    if (passwordInput) card.appendChild(passwordInput);
+    if (generatePasswordBtn) card.appendChild(generatePasswordBtn);
     card.appendChild(nameInput);
     if (allowanceInput) card.appendChild(allowanceInput);
     const errorEl = el('p', { class: 'error-text', style: 'margin:0 0 8px;' });
     errorEl.hidden = true;
     card.appendChild(errorEl);
+    const successEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' });
+    successEl.hidden = true;
+    card.appendChild(successEl);
     card.appendChild(el('button', {
       class: 'pill primary', type: 'button', style: 'width:100%;margin-bottom:8px;',
       onclick: async () => {
         errorEl.hidden = true;
+        successEl.hidden = true;
         if (isAdminStep && !emailInput.value.trim()) return;
         if (!isAdminStep && !usernameInput.value.trim()) return;
         try {
           const result = await callAddFamilyMember({
             email: emailInput ? emailInput.value.trim() : undefined,
             username: usernameInput ? usernameInput.value.trim() : undefined,
+            password: passwordInput ? passwordInput.value : undefined,
             displayName: nameInput.value.trim(), role: roleLabel,
             baseWeeklyAllowanceCents: allowanceInput ? centsFromMajorUnits(allowanceInput.value) : 0,
           });
           if (emailInput) emailInput.value = '';
           if (usernameInput) usernameInput.value = '';
+          if (passwordInput) passwordInput.value = '';
           nameInput.value = ''; if (allowanceInput) allowanceInput.value = '';
           if (result.data.mode === 'created') {
-            showCredentialModal({ title: 'Account created', created: { username: result.data.username, tempPassword: result.data.tempPassword } });
+            successEl.textContent = `Added "${result.data.username}" -- they can sign in now with the username and password you set.`;
+            successEl.hidden = false;
           } else {
             showCredentialModal({ title: 'Invite created' });
           }
