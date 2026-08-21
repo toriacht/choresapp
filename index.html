@@ -126,10 +126,16 @@
 
   .center-screen {
     min-height: 70vh; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; text-align: center; gap: 14px; padding: 24px;
+    justify-content: center; text-align: center; gap: 16px; padding: 24px;
   }
-  .center-screen p { color: var(--muted); max-width: 320px; margin: 0; }
-  .error-text { color: var(--danger); font-size: 0.85rem; margin-top: 6px; }
+  .center-screen h1 { font-size: 1.6rem; }
+  .center-screen p { color: var(--text); font-size: 1.05rem; line-height: 1.5; max-width: 340px; margin: 0; }
+  .center-screen label { font-size: 0.9rem; }
+  .center-screen input, .center-screen select { font-size: 1.05rem; padding: 13px 14px; }
+  .center-screen button.pill { font-size: 1rem; padding: 15px 20px; }
+  .center-screen button.pill.small { font-size: 0.85rem; padding: 8px 14px; }
+  .center-screen .sub-tab-btn { font-size: 0.95rem; padding: 12px 8px; }
+  .error-text { color: var(--danger); font-size: 0.9rem; margin-top: 6px; }
   [hidden] { display: none !important; }
 
   /* Progress ring -- a plain CSS conic-gradient donut, no SVG/library needed */
