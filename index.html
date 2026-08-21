@@ -207,7 +207,7 @@ import {
   initializeApp,
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js';
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
+  getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, connectAuthEmulator,
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, collection, query, where, orderBy, onSnapshot, connectFirestoreEmulator,
@@ -329,12 +329,25 @@ function showScreen(name) {
 document.getElementById('signInBtn').addEventListener('click', async () => {
   document.getElementById('signInError').hidden = true;
   try {
-    await signInWithPopup(auth, new GoogleAuthProvider());
+    // Redirect, not popup: popups get silently blocked or fail on enough
+    // mobile browsers (especially iOS Safari and in-app browsers) that
+    // redirect is the reliable choice for a PWA meant to be used on phones.
+    await signInWithRedirect(auth, new GoogleAuthProvider());
   } catch (err) {
     const errorEl = document.getElementById('signInError');
     errorEl.textContent = err.message;
     errorEl.hidden = false;
   }
+});
+
+// Completes the sign-in after the redirect back from Google. Errors here
+// (e.g. auth/unauthorized-domain) are the ones that actually matter for
+// signInWithRedirect -- surfaced on the sign-in screen the same way a
+// popup error would be.
+getRedirectResult(auth).catch((err) => {
+  const errorEl = document.getElementById('signInError');
+  errorEl.textContent = err.message;
+  errorEl.hidden = false;
 });
 document.getElementById('signOutBtn').addEventListener('click', () => signOut(auth));
 document.getElementById('setupSignOutBtn').addEventListener('click', () => signOut(auth));
