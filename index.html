@@ -218,7 +218,10 @@
       </div>
       <div class="field">
         <label for="kidPasswordInput">Password</label>
-        <input id="kidPasswordInput" type="password" autocomplete="current-password" required />
+        <div style="display:flex;gap:8px;">
+          <input id="kidPasswordInput" type="password" autocomplete="current-password" required style="margin-bottom:0;" />
+          <button type="button" class="pill small" id="toggleKidPasswordBtn" style="flex:none;">Show</button>
+        </div>
       </div>
       <button class="pill primary" type="submit" style="width:100%;">Sign in</button>
     </form>
@@ -626,6 +629,14 @@ document.getElementById('signInModeKidBtn').addEventListener('click', () => {
   document.getElementById('signInModeParentBtn').classList.remove('active');
   document.getElementById('parentSignIn').hidden = true;
   document.getElementById('kidSignInForm').hidden = false;
+});
+
+document.getElementById('toggleKidPasswordBtn').addEventListener('click', () => {
+  const input = document.getElementById('kidPasswordInput');
+  const btn = document.getElementById('toggleKidPasswordBtn');
+  const showing = input.type === 'text';
+  input.type = showing ? 'password' : 'text';
+  btn.textContent = showing ? 'Show' : 'Hide';
 });
 
 document.getElementById('kidSignInForm').addEventListener('submit', async (event) => {
