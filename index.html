@@ -13,13 +13,15 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <script>
   // Applied before any CSS/paint, so there's never a flash of the wrong theme.
+  // Light is the default (per the adopted design mockup's "brightness");
+  // dark stays a full toggle in Settings, unchanged mechanism.
   (function () {
     try {
       var saved = localStorage.getItem('choresAppTheme');
-      var theme = saved || 'dark';
+      var theme = saved || 'light';
       document.documentElement.setAttribute('data-theme', theme);
     } catch (e) {
-      document.documentElement.setAttribute('data-theme', 'dark');
+      document.documentElement.setAttribute('data-theme', 'light');
     }
   })();
 </script>
@@ -59,6 +61,7 @@
   .amount { font-weight: 700; font-variant-numeric: tabular-nums; }
   .amount.positive { color: var(--success); }
   .amount.negative { color: var(--danger); }
+  .icon-prefix { margin-right: 6px; }
 
   .status-pill {
     display: inline-block; border-radius: 999px; padding: 2px 9px; font-size: 0.65rem;
@@ -66,9 +69,8 @@
   }
   .status-pending, .status-proposed { background: #64748b; }
   .status-done { background: var(--accent2); }
-  .status-needs_review { background: #d97706; }
-  .status-approved, .status-paid { background: #16a34a; }
-  .status-rejected { background: #dc2626; }
+  .status-approved, .status-paid, .status-accepted { background: #16a34a; }
+  .status-rejected, .status-declined { background: #dc2626; }
 
   button.pill, a.pill {
     display: inline-block; border: none; border-radius: 999px; padding: 9px 16px;
@@ -88,6 +90,7 @@
     width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--panel); color: var(--text); font-size: 0.9rem; margin-bottom: 8px;
   }
+  input.icon-input { width: 64px; text-align: center; flex: none; }
   label { font-size: 0.78rem; font-weight: 600; color: var(--muted); display: block; margin-bottom: 4px; }
   .field { margin-bottom: 10px; }
   form .pill.primary { margin-top: 4px; }
@@ -128,6 +131,36 @@
   .center-screen p { color: var(--muted); max-width: 320px; margin: 0; }
   .error-text { color: var(--danger); font-size: 0.85rem; margin-top: 6px; }
   [hidden] { display: none !important; }
+
+  /* Progress ring -- a plain CSS conic-gradient donut, no SVG/library needed */
+  .progress-ring {
+    width: 96px; height: 96px; border-radius: 50%; margin: 0 auto 8px;
+    display: flex; align-items: center; justify-content: center;
+    background: conic-gradient(var(--accent2) calc(var(--pct, 0) * 1%), var(--panel2) 0);
+  }
+  .progress-ring-inner {
+    width: 74px; height: 74px; border-radius: 50%; background: var(--panel);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .progress-ring-pct { font-size: 1.1rem; font-weight: 800; }
+  .progress-ring-label { font-size: 0.6rem; color: var(--muted); }
+
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .stat-tile { background: var(--panel); border-radius: 12px; padding: 12px 14px; }
+  .stat-tile .stat-value { font-size: 1.3rem; font-weight: 800; }
+  .stat-tile .stat-label { font-size: 0.72rem; color: var(--muted); }
+
+  .sub-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .sub-tab-btn {
+    flex: 1; padding: 8px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--muted); font-size: 0.8rem; font-weight: 700; cursor: pointer;
+  }
+  .sub-tab-btn.active { background: var(--accent2-fill); color: #fff; border-color: var(--accent2-fill); }
+
+  .wizard-progress { display: flex; gap: 6px; margin-bottom: 18px; }
+  .wizard-dot { flex: 1; height: 4px; border-radius: 2px; background: var(--panel2); }
+  .wizard-dot.active { background: var(--accent2-fill); }
+  .wizard-card { background: var(--panel); border-radius: 12px; padding: 16px; margin-bottom: 10px; text-align: left; }
 </style>
 </head>
 <body>
@@ -159,11 +192,16 @@
     <button class="pill" id="setupSignOutBtn">Sign out</button>
   </div>
 
+  <div id="onboardingScreen" hidden style="max-width:480px;margin:0 auto;padding-top:24px;">
+    <div class="wizard-progress" id="wizardProgress"></div>
+    <div id="wizardContent"></div>
+  </div>
+
   <div id="app" hidden>
     <div class="app-header">
       <div>
         <div class="brand">Family Chores</div>
-        <h1 id="pageTitle">Home</h1>
+        <h1 id="pageTitle">Dashboard</h1>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
         <button id="installBtn" class="install-cta" style="display:none;"></button>
@@ -171,32 +209,55 @@
       </div>
     </div>
 
-    <section class="tab-page" data-page="home" id="page-home"></section>
-    <section class="tab-page" data-page="chores" id="page-chores" hidden></section>
-    <section class="tab-page" data-page="ledger" id="page-ledger" hidden></section>
-    <section class="tab-page" data-page="jobs" id="page-jobs" hidden></section>
-    <section class="tab-page" data-page="admin" id="page-admin" hidden></section>
+    <section class="tab-page" data-page="dashboard" id="page-dashboard"></section>
+    <section class="tab-page" data-page="mychores" id="page-mychores" hidden></section>
+    <section class="tab-page" data-page="extras" id="page-extras" hidden></section>
+    <section class="tab-page" data-page="earnings" id="page-earnings" hidden></section>
+    <section class="tab-page" data-page="more" id="page-more" hidden></section>
+    <section class="tab-page" data-page="admindashboard" id="page-admindashboard" hidden></section>
+    <section class="tab-page" data-page="managechores" id="page-managechores" hidden></section>
+    <section class="tab-page" data-page="allactivity" id="page-allactivity" hidden></section>
+    <section class="tab-page" data-page="settings" id="page-settings" hidden></section>
 
-    <nav class="bottom-nav" id="bottomNav">
-      <button type="button" class="nav-btn active" data-tab="home">
+    <nav class="bottom-nav" id="childNav">
+      <button type="button" class="nav-btn active" data-tab="dashboard">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
-        <span>Home</span>
+        <span>Dashboard</span>
       </button>
-      <button type="button" class="nav-btn" data-tab="chores">
+      <button type="button" class="nav-btn" data-tab="mychores">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1h11"/></svg>
+        <span>My Chores</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="extras">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+        <span>Extras</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="earnings">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        <span>Earnings</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="more">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+        <span>More</span>
+      </button>
+    </nav>
+
+    <nav class="bottom-nav" id="adminNav" hidden>
+      <button type="button" class="nav-btn active" data-tab="admindashboard">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+        <span>Dashboard</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="managechores">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1h11"/></svg>
         <span>Chores</span>
       </button>
-      <button type="button" class="nav-btn" data-tab="ledger">
+      <button type="button" class="nav-btn" data-tab="allactivity">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
-        <span>Ledger</span>
+        <span>Activity</span>
       </button>
-      <button type="button" class="nav-btn" data-tab="jobs">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-        <span>Jobs</span>
-      </button>
-      <button type="button" class="nav-btn" data-tab="admin" id="adminNavBtn" hidden>
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
-        <span>Admin</span>
+      <button type="button" class="nav-btn" data-tab="settings">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        <span>Settings</span>
       </button>
     </nav>
   </div>
@@ -251,6 +312,10 @@ const callApproveExtraJob = httpsCallable(functions, 'approveExtraJob');
 const callAdjustBalance = httpsCallable(functions, 'adjustBalance');
 const callAddFamilyMember = httpsCallable(functions, 'addFamilyMember');
 const callCreateFamilyAndAdmin = httpsCallable(functions, 'createFamilyAndAdmin');
+const callProposeChoreSwap = httpsCallable(functions, 'proposeChoreSwap');
+const callAcceptChoreSwap = httpsCallable(functions, 'acceptChoreSwap');
+const callDeclineChoreSwap = httpsCallable(functions, 'declineChoreSwap');
+const callCancelChoreSwap = httpsCallable(functions, 'cancelChoreSwap');
 
 // ---- Same ISO-week algorithm as functions/lib/choreLog.js:getIsoWeekId,
 // duplicated here (not shared code -- this is a zero-build static frontend)
@@ -263,6 +328,37 @@ function getIsoWeekId(date) {
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
   return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+}
+
+// ---- Same assignment-resolution logic as functions/lib/choreAssignment.js,
+// duplicated here for display only -- server (markChoreDone/settlement)
+// stays authoritative. See that file's comments for the full reasoning.
+function resolveAssignmentMode(chore) {
+  if (chore.assignmentMode) return chore.assignmentMode;
+  const assignedTo = chore.assignedTo || [];
+  if (assignedTo.includes('any')) return 'sharedAny';
+  if (assignedTo.length === 1) return 'fixed';
+  return 'eachMember';
+}
+function resolvePool(chore, allChildUids) {
+  const assignedTo = chore.assignedTo || [];
+  if (assignedTo.includes('any')) return allChildUids;
+  if (resolveAssignmentMode(chore) === 'rotating' && chore.rotation && Array.isArray(chore.rotation.pool)) {
+    return chore.rotation.pool;
+  }
+  return assignedTo;
+}
+function resolveBaseAssignee(chore) {
+  const mode = resolveAssignmentMode(chore);
+  if (mode === 'fixed') return (chore.assignedTo || [])[0] || null;
+  if (mode === 'rotating') return (chore.rotation && chore.rotation.currentAssigneeUid) || null;
+  return null;
+}
+function resolveEffectiveAssignee(chore, acceptedSwapsThisWeek) {
+  const base = resolveBaseAssignee(chore);
+  if (base === null) return null;
+  const swap = (acceptedSwapsThisWeek || []).find((s) => s.choreId === chore.id && s.proposedBy === base);
+  return swap ? swap.targetUid : base;
 }
 
 function formatCents(cents, currency) {
@@ -288,9 +384,21 @@ function el(tag, attrs, children) {
   return node;
 }
 
+function memberLabel(uid) {
+  const m = state.members.find((mm) => mm.uid === uid);
+  return m ? (m.displayName || m.email) : uid;
+}
+
 // ---------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------
+const CHILD_TABS = ['dashboard', 'mychores', 'extras', 'earnings', 'more'];
+const ADMIN_TABS = ['admindashboard', 'managechores', 'allactivity', 'settings'];
+const TITLES = {
+  dashboard: 'Dashboard', mychores: 'My Chores', extras: 'Extras', earnings: 'Earnings', more: 'More',
+  admindashboard: 'Admin Dashboard', managechores: 'Manage Chores', allactivity: 'All Activity', settings: 'Settings',
+};
+
 const state = {
   user: null,
   familyId: null,
@@ -301,17 +409,101 @@ const state = {
   chores: [],
   choreLog: [],
   choreTemplates: [],
+  choreSwaps: [],
   catalog: [],
   extraJobs: [],
   ledger: [],
   ledgerViewUid: null,
-  currentTab: localStorage.getItem('choresAppTab') || 'home',
+  currentTab: localStorage.getItem('choresAppTab') || 'dashboard',
 };
 let unsubscribers = [];
 
 function clearSubscriptions() {
   unsubscribers.forEach((fn) => fn());
   unsubscribers = [];
+}
+
+function activeChildUids() {
+  return state.members.filter((m) => m.role === 'child' && m.active !== false).map((m) => m.uid);
+}
+
+function acceptedSwaps() {
+  return state.choreSwaps.filter((s) => s.status === 'accepted');
+}
+
+// Mirrors functions/lib/settlement.js:computeSettlementActions' per-member
+// logic client-side, for display only (progress ring / My Chores / Admin
+// Dashboard aggregate) -- returns which chores are relevant to a member
+// this week and whether each is currently satisfied.
+function computeWeekProgressForMember(memberUid) {
+  const pool0 = activeChildUids();
+  const swaps = acceptedSwaps();
+  const items = [];
+
+  state.chores.forEach((chore) => {
+    if (chore.active === false) return;
+    const mode = resolveAssignmentMode(chore);
+
+    if (mode === 'sharedAny' || mode === 'eachMember') {
+      const pool = resolvePool(chore, pool0);
+      if (!pool.includes(memberUid)) return;
+      const satisfied = mode === 'sharedAny'
+        ? state.choreLog.some((e) => e.choreId === chore.id && e.status === 'approved' && pool.includes(e.memberUid))
+        : state.choreLog.some((e) => e.choreId === chore.id && e.memberUid === memberUid && e.status === 'approved');
+      items.push({ chore, mode, satisfied, executingUid: memberUid });
+    } else {
+      const base = resolveBaseAssignee(chore);
+      if (base !== memberUid) return;
+      const executingUid = resolveEffectiveAssignee(chore, swaps);
+      const satisfied = state.choreLog.some(
+        (e) => e.choreId === chore.id && e.memberUid === executingUid && e.status === 'approved'
+      );
+      items.push({ chore, mode, satisfied, executingUid });
+    }
+  });
+
+  const done = items.filter((i) => i.satisfied).length;
+  return { total: items.length, done, items };
+}
+
+// For "My Chores" specifically (not the Dashboard/Admin progress %, which
+// must stay strictly gate-based to accurately mirror settlement): a swap
+// target needs to see and act on a chore that isn't fundamentally their
+// gate, and the original assignee still needs to see it (read-only) even
+// after swapping it away. computeWeekProgressForMember alone can't serve
+// both -- it only includes gate-owned items, so a swap target would never
+// see the chore on their own page at all.
+function getMyChoresListItems() {
+  const pool0 = activeChildUids();
+  const swaps = acceptedSwaps();
+  const myUid = state.user.uid;
+  const items = [];
+
+  state.chores.forEach((chore) => {
+    if (chore.active === false) return;
+    const mode = resolveAssignmentMode(chore);
+
+    if (mode === 'sharedAny' || mode === 'eachMember') {
+      const pool = resolvePool(chore, pool0);
+      if (!pool.includes(myUid)) return;
+      const satisfied = mode === 'sharedAny'
+        ? state.choreLog.some((e) => e.choreId === chore.id && e.status === 'approved' && pool.includes(e.memberUid))
+        : state.choreLog.some((e) => e.choreId === chore.id && e.memberUid === myUid && e.status === 'approved');
+      items.push({ chore, mode, satisfied, executingUid: myUid, isMyGate: true, iCanExecute: true });
+    } else {
+      const base = resolveBaseAssignee(chore);
+      const executingUid = resolveEffectiveAssignee(chore, swaps);
+      const isMyGate = base === myUid;
+      const iCanExecute = executingUid === myUid;
+      if (!isMyGate && !iCanExecute) return;
+      const satisfied = state.choreLog.some(
+        (e) => e.choreId === chore.id && e.memberUid === executingUid && e.status === 'approved'
+      );
+      items.push({ chore, mode, satisfied, executingUid, isMyGate, iCanExecute });
+    }
+  });
+
+  return items;
 }
 
 // ---------------------------------------------------------------------
@@ -321,6 +513,7 @@ const screens = {
   loading: document.getElementById('loadingScreen'),
   signIn: document.getElementById('signInScreen'),
   setup: document.getElementById('setupScreen'),
+  onboarding: document.getElementById('onboardingScreen'),
   app: document.getElementById('app'),
 };
 function showScreen(name) {
@@ -364,7 +557,6 @@ function isIOS() {
 function updateInstallUI() {
   if (isStandalone()) { installBtn.style.display = 'none'; return; } // already installed
   if (deferredInstallPrompt) {
-    // Android/Chrome: real install flow, one tap
     installBtn.textContent = '📲 Install App';
     installBtn.style.display = 'inline-flex';
     installBtn.onclick = async () => {
@@ -374,7 +566,6 @@ function updateInstallUI() {
       deferredInstallPrompt = null;
     };
   } else if (isIOS()) {
-    // iOS: no install API exists at all -- show plain instructions instead
     installBtn.textContent = '📲 Add to Home Screen';
     installBtn.style.display = 'inline-flex';
     installBtn.onclick = () => {
@@ -391,7 +582,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
   updateInstallUI();
 });
 window.addEventListener('appinstalled', () => { installBtn.style.display = 'none'; });
-updateInstallUI(); // covers iOS immediately; Android updates if/when the browser fires the event
+updateInstallUI();
 
 document.getElementById('createFamilyForm').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -411,7 +602,6 @@ document.getElementById('createFamilyForm').addEventListener('submit', async (ev
 // Auth + membership resolution
 // ---------------------------------------------------------------------
 onAuthStateChanged(auth, async (user) => {
-  console.log('[choresapp] onAuthStateChanged fired:', user ? `signed in as ${user.uid} (${user.email})` : '(signed out)');
   clearSubscriptions();
   state.user = user;
   if (!user) {
@@ -430,10 +620,15 @@ onAuthStateChanged(auth, async (user) => {
   }
 });
 
+function updateNavForRole(role) {
+  document.getElementById('childNav').hidden = role !== 'child';
+  document.getElementById('adminNav').hidden = role !== 'admin';
+  const tabs = role === 'admin' ? ADMIN_TABS : CHILD_TABS;
+  if (!tabs.includes(state.currentTab)) state.currentTab = tabs[0];
+}
+
 async function resolveMembership() {
-  console.log('[choresapp] resolveMembership: looking up userFamilies/' + state.user.uid);
   const userFamilySnap = await getDoc(doc(db, `userFamilies/${state.user.uid}`));
-  console.log('[choresapp] userFamilies doc exists?', userFamilySnap.exists());
   if (!userFamilySnap.exists()) {
     showScreen('setup');
     return;
@@ -442,10 +637,21 @@ async function resolveMembership() {
   state.familyId = familyId;
   state.role = role;
   state.ledgerViewUid = state.user.uid;
-  document.getElementById('adminNavBtn').hidden = role !== 'admin';
+
+  const familySnap = await getDoc(doc(db, `families/${familyId}`));
+  state.family = familySnap.exists() ? familySnap.data() : null;
+
   startFamilySubscriptions();
-  showScreen('app');
-  switchTab(state.currentTab);
+  updateNavForRole(role);
+
+  const onboardingDone = state.family && state.family.settings && state.family.settings.onboardingCompletedAt;
+  if (role === 'admin' && !onboardingDone) {
+    showScreen('onboarding');
+    renderWizardStep();
+  } else {
+    showScreen('app');
+    switchTab(state.currentTab);
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -476,6 +682,14 @@ function startFamilySubscriptions() {
     query(collection(db, `families/${familyId}/choreLog`), where('weekId', '==', weekId)),
     (snap) => {
       state.choreLog = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderCurrentTab();
+    }
+  ));
+
+  unsubscribers.push(onSnapshot(
+    query(collection(db, `families/${familyId}/choreSwaps`), where('weekId', '==', weekId)),
+    (snap) => {
+      state.choreSwaps = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       renderCurrentTab();
     }
   ));
@@ -522,12 +736,10 @@ function subscribeLedger(memberUid) {
 // ---------------------------------------------------------------------
 // Tab navigation (bottom nav + swipe, mirrors the sibling project)
 // ---------------------------------------------------------------------
-const TITLES = { home: 'Home', chores: 'Chores', ledger: 'Ledger', jobs: 'Extra Jobs', admin: 'Admin' };
-
 function switchTab(tab) {
   state.currentTab = tab;
   localStorage.setItem('choresAppTab', tab);
-  document.getElementById('pageTitle').textContent = TITLES[tab] || 'Home';
+  document.getElementById('pageTitle').textContent = TITLES[tab] || 'Dashboard';
   document.querySelectorAll('.tab-page').forEach((section) => {
     section.hidden = section.dataset.page !== tab;
   });
@@ -538,9 +750,9 @@ function switchTab(tab) {
   renderCurrentTab();
 }
 
-document.getElementById('bottomNav').addEventListener('click', (event) => {
+document.body.addEventListener('click', (event) => {
   const btn = event.target.closest('.nav-btn');
-  if (btn && !btn.hidden) switchTab(btn.dataset.tab);
+  if (btn && !btn.hidden && !btn.closest('[hidden]')) switchTab(btn.dataset.tab);
 });
 
 let touchStartX = null;
@@ -550,9 +762,7 @@ document.addEventListener('touchend', (e) => {
   const dx = e.changedTouches[0].clientX - touchStartX;
   touchStartX = null;
   if (Math.abs(dx) < 60) return;
-  const order = ['home', 'chores', 'ledger', 'jobs', 'admin'].filter(
-    (t) => t !== 'admin' || state.role === 'admin'
-  );
+  const order = state.role === 'admin' ? ADMIN_TABS : CHILD_TABS;
   const idx = order.indexOf(state.currentTab);
   const nextIdx = dx < 0 ? idx + 1 : idx - 1;
   if (nextIdx >= 0 && nextIdx < order.length) switchTab(order[nextIdx]);
@@ -560,7 +770,12 @@ document.addEventListener('touchend', (e) => {
 
 function renderCurrentTab() {
   if (screens.app.hidden) return;
-  const renderers = { home: renderHome, chores: renderChores, ledger: renderLedger, jobs: renderJobs, admin: renderAdmin };
+  const renderers = {
+    dashboard: renderDashboard, mychores: renderMyChores, extras: renderExtras,
+    earnings: renderEarnings, more: renderMore,
+    admindashboard: renderAdminDashboard, managechores: renderManageChores,
+    allactivity: renderAllActivity, settings: renderSettings,
+  };
   const renderer = renderers[state.currentTab];
   if (renderer) renderer();
 }
@@ -587,45 +802,140 @@ async function viewProof(path, imgSlot) {
   }
 }
 
+function choreLabel(chore) {
+  return chore.icon ? el('span', {}, [el('span', { class: 'icon-prefix' }, chore.icon), chore.name]) : el('span', {}, chore.name);
+}
+
 // ---------------------------------------------------------------------
-// Home tab
+// Dashboard tab (child) -- read-only overview
 // ---------------------------------------------------------------------
-function renderHome() {
-  const container = document.getElementById('page-home');
+function renderDashboard() {
+  const container = document.getElementById('page-dashboard');
   container.innerHTML = '';
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
 
   container.appendChild(el('div', { class: 'booking-card' }, [
-    el('div', { class: 'muted' }, 'Your balance'),
+    el('div', { class: 'muted' }, 'My Balance'),
     el('div', { style: 'font-size:1.8rem;font-weight:800;' }, formatCents(state.member ? state.member.balanceCents : 0, currency)),
   ]));
 
-  container.appendChild(el('h2', {}, "This week's chores"));
+  const progress = computeWeekProgressForMember(state.user.uid);
+  const pct = progress.total === 0 ? 100 : Math.round((progress.done / progress.total) * 100);
+  const ringCard = el('div', { class: 'booking-card', style: 'text-align:center;' });
+  const ring = el('div', { class: 'progress-ring', style: `--pct:${pct};` }, [
+    el('div', { class: 'progress-ring-inner' }, [
+      el('div', { class: 'progress-ring-pct' }, `${pct}%`),
+      el('div', { class: 'progress-ring-label' }, 'done'),
+    ]),
+  ]);
+  ringCard.appendChild(ring);
+  ringCard.appendChild(el('div', { class: 'muted' }, `${progress.done} done · ${progress.total - progress.done} to do · Goal: 100% by Friday`));
+  container.appendChild(ringCard);
 
-  const myChores = state.chores.filter(
-    (c) => c.active !== false && (c.assignedTo || []).some((a) => a === state.user.uid || a === 'any')
-  );
+  ['dailyTask', 'chore'].forEach((cat) => {
+    const items = progress.items.filter((i) => (i.chore.category || 'chore') === cat);
+    if (items.length === 0) return;
+    container.appendChild(el('h2', { style: 'margin-top:16px;' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
+    items.forEach((item) => {
+      container.appendChild(el('div', { class: `booking-card ${item.satisfied ? 'done' : ''}` }, [
+        el('div', { class: 'row' }, [
+          choreLabel(item.chore),
+          el('span', { class: `status-pill status-${item.satisfied ? 'approved' : 'pending'}` }, item.satisfied ? 'done' : 'to do'),
+        ]),
+      ]));
+    });
+  });
 
-  if (myChores.length === 0) {
+  container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
+    el('h2', {}, 'Recent activity'),
+    el('button', { class: 'pill small', onclick: () => switchTab('earnings') }, 'View all'),
+  ]));
+  if (state.ledger.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
+  } else {
+    state.ledger.slice(0, 3).forEach((tx) => {
+      const positive = tx.amountCents >= 0;
+      container.appendChild(el('div', { class: 'booking-card' }, [
+        el('div', { class: 'row' }, [
+          el('div', {}, tx.note || tx.type),
+          el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+        ]),
+      ]));
+    });
+  }
+}
+
+// ---------------------------------------------------------------------
+// My Chores tab (child) -- mark done, photo proof, swaps
+// ---------------------------------------------------------------------
+function renderMyChores() {
+  const container = document.getElementById('page-mychores');
+  container.innerHTML = '';
+
+  const myProposals = state.choreSwaps.filter((s) => s.proposedBy === state.user.uid && s.status === 'proposed');
+  const requestsForMe = state.choreSwaps.filter((s) => s.targetUid === state.user.uid && s.status === 'proposed');
+
+  if (requestsForMe.length > 0) {
+    container.appendChild(el('h2', {}, 'Swap requests for you'));
+    requestsForMe.forEach((swap) => {
+      const chore = state.chores.find((c) => c.id === swap.choreId);
+      container.appendChild(el('div', { class: 'booking-card warn' }, [
+        el('div', {}, `${memberLabel(swap.proposedBy)} wants to swap: ${chore ? chore.name : swap.choreId}`),
+        swap.note ? el('div', { class: 'muted' }, swap.note) : null,
+        el('div', { style: 'margin-top:8px;display:flex;gap:8px;' }, [
+          el('button', {
+            class: 'pill primary small',
+            onclick: async () => { try { await callAcceptChoreSwap({ swapId: swap.id }); } catch (err) { alert(err.message); } },
+          }, 'Accept'),
+          el('button', {
+            class: 'pill danger small',
+            onclick: async () => { try { await callDeclineChoreSwap({ swapId: swap.id }); } catch (err) { alert(err.message); } },
+          }, 'Decline'),
+        ]),
+      ]));
+    });
+  }
+
+  if (myProposals.length > 0) {
+    container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Your pending swap proposals'));
+    myProposals.forEach((swap) => {
+      const chore = state.chores.find((c) => c.id === swap.choreId);
+      container.appendChild(el('div', { class: 'booking-card' }, [
+        el('div', {}, `${chore ? chore.name : swap.choreId} → ${memberLabel(swap.targetUid)}`),
+        el('button', {
+          class: 'pill small', style: 'margin-top:8px;',
+          onclick: async () => { try { await callCancelChoreSwap({ swapId: swap.id }); } catch (err) { alert(err.message); } },
+        }, 'Cancel'),
+      ]));
+    });
+  }
+
+  container.appendChild(el('h2', { style: 'margin-top:16px;' }, "This week's chores"));
+  const items = getMyChoresListItems();
+
+  if (items.length === 0) {
     container.appendChild(el('div', { class: 'empty-state' }, 'No chores assigned this week.'));
     return;
   }
 
-  myChores.forEach((chore) => {
-    const entry = state.choreLog.find((e) => e.choreId === chore.id && e.memberUid === state.user.uid);
+  items.forEach(({ chore, mode, satisfied, executingUid, isMyGate, iCanExecute }) => {
+    const entry = state.choreLog.find((e) => e.choreId === chore.id && e.memberUid === executingUid);
     const status = entry ? entry.status : 'pending';
     const card = el('div', { class: `booking-card ${status === 'approved' ? 'done' : ''} ${status === 'rejected' ? 'warn' : ''}` });
-    const fileInputId = `proof-${chore.id}`;
+
     card.appendChild(el('div', { class: 'row' }, [
       el('div', {}, [
-        el('div', { style: 'font-weight:600;' }, chore.name),
+        el('div', { style: 'font-weight:600;' }, [choreLabel(chore)]),
         chore.description ? el('div', { class: 'muted' }, chore.description) : null,
+        (mode === 'rotating') ? el('div', { class: 'muted' }, `Rotates — ${memberLabel(executingUid)}'s turn this week`) : null,
+        (!isMyGate && iCanExecute) ? el('div', { class: 'muted' }, `Covering this for ${memberLabel(resolveBaseAssignee(chore))} (swap)`) : null,
+        (isMyGate && !iCanExecute) ? el('div', { class: 'muted' }, `Swapped to ${memberLabel(executingUid)} this week`) : null,
       ]),
       el('span', { class: `status-pill status-${status}` }, status.replace('_', ' ')),
     ]));
 
-    if (status !== 'done' && status !== 'approved') {
-      const fileInput = el('input', { type: 'file', accept: 'image/*', capture: 'environment', id: fileInputId, style: 'margin-top:8px;' });
+    if (iCanExecute && status !== 'done' && status !== 'approved') {
+      const fileInput = el('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'margin-top:8px;' });
       const markBtn = el('button', {
         class: 'pill primary small', style: 'margin-top:8px;',
         onclick: async () => {
@@ -646,194 +956,38 @@ function renderHome() {
       card.appendChild(markBtn);
     } else if (entry && entry.photoStoragePath) {
       const slot = el('div', { class: 'muted' });
-      const viewBtn = el('button', { class: 'pill small', onclick: () => viewProof(entry.photoStoragePath, slot) }, 'View photo');
-      card.appendChild(viewBtn);
+      card.appendChild(el('button', { class: 'pill small', onclick: () => viewProof(entry.photoStoragePath, slot) }, 'View photo'));
       card.appendChild(slot);
     }
 
+    // Propose a swap -- only for fixed/rotating chores (matching
+    // proposeChoreSwap's server-side rule) where it's both my gate AND
+    // nobody's already covering it via an existing swap.
+    if ((mode === 'fixed' || mode === 'rotating') && isMyGate && iCanExecute) {
+      const otherKids = state.members.filter((m) => m.role === 'child' && m.active !== false && m.uid !== state.user.uid);
+      if (otherKids.length > 0) {
+        const targetSelect = el('select', { style: 'margin-top:8px;' });
+        otherKids.forEach((m) => targetSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email)));
+        const swapBtn = el('button', {
+          class: 'pill small',
+          onclick: async () => {
+            try { await callProposeChoreSwap({ choreId: chore.id, targetUid: targetSelect.value }); } catch (err) { alert(err.message); }
+          },
+        }, 'Propose swap');
+        card.appendChild(targetSelect);
+        card.appendChild(swapBtn);
+      }
+    }
+
     container.appendChild(card);
   });
 }
 
 // ---------------------------------------------------------------------
-// Chores tab
+// Extras tab (child: claim/propose; admin: approve) -- was "Jobs"
 // ---------------------------------------------------------------------
-function renderChores() {
-  const container = document.getElementById('page-chores');
-  container.innerHTML = '';
-
-  if (state.role === 'admin') {
-    const form = el('form', { class: 'booking-card' });
-    const nameInput = el('input', { type: 'text', placeholder: 'Chore name', required: true });
-    const descInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
-    const assignSelect = el('select', {});
-    assignSelect.appendChild(el('option', { value: 'any' }, 'Anyone'));
-    state.members.filter((m) => m.role === 'child').forEach((m) => {
-      assignSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email));
-    });
-    const frequencySelect = el('select', {}, [
-      el('option', { value: 'weekly' }, 'Standing weekly chore'),
-      el('option', { value: 'once' }, 'One-off task (this week only)'),
-    ]);
-
-    form.appendChild(el('label', {}, 'Add a chore'));
-    if (state.choreTemplates.length > 0) {
-      const templateSelect = el('select', {});
-      templateSelect.appendChild(el('option', { value: '' }, 'Quick-pick from list…'));
-      state.choreTemplates.forEach((t) => {
-        templateSelect.appendChild(el('option', { value: t.id }, t.name));
-      });
-      templateSelect.addEventListener('change', () => {
-        const t = state.choreTemplates.find((tt) => tt.id === templateSelect.value);
-        if (t) {
-          nameInput.value = t.name;
-          descInput.value = t.description || '';
-          frequencySelect.value = 'once';
-        }
-      });
-      form.appendChild(templateSelect);
-    }
-    form.appendChild(nameInput);
-    form.appendChild(descInput);
-    form.appendChild(assignSelect);
-    form.appendChild(frequencySelect);
-    form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add chore'));
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-      await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
-        name: nameInput.value.trim(),
-        description: descInput.value.trim(),
-        assignedTo: [assignSelect.value],
-        frequency: frequencySelect.value,
-        active: true,
-        createdBy: state.user.uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      nameInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly';
-    });
-    container.appendChild(form);
-
-    const needsReview = state.choreLog.filter((e) => e.status === 'done');
-    if (needsReview.length > 0) {
-      container.appendChild(el('h2', {}, 'Needs your review'));
-      needsReview.forEach((entry) => {
-        const chore = state.chores.find((c) => c.id === entry.choreId);
-        const kid = state.members.find((m) => m.uid === entry.memberUid);
-        const card = el('div', { class: 'booking-card warn' }, [
-          el('div', { class: 'row' }, [
-            el('div', {}, [
-              el('div', { style: 'font-weight:600;' }, chore ? chore.name : entry.choreId),
-              el('div', { class: 'muted' }, kid ? (kid.displayName || kid.email) : entry.memberUid),
-            ]),
-            el('span', { class: 'status-pill status-done' }, 'awaiting review'),
-          ]),
-        ]);
-        if (entry.photoStoragePath) {
-          const slot = el('div', { class: 'muted' });
-          card.appendChild(el('button', { class: 'pill small', onclick: () => viewProof(entry.photoStoragePath, slot) }, 'View photo'));
-          card.appendChild(slot);
-        }
-        const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
-        actions.appendChild(el('button', {
-          class: 'pill primary small',
-          onclick: async () => {
-            const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-            await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
-              status: 'approved', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
-            });
-          },
-        }, 'Approve'));
-        actions.appendChild(el('button', {
-          class: 'pill danger small',
-          onclick: async () => {
-            const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-            await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
-              status: 'rejected', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
-            });
-          },
-        }, 'Reject'));
-        card.appendChild(actions);
-        container.appendChild(card);
-      });
-    }
-  }
-
-  if (state.chores.length === 0) {
-    container.appendChild(el('div', { class: 'empty-state' }, 'No chores yet.'));
-    return;
-  }
-
-  state.chores.forEach((chore) => {
-    const card = el('div', { class: `booking-card ${chore.active === false ? '' : ''}` });
-    const assignedLabel = (chore.assignedTo || []).includes('any')
-      ? 'Anyone'
-      : (chore.assignedTo || []).map((uid) => {
-          const m = state.members.find((mm) => mm.uid === uid);
-          return m ? (m.displayName || m.email) : uid;
-        }).join(', ');
-    card.appendChild(el('div', { class: 'row' }, [
-      el('div', {}, [
-        el('div', { style: 'font-weight:600;' }, chore.name + (chore.active === false ? ' (inactive)' : '')),
-        el('div', { class: 'muted' }, `Assigned: ${assignedLabel}`),
-      ]),
-      state.role === 'admin'
-        ? el('button', {
-            class: 'pill small',
-            onclick: async () => {
-              const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-              await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { active: chore.active === false });
-            },
-          }, chore.active === false ? 'Reactivate' : 'Deactivate')
-        : null,
-    ]));
-    container.appendChild(card);
-  });
-}
-
-// ---------------------------------------------------------------------
-// Ledger tab
-// ---------------------------------------------------------------------
-function renderLedger() {
-  const container = document.getElementById('page-ledger');
-  container.innerHTML = '';
-  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
-
-  if (state.role === 'admin') {
-    const select = el('select', {
-      onchange: (e) => subscribeLedger(e.target.value),
-    });
-    state.members.forEach((m) => {
-      select.appendChild(el('option', { value: m.uid, selected: m.uid === state.ledgerViewUid ? 'selected' : null }, m.displayName || m.email));
-    });
-    container.appendChild(select);
-  }
-
-  if (state.ledger.length === 0) {
-    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
-    return;
-  }
-
-  state.ledger.forEach((tx) => {
-    const positive = tx.amountCents >= 0;
-    container.appendChild(el('div', { class: 'booking-card' }, [
-      el('div', { class: 'row' }, [
-        el('div', {}, [
-          el('div', {}, tx.note || tx.type),
-          el('div', { class: 'muted' }, tx.type.replace(/_/g, ' ')),
-        ]),
-        el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
-      ]),
-    ]));
-  });
-}
-
-// ---------------------------------------------------------------------
-// Extra Jobs tab
-// ---------------------------------------------------------------------
-function renderJobs() {
-  const container = document.getElementById('page-jobs');
+function renderExtras() {
+  const container = document.getElementById('page-extras');
   container.innerHTML = '';
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
 
@@ -847,7 +1001,7 @@ function renderJobs() {
       container.appendChild(el('div', { class: 'booking-card' }, [
         el('div', { class: 'row' }, [
           el('div', {}, [
-            el('div', { style: 'font-weight:600;' }, job.name),
+            el('div', { style: 'font-weight:600;' }, [choreLabel(job)]),
             job.description ? el('div', { class: 'muted' }, job.description) : null,
           ]),
           el('div', { class: 'amount positive' }, formatCents(job.amountCents, currency)),
@@ -885,6 +1039,48 @@ function renderJobs() {
     container.appendChild(form);
   }
 
+  if (state.role === 'admin') {
+    const catalogForm = el('form', { class: 'booking-card' });
+    const catIconInput = el('input', { type: 'text', placeholder: '🚗', class: 'icon-input' });
+    const catNameInput = el('input', { type: 'text', placeholder: 'Job name', required: true });
+    const catDescInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
+    const catAmountInput = el('input', { type: 'number', min: '0', step: '1', placeholder: 'Amount (cents)', required: true });
+    catalogForm.appendChild(el('label', {}, 'Add a listed extra job'));
+    catalogForm.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [catIconInput, catNameInput]));
+    catalogForm.appendChild(catDescInput);
+    catalogForm.appendChild(catAmountInput);
+    catalogForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add to list'));
+    catalogForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await addDoc(fsCollection(db, `families/${state.familyId}/extraJobsCatalog`), {
+        name: catNameInput.value.trim(), icon: catIconInput.value.trim() || null,
+        description: catDescInput.value.trim(), amountCents: parseInt(catAmountInput.value, 10) || 0,
+        active: true, createdBy: state.user.uid, createdAt: serverTimestamp(),
+      });
+      catNameInput.value = ''; catIconInput.value = ''; catDescInput.value = ''; catAmountInput.value = '';
+    });
+    container.appendChild(catalogForm);
+
+    if (state.catalog.length > 0) {
+      container.appendChild(el('h2', {}, 'Listed jobs'));
+      state.catalog.forEach((job) => {
+        container.appendChild(el('div', { class: 'booking-card' }, [
+          el('div', { class: 'row' }, [
+            el('div', {}, [choreLabel(job), job.active === false ? ' (inactive)' : '', ` · ${formatCents(job.amountCents, currency)}`]),
+            el('button', {
+              class: 'pill small',
+              onclick: async () => {
+                const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+                await updateDoc(fsDoc(db, `families/${state.familyId}/extraJobsCatalog/${job.id}`), { active: job.active === false });
+              },
+            }, job.active === false ? 'Reactivate' : 'Deactivate'),
+          ]),
+        ]));
+      });
+    }
+  }
+
   container.appendChild(el('h2', { style: 'margin-top:16px;' }, state.role === 'admin' ? 'Pending approval' : 'Your jobs'));
   const visibleJobs = state.role === 'admin'
     ? state.extraJobs
@@ -896,12 +1092,11 @@ function renderJobs() {
   }
 
   visibleJobs.forEach((job) => {
-    const proposer = state.members.find((m) => m.uid === job.proposedBy);
     const card = el('div', { class: 'booking-card' }, [
       el('div', { class: 'row' }, [
         el('div', {}, [
           el('div', { style: 'font-weight:600;' }, job.description),
-          el('div', { class: 'muted' }, `${proposer ? proposer.displayName || proposer.email : job.proposedBy} · ${formatCents(job.amountCents, currency)}`),
+          el('div', { class: 'muted' }, `${memberLabel(job.proposedBy)} · ${formatCents(job.amountCents, currency)}`),
         ]),
         el('span', { class: `status-pill status-${job.status}` }, job.status),
       ]),
@@ -927,29 +1122,122 @@ function renderJobs() {
 }
 
 // ---------------------------------------------------------------------
-// Admin tab
+// Earnings tab (child) -- own ledger only; admin equivalent is All Activity
 // ---------------------------------------------------------------------
-function renderAdmin() {
-  const container = document.getElementById('page-admin');
+function renderEarnings() {
+  const container = document.getElementById('page-earnings');
   container.innerHTML = '';
-  if (state.role !== 'admin') {
-    container.appendChild(el('div', { class: 'empty-state' }, 'Admins only.'));
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+
+  if (state.ledger.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
     return;
   }
 
-  // Add family member
-  const memberForm = el('form', { class: 'booking-card' });
+  state.ledger.forEach((tx) => {
+    const positive = tx.amountCents >= 0;
+    container.appendChild(el('div', { class: 'booking-card' }, [
+      el('div', { class: 'row' }, [
+        el('div', {}, [
+          el('div', {}, tx.note || tx.type),
+          el('div', { class: 'muted' }, tx.type.replace(/_/g, ' ')),
+        ]),
+        el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+      ]),
+    ]));
+  });
+}
+
+// ---------------------------------------------------------------------
+// More tab (child) -- profile + sign out
+// ---------------------------------------------------------------------
+function renderMore() {
+  const container = document.getElementById('page-more');
+  container.innerHTML = '';
+  container.appendChild(el('div', { class: 'booking-card' }, [
+    el('div', { style: 'font-weight:700;' }, state.member ? state.member.displayName || state.member.email : ''),
+    el('div', { class: 'muted' }, state.member ? state.member.email : ''),
+    el('div', { class: 'muted' }, 'Role: Child'),
+  ]));
+  container.appendChild(el('button', { class: 'pill', style: 'width:100%;', onclick: () => signOut(auth) }, 'Sign out'));
+}
+
+// ---------------------------------------------------------------------
+// Admin Dashboard tab
+// ---------------------------------------------------------------------
+function renderAdminDashboard() {
+  const container = document.getElementById('page-admindashboard');
+  container.innerHTML = '';
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+
+  container.appendChild(el('div', { class: 'booking-card' }, [
+    el('div', { class: 'muted' }, 'Family overview'),
+    el('div', { style: 'font-weight:700;' }, (state.family && state.family.name) || 'Your family'),
+    el('div', { class: 'muted' }, `${state.members.length} members`),
+  ]));
+
+  const totalInCirculation = state.members.reduce((sum, m) => sum + (m.balanceCents || 0), 0);
+  const weeklyBudget = state.members.filter((m) => m.role === 'child').reduce((sum, m) => sum + (m.baseWeeklyAllowanceCents || 0), 0);
+  const children = state.members.filter((m) => m.role === 'child' && m.active !== false);
+  let totalDone = 0, totalItems = 0;
+  children.forEach((c) => {
+    const p = computeWeekProgressForMember(c.uid);
+    totalDone += p.done; totalItems += p.total;
+  });
+  const weekPct = totalItems === 0 ? 100 : Math.round((totalDone / totalItems) * 100);
+
+  container.appendChild(el('div', { class: 'stat-grid' }, [
+    el('div', { class: 'stat-tile' }, [
+      el('div', { class: 'stat-value' }, formatCents(totalInCirculation, currency)),
+      el('div', { class: 'stat-label' }, 'Total in circulation'),
+    ]),
+    el('div', { class: 'stat-tile' }, [
+      el('div', { class: 'stat-value' }, formatCents(weeklyBudget, currency)),
+      el('div', { class: 'stat-label' }, 'Weekly allowance budget'),
+    ]),
+    el('div', { class: 'stat-tile' }, [
+      el('div', { class: 'stat-value' }, `${weekPct}%`),
+      el('div', { class: 'stat-label' }, `This week: ${totalDone}/${totalItems} done`),
+    ]),
+    el('div', { class: 'stat-tile' }, [
+      el('div', { class: 'stat-value' }, String(state.chores.filter((c) => c.active !== false).length)),
+      el('div', { class: 'stat-label' }, 'Active chores'),
+    ]),
+  ]));
+
+  container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Quick actions'));
+
+  container.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-bottom:8px;', onclick: () => switchTab('managechores') }, 'Manage chores'));
+  container.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-bottom:8px;', onclick: () => switchTab('allactivity') }, 'View all activity'));
+
+  container.appendChild(makeExpandable('Add family member', renderAddMemberForm()));
+  container.appendChild(makeExpandable('Adjust a balance', renderAdjustBalanceForm()));
+}
+
+function makeExpandable(title, bodyNode) {
+  const wrap = el('div', { class: 'more-item' });
+  const titleRow = el('button', {
+    type: 'button', class: 'more-item-title-row',
+    onclick: () => wrap.classList.toggle('expanded'),
+  }, [el('span', {}, title), el('span', { class: 'more-item-chevron' }, '›')]);
+  const body = el('div', { class: 'more-item-body' }, bodyNode);
+  wrap.appendChild(titleRow);
+  wrap.appendChild(body);
+  return wrap;
+}
+
+function renderAddMemberForm() {
+  const form = el('form', {});
   const emailInput = el('input', { type: 'email', placeholder: 'Email', required: true });
   const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
   const roleSelect = el('select', {}, [el('option', { value: 'child' }, 'Child'), el('option', { value: 'admin' }, 'Admin')]);
   const allowanceInput = el('input', { type: 'number', min: '0', step: '1', placeholder: 'Weekly allowance (cents)', required: true });
-  memberForm.appendChild(el('label', {}, 'Add a family member'));
-  memberForm.appendChild(emailInput);
-  memberForm.appendChild(nameInput);
-  memberForm.appendChild(roleSelect);
-  memberForm.appendChild(allowanceInput);
-  memberForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add'));
-  memberForm.addEventListener('submit', async (event) => {
+  form.appendChild(emailInput);
+  form.appendChild(nameInput);
+  form.appendChild(roleSelect);
+  form.appendChild(allowanceInput);
+  form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add'));
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
       await callAddFamilyMember({
@@ -960,65 +1248,547 @@ function renderAdmin() {
       alert('Invite created -- they\'ll be added automatically the first time they sign in.');
     } catch (err) { alert(err.message); }
   });
-  container.appendChild(memberForm);
+  return form;
+}
 
-  // Ad hoc chore quick-pick templates
-  const templateForm = el('form', { class: 'booking-card' });
-  const templateNameInput = el('input', { type: 'text', placeholder: 'Template name (e.g. "Clean your room")', required: true });
-  const templateDescInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
-  templateForm.appendChild(el('label', {}, 'Add a quick-pick ad hoc chore'));
-  templateForm.appendChild(templateNameInput);
-  templateForm.appendChild(templateDescInput);
-  templateForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add to quick-pick list'));
-  templateForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-    await addDoc(fsCollection(db, `families/${state.familyId}/choreTemplates`), {
-      name: templateNameInput.value.trim(), description: templateDescInput.value.trim(),
-      createdBy: state.user.uid, createdAt: serverTimestamp(),
-    });
-    templateNameInput.value = ''; templateDescInput.value = '';
-  });
-  container.appendChild(templateForm);
-
-  // Extra jobs catalog
-  const catalogForm = el('form', { class: 'booking-card' });
-  const catNameInput = el('input', { type: 'text', placeholder: 'Job name', required: true });
-  const catAmountInput = el('input', { type: 'number', min: '0', step: '1', placeholder: 'Amount (cents)', required: true });
-  catalogForm.appendChild(el('label', {}, 'Add a listed extra job'));
-  catalogForm.appendChild(catNameInput);
-  catalogForm.appendChild(catAmountInput);
-  catalogForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add to list'));
-  catalogForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-    await addDoc(fsCollection(db, `families/${state.familyId}/extraJobsCatalog`), {
-      name: catNameInput.value.trim(), amountCents: parseInt(catAmountInput.value, 10) || 0,
-      active: true, createdBy: state.user.uid, createdAt: serverTimestamp(),
-    });
-    catNameInput.value = ''; catAmountInput.value = '';
-  });
-  container.appendChild(catalogForm);
-
-  // Manual balance adjustment (any time, not just Fridays)
-  const adjustForm = el('form', { class: 'booking-card' });
+function renderAdjustBalanceForm() {
+  const form = el('form', {});
   const memberSelect = el('select', {});
   state.members.forEach((m) => memberSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email)));
   const amountInput = el('input', { type: 'number', step: '1', placeholder: 'Amount in cents (negative to deduct)', required: true });
   const noteInput = el('input', { type: 'text', placeholder: 'Reason', required: true });
-  adjustForm.appendChild(el('label', {}, 'Adjust a balance'));
-  adjustForm.appendChild(memberSelect);
-  adjustForm.appendChild(amountInput);
-  adjustForm.appendChild(noteInput);
-  adjustForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Apply adjustment'));
-  adjustForm.addEventListener('submit', async (event) => {
+  form.appendChild(memberSelect);
+  form.appendChild(amountInput);
+  form.appendChild(noteInput);
+  form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Apply adjustment'));
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
       await callAdjustBalance({ memberUid: memberSelect.value, amountCents: parseInt(amountInput.value, 10), note: noteInput.value.trim() });
       amountInput.value = ''; noteInput.value = '';
     } catch (err) { alert(err.message); }
   });
-  container.appendChild(adjustForm);
+  return form;
+}
+
+// ---------------------------------------------------------------------
+// Manage Chores tab (admin) -- Active Chores / Chore Library
+// ---------------------------------------------------------------------
+let manageChoresSubTab = 'active';
+
+function renderManageChores() {
+  const container = document.getElementById('page-managechores');
+  container.innerHTML = '';
+
+  const subTabs = el('div', { class: 'sub-tabs' }, [
+    el('button', {
+      class: `sub-tab-btn ${manageChoresSubTab === 'active' ? 'active' : ''}`,
+      onclick: () => { manageChoresSubTab = 'active'; renderManageChores(); },
+    }, 'Active Chores'),
+    el('button', {
+      class: `sub-tab-btn ${manageChoresSubTab === 'library' ? 'active' : ''}`,
+      onclick: () => { manageChoresSubTab = 'library'; renderManageChores(); },
+    }, 'Chore Library'),
+  ]);
+  container.appendChild(subTabs);
+
+  if (manageChoresSubTab === 'library') {
+    renderChoreLibrary(container);
+    return;
+  }
+
+  renderActiveChores(container);
+}
+
+function renderActiveChores(container) {
+  const form = el('form', { class: 'booking-card' });
+  const nameInput = el('input', { type: 'text', placeholder: 'Chore name', required: true });
+  const iconInput = el('input', { type: 'text', placeholder: '🧹', class: 'icon-input' });
+  const descInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
+  const categorySelect = el('select', {}, [
+    el('option', { value: 'chore' }, 'Chore'),
+    el('option', { value: 'dailyTask' }, 'Daily task'),
+  ]);
+  const modeSelect = el('select', {}, [
+    el('option', { value: 'fixed' }, 'One specific person'),
+    el('option', { value: 'rotating' }, 'Rotates fairly among a group'),
+    el('option', { value: 'sharedAny' }, 'Shared -- any one of a group'),
+    el('option', { value: 'eachMember' }, 'Everyone does their own'),
+  ]);
+  const frequencySelect = el('select', {}, [
+    el('option', { value: 'weekly' }, 'Standing weekly chore'),
+    el('option', { value: 'daily' }, 'Daily task (every day)'),
+    el('option', { value: 'once' }, 'One-off task (this week only)'),
+  ]);
+
+  const poolWrap = el('div', {});
+  function renderAssigneeControl() {
+    poolWrap.innerHTML = '';
+    const children = state.members.filter((m) => m.role === 'child');
+    if (modeSelect.value === 'fixed') {
+      const select = el('select', { id: 'assigneeSingle' });
+      children.forEach((m) => select.appendChild(el('option', { value: m.uid }, m.displayName || m.email)));
+      poolWrap.appendChild(select);
+    } else {
+      poolWrap.appendChild(el('label', {}, 'Who\'s included'));
+      children.forEach((m) => {
+        const cb = el('input', { type: 'checkbox', value: m.uid, checked: 'checked', style: 'width:auto;display:inline-block;margin-right:6px;' });
+        poolWrap.appendChild(el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:4px;' }, [cb, m.displayName || m.email]));
+      });
+    }
+  }
+  modeSelect.addEventListener('change', renderAssigneeControl);
+  renderAssigneeControl();
+
+  form.appendChild(el('label', {}, 'Add a chore'));
+  if (state.choreTemplates.filter((t) => t.active !== false).length > 0) {
+    const templateSelect = el('select', {});
+    templateSelect.appendChild(el('option', { value: '' }, 'Quick-pick from library…'));
+    state.choreTemplates.filter((t) => t.active !== false).forEach((t) => {
+      templateSelect.appendChild(el('option', { value: t.id }, t.name));
+    });
+    templateSelect.addEventListener('change', () => {
+      const t = state.choreTemplates.find((tt) => tt.id === templateSelect.value);
+      if (t) {
+        nameInput.value = t.name;
+        descInput.value = t.description || '';
+        iconInput.value = t.icon || '';
+      }
+    });
+    form.appendChild(templateSelect);
+  }
+  form.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:flex-start;' }, [iconInput, nameInput]));
+  form.appendChild(descInput);
+  form.appendChild(el('label', {}, 'Category'));
+  form.appendChild(categorySelect);
+  form.appendChild(el('label', {}, 'Who does it'));
+  form.appendChild(modeSelect);
+  form.appendChild(poolWrap);
+  form.appendChild(el('label', {}, 'Frequency'));
+  form.appendChild(frequencySelect);
+  form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add chore'));
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+    const mode = modeSelect.value;
+    let assignedTo, rotation;
+    if (mode === 'fixed') {
+      assignedTo = [document.getElementById('assigneeSingle').value];
+    } else {
+      const checked = Array.from(poolWrap.querySelectorAll('input[type=checkbox]:checked')).map((cb) => cb.value);
+      assignedTo = checked;
+      if (mode === 'rotating') {
+        const weekId = getIsoWeekId(new Date());
+        const first = checked[0];
+        const history = {};
+        checked.forEach((uid) => { history[uid] = { timesAssigned: uid === first ? 1 : 0, lastAssignedWeekId: uid === first ? weekId : null }; });
+        rotation = { pool: checked, history, currentAssigneeUid: first || null, currentAssigneeWeekId: first ? weekId : null };
+      }
+    }
+
+    await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
+      name: nameInput.value.trim(),
+      icon: iconInput.value.trim() || null,
+      description: descInput.value.trim(),
+      category: categorySelect.value,
+      assignmentMode: mode,
+      assignedTo,
+      ...(rotation ? { rotation } : {}),
+      frequency: frequencySelect.value,
+      active: true,
+      createdBy: state.user.uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    nameInput.value = ''; iconInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly';
+  });
+  container.appendChild(form);
+
+  const needsReview = state.choreLog.filter((e) => e.status === 'done');
+  if (needsReview.length > 0) {
+    container.appendChild(el('h2', {}, 'Needs your review'));
+    needsReview.forEach((entry) => {
+      const chore = state.chores.find((c) => c.id === entry.choreId);
+      const card = el('div', { class: 'booking-card warn' }, [
+        el('div', { class: 'row' }, [
+          el('div', {}, [
+            el('div', { style: 'font-weight:600;' }, chore ? chore.name : entry.choreId),
+            el('div', { class: 'muted' }, memberLabel(entry.memberUid)),
+          ]),
+          el('span', { class: 'status-pill status-done' }, 'awaiting review'),
+        ]),
+      ]);
+      if (entry.photoStoragePath) {
+        const slot = el('div', { class: 'muted' });
+        card.appendChild(el('button', { class: 'pill small', onclick: () => viewProof(entry.photoStoragePath, slot) }, 'View photo'));
+        card.appendChild(slot);
+      }
+      const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
+      actions.appendChild(el('button', {
+        class: 'pill primary small',
+        onclick: async () => {
+          const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+          await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+            status: 'approved', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+          });
+        },
+      }, 'Approve'));
+      actions.appendChild(el('button', {
+        class: 'pill danger small',
+        onclick: async () => {
+          const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+          await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+            status: 'rejected', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+          });
+        },
+      }, 'Reject'));
+      card.appendChild(actions);
+      container.appendChild(card);
+    });
+  }
+
+  if (state.chores.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No chores yet.'));
+    return;
+  }
+
+  ['dailyTask', 'chore'].forEach((cat) => {
+    const chores = state.chores.filter((c) => (c.category || 'chore') === cat);
+    if (chores.length === 0) return;
+    container.appendChild(el('h2', { style: 'margin-top:16px;' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
+    chores.forEach((chore) => {
+      const mode = resolveAssignmentMode(chore);
+      let assignedLabel;
+      if (mode === 'rotating') {
+        const pool = (chore.rotation && chore.rotation.pool) || [];
+        assignedLabel = `Rotates among ${pool.map(memberLabel).join(', ')} — ${memberLabel(resolveBaseAssignee(chore))}'s turn`;
+      } else if (mode === 'sharedAny') {
+        assignedLabel = (chore.assignedTo || []).includes('any') ? 'Anyone' : `Shared: ${(chore.assignedTo || []).map(memberLabel).join(', ')}`;
+      } else if (mode === 'eachMember') {
+        assignedLabel = `Everyone: ${(chore.assignedTo || []).map(memberLabel).join(', ')}`;
+      } else {
+        assignedLabel = memberLabel((chore.assignedTo || [])[0]);
+      }
+      container.appendChild(el('div', { class: 'booking-card' }, [
+        el('div', { class: 'row' }, [
+          el('div', {}, [
+            el('div', { style: 'font-weight:600;' }, [choreLabel(chore), chore.active === false ? ' (inactive)' : '']),
+            el('div', { class: 'muted' }, assignedLabel),
+          ]),
+          el('button', {
+            class: 'pill small',
+            onclick: async () => {
+              const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+              await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { active: chore.active === false });
+            },
+          }, chore.active === false ? 'Reactivate' : 'Deactivate'),
+        ]),
+      ]));
+    });
+  });
+}
+
+function renderChoreLibrary(container) {
+  const form = el('form', { class: 'booking-card' });
+  const iconInput = el('input', { type: 'text', placeholder: '🧹', class: 'icon-input' });
+  const nameInput = el('input', { type: 'text', placeholder: 'Template name (e.g. "Clean your room")', required: true });
+  const descInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
+  form.appendChild(el('label', {}, 'Add a quick-pick template'));
+  form.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [iconInput, nameInput]));
+  form.appendChild(descInput);
+  form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add to library'));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+    await addDoc(fsCollection(db, `families/${state.familyId}/choreTemplates`), {
+      name: nameInput.value.trim(), icon: iconInput.value.trim() || null, description: descInput.value.trim(),
+      active: true, createdBy: state.user.uid, createdAt: serverTimestamp(),
+    });
+    nameInput.value = ''; iconInput.value = ''; descInput.value = '';
+  });
+  container.appendChild(form);
+
+  if (state.choreTemplates.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No templates yet.'));
+    return;
+  }
+  state.choreTemplates.forEach((t) => {
+    container.appendChild(el('div', { class: 'booking-card' }, [
+      el('div', { class: 'row' }, [
+        el('div', {}, [choreLabel(t), t.active === false ? ' (inactive)' : '']),
+        el('button', {
+          class: 'pill small',
+          onclick: async () => {
+            const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+            await updateDoc(fsDoc(db, `families/${state.familyId}/choreTemplates/${t.id}`), { active: t.active === false });
+          },
+        }, t.active === false ? 'Reactivate' : 'Deactivate'),
+      ]),
+    ]));
+  });
+}
+
+// ---------------------------------------------------------------------
+// All Activity tab (admin) -- every member's ledger + filter
+// ---------------------------------------------------------------------
+function renderAllActivity() {
+  const container = document.getElementById('page-allactivity');
+  container.innerHTML = '';
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+
+  const select = el('select', { onchange: (e) => subscribeLedger(e.target.value) });
+  state.members.forEach((m) => {
+    select.appendChild(el('option', { value: m.uid, selected: m.uid === state.ledgerViewUid ? 'selected' : null }, m.displayName || m.email));
+  });
+  container.appendChild(select);
+
+  if (state.ledger.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
+    return;
+  }
+
+  state.ledger.forEach((tx) => {
+    const positive = tx.amountCents >= 0;
+    container.appendChild(el('div', { class: 'booking-card' }, [
+      el('div', { class: 'row' }, [
+        el('div', {}, [
+          el('div', {}, tx.note || tx.type),
+          el('div', { class: 'muted' }, tx.type.replace(/_/g, ' ')),
+        ]),
+        el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+      ]),
+    ]));
+  });
+}
+
+// ---------------------------------------------------------------------
+// Settings tab (admin)
+// ---------------------------------------------------------------------
+function renderSettings() {
+  const container = document.getElementById('page-settings');
+  container.innerHTML = '';
+
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+  container.appendChild(el('div', { class: 'booking-card row' }, [
+    el('div', {}, 'Dark mode'),
+    el('button', {
+      class: 'pill small',
+      onclick: () => {
+        const next = currentTheme === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        try { localStorage.setItem('choresAppTheme', next); } catch (e) {}
+        renderSettings();
+      },
+    }, currentTheme === 'dark' ? 'Switch to light' : 'Switch to dark'),
+  ]));
+
+  const settingsForm = el('form', { class: 'booking-card' });
+  const currencySelect = el('select', {}, ['EUR', 'USD', 'GBP'].map((c) => el('option', { value: c }, c)));
+  currencySelect.value = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const daySelect = el('select', {}, dayNames.map((d, i) => el('option', { value: String(i) }, d)));
+  daySelect.value = String((state.family && state.family.settings && state.family.settings.payoutDayOfWeek) ?? 5);
+  settingsForm.appendChild(el('label', {}, 'Currency'));
+  settingsForm.appendChild(currencySelect);
+  settingsForm.appendChild(el('label', {}, 'Weekly allowance day'));
+  settingsForm.appendChild(daySelect);
+  settingsForm.appendChild(el('div', { class: 'muted', style: 'margin-bottom:8px;' }, 'Saved for future use -- the automatic payout currently runs Friday evening for all families regardless of this setting.'));
+  settingsForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Save'));
+  settingsForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+    await updateDoc(fsDoc(db, `families/${state.familyId}`), {
+      settings: { ...(state.family.settings || {}), currency: currencySelect.value, payoutDayOfWeek: parseInt(daySelect.value, 10) },
+    });
+  });
+  container.appendChild(settingsForm);
+
+  container.appendChild(el('button', {
+    class: 'pill', style: 'width:100%;margin-bottom:8px;',
+    onclick: () => { showScreen('onboarding'); wizardStep = 0; renderWizardStep(); },
+  }, 'Run setup wizard'));
+
+  container.appendChild(el('button', { class: 'pill', style: 'width:100%;', onclick: () => signOut(auth) }, 'Sign out'));
+}
+
+// ---------------------------------------------------------------------
+// Onboarding wizard (admin, first-run or re-entered from Settings)
+// ---------------------------------------------------------------------
+const STARTER_TEMPLATES = [
+  { name: 'Make your bed', icon: '🛏️', description: '', category: 'dailyTask', assignmentMode: 'eachMember', frequency: 'daily', checked: true },
+  { name: 'Tidy your room', icon: '🧹', description: '', category: 'dailyTask', assignmentMode: 'eachMember', frequency: 'daily', checked: true },
+  { name: 'Empty/fill the dishwasher', icon: '🍽️', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true },
+  { name: 'Take out the trash', icon: '🗑️', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true },
+  { name: 'Vacuum the living room', icon: '🧼', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true },
+];
+let wizardStep = 0;
+let wizardItems = STARTER_TEMPLATES.map((t) => ({ ...t }));
+let wizardSaveAsTemplates = true;
+
+function renderWizardProgress() {
+  const bar = document.getElementById('wizardProgress');
+  bar.innerHTML = '';
+  for (let i = 0; i < 5; i++) {
+    bar.appendChild(el('div', { class: `wizard-dot ${i <= wizardStep ? 'active' : ''}` }));
+  }
+}
+
+function renderWizardStep() {
+  renderWizardProgress();
+  const content = document.getElementById('wizardContent');
+  content.innerHTML = '';
+
+  if (wizardStep === 0) {
+    content.appendChild(el('div', { class: 'wizard-card' }, [
+      el('h1', {}, 'Welcome!'),
+      el('p', { class: 'muted' }, "Let's set up your family. You'll add your kids and any other admins, then pick daily tasks and chores to start with -- everything here can be changed later."),
+      el('button', { class: 'pill primary', style: 'width:100%;', onclick: () => { wizardStep = 1; renderWizardStep(); } }, 'Get started'),
+    ]));
+    return;
+  }
+
+  if (wizardStep === 1 || wizardStep === 2) {
+    const isAdminStep = wizardStep === 2;
+    const roleLabel = isAdminStep ? 'admin' : 'child';
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, isAdminStep ? 'Add other admins' : 'Add your kids'));
+    card.appendChild(el('p', { class: 'muted' }, isAdminStep
+      ? 'Optional -- add another parent/guardian who should also manage the app.'
+      : "Add each child's email. They'll be added automatically the first time they sign in with Google."));
+
+    const emailInput = el('input', { type: 'email', placeholder: 'Email' });
+    const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
+    const allowanceInput = isAdminStep ? null : el('input', { type: 'number', min: '0', step: '1', placeholder: 'Weekly allowance (cents)' });
+    card.appendChild(emailInput);
+    card.appendChild(nameInput);
+    if (allowanceInput) card.appendChild(allowanceInput);
+    const statusEl = el('div', { class: 'muted' });
+    card.appendChild(statusEl);
+    card.appendChild(el('button', {
+      class: 'pill primary', type: 'button', style: 'width:100%;margin-bottom:8px;',
+      onclick: async () => {
+        if (!emailInput.value.trim()) return;
+        try {
+          await callAddFamilyMember({
+            email: emailInput.value.trim(), displayName: nameInput.value.trim(), role: roleLabel,
+            baseWeeklyAllowanceCents: allowanceInput ? (parseInt(allowanceInput.value, 10) || 0) : 0,
+          });
+          statusEl.textContent = `Added ${emailInput.value.trim()}`;
+          emailInput.value = ''; nameInput.value = ''; if (allowanceInput) allowanceInput.value = '';
+        } catch (err) { statusEl.textContent = err.message; }
+      },
+    }, `Add another ${roleLabel}`));
+
+    const nav = el('div', { style: 'display:flex;gap:8px;' }, [
+      el('button', { class: 'pill', style: 'flex:1;', onclick: () => { wizardStep -= 1; renderWizardStep(); } }, 'Back'),
+      el('button', { class: 'pill primary', style: 'flex:1;', onclick: () => { wizardStep += 1; renderWizardStep(); } }, isAdminStep ? 'Next' : 'Next'),
+    ]);
+    card.appendChild(nav);
+    content.appendChild(card);
+    return;
+  }
+
+  if (wizardStep === 3) {
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, 'Quick-setup chores'));
+    card.appendChild(el('p', { class: 'muted' }, 'A starting list -- uncheck anything you don\'t want, edit names/icons, or add your own. Rotating chores default to sharing fairly among all your kids.'));
+
+    wizardItems.forEach((item, idx) => {
+      const row = el('div', { style: 'display:flex;gap:6px;align-items:center;margin-bottom:6px;' });
+      const cb = el('input', { type: 'checkbox', style: 'width:auto;', ...(item.checked ? { checked: 'checked' } : {}) });
+      cb.addEventListener('change', () => { item.checked = cb.checked; });
+      const iconInput = el('input', { type: 'text', class: 'icon-input', style: 'margin-bottom:0;' });
+      iconInput.value = item.icon;
+      iconInput.addEventListener('input', () => { item.icon = iconInput.value; });
+      const nameInput = el('input', { type: 'text', style: 'margin-bottom:0;' });
+      nameInput.value = item.name;
+      nameInput.addEventListener('input', () => { item.name = nameInput.value; });
+      row.appendChild(cb); row.appendChild(iconInput); row.appendChild(nameInput);
+      card.appendChild(row);
+      card.appendChild(el('div', { class: 'muted', style: 'margin:-4px 0 6px 26px;' }, item.category === 'dailyTask' ? 'Daily task — everyone does their own' : 'Chore — rotates fairly'));
+    });
+
+    card.appendChild(el('button', {
+      class: 'pill small', type: 'button', style: 'margin-bottom:10px;',
+      onclick: () => {
+        wizardItems.push({ name: '', icon: '', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true });
+        renderWizardStep();
+      },
+    }, '+ Add custom item'));
+
+    const saveTemplatesRow = el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:10px;' });
+    const saveTemplatesCb = el('input', { type: 'checkbox', style: 'width:auto;', ...(wizardSaveAsTemplates ? { checked: 'checked' } : {}) });
+    saveTemplatesCb.addEventListener('change', () => { wizardSaveAsTemplates = saveTemplatesCb.checked; });
+    saveTemplatesRow.appendChild(saveTemplatesCb);
+    saveTemplatesRow.appendChild(el('span', {}, 'Also save these as quick-pick templates'));
+    card.appendChild(saveTemplatesRow);
+
+    const nav = el('div', { style: 'display:flex;gap:8px;' }, [
+      el('button', { class: 'pill', style: 'flex:1;', onclick: () => { wizardStep -= 1; renderWizardStep(); } }, 'Back'),
+      el('button', {
+        class: 'pill primary', style: 'flex:1;',
+        onclick: async () => {
+          const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+          const children = state.members.filter((m) => m.role === 'child');
+          const childUids = children.map((m) => m.uid);
+          const weekId = getIsoWeekId(new Date());
+
+          for (const item of wizardItems) {
+            if (!item.checked || !item.name.trim()) continue;
+            let assignedTo, rotation;
+            if (item.assignmentMode === 'eachMember') {
+              assignedTo = childUids;
+            } else if (item.assignmentMode === 'rotating') {
+              assignedTo = childUids;
+              const first = childUids[0];
+              const history = {};
+              childUids.forEach((uid) => { history[uid] = { timesAssigned: uid === first ? 1 : 0, lastAssignedWeekId: uid === first ? weekId : null }; });
+              rotation = { pool: childUids, history, currentAssigneeUid: first || null, currentAssigneeWeekId: first ? weekId : null };
+            } else {
+              assignedTo = ['any'];
+            }
+            await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
+              name: item.name.trim(), icon: item.icon || null, description: item.description || '',
+              category: item.category, assignmentMode: item.assignmentMode, assignedTo,
+              ...(rotation ? { rotation } : {}),
+              frequency: item.frequency, active: true, createdBy: state.user.uid,
+              createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+            });
+            if (wizardSaveAsTemplates) {
+              await addDoc(fsCollection(db, `families/${state.familyId}/choreTemplates`), {
+                name: item.name.trim(), icon: item.icon || null, description: item.description || '',
+                active: true, createdBy: state.user.uid, createdAt: serverTimestamp(),
+              });
+            }
+          }
+          wizardStep = 4;
+          renderWizardStep();
+        },
+      }, 'Save and continue'),
+    ]);
+    card.appendChild(nav);
+    content.appendChild(card);
+    return;
+  }
+
+  if (wizardStep === 4) {
+    content.appendChild(el('div', { class: 'wizard-card' }, [
+      el('h1', {}, "You're all set!"),
+      el('p', { class: 'muted' }, 'Your family is ready to go. You can add more chores, invite more kids, or re-run this wizard anytime from Settings.'),
+      el('button', {
+        class: 'pill primary', style: 'width:100%;',
+        onclick: async () => {
+          const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+          await updateDoc(fsDoc(db, `families/${state.familyId}`), {
+            settings: { ...(state.family.settings || {}), onboardingCompletedAt: serverTimestamp() },
+          });
+          showScreen('app');
+          switchTab(state.currentTab);
+        },
+      }, 'Go to my dashboard'),
+    ]));
+  }
 }
 </script>
 </body>
