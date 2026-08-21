@@ -157,10 +157,23 @@
   }
   .sub-tab-btn.active { background: var(--accent2-fill); color: #fff; border-color: var(--accent2-fill); }
 
-  .wizard-progress { display: flex; gap: 6px; margin-bottom: 18px; }
-  .wizard-dot { flex: 1; height: 4px; border-radius: 2px; background: var(--panel2); }
+  .wizard-progress { display: flex; gap: 8px; margin-bottom: 22px; }
+  .wizard-dot { flex: 1; height: 6px; border-radius: 3px; background: var(--panel2); }
   .wizard-dot.active { background: var(--accent2-fill); }
-  .wizard-card { background: var(--panel); border-radius: 12px; padding: 16px; margin-bottom: 10px; text-align: left; }
+  .wizard-card { background: var(--panel); border-radius: 14px; padding: 24px 20px; margin-bottom: 12px; text-align: left; }
+  .wizard-card h1 { font-size: 1.6rem; margin-bottom: 10px; }
+  .wizard-card p { font-size: 1.05rem; line-height: 1.5; color: var(--text); }
+  .wizard-card label { font-size: 0.9rem; }
+  .wizard-card input, .wizard-card select { font-size: 1.05rem; padding: 13px 14px; margin-bottom: 12px; }
+  .wizard-card button.pill { font-size: 1rem; padding: 15px 20px; }
+  .wizard-card button.pill.small { font-size: 0.85rem; padding: 8px 14px; }
+
+  .credential-callout {
+    background: var(--panel2); border: 2px solid var(--accent2); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 10px;
+  }
+  .credential-callout .cred-line { font-size: 1.15rem; font-weight: 800; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .credential-callout .cred-label { font-size: 0.8rem; color: var(--muted); font-weight: 700; text-transform: uppercase; }
 </style>
 </head>
 <body>
@@ -1357,6 +1370,13 @@ function makeExpandable(title, bodyNode) {
   return wrap;
 }
 
+// Module-level, not a local closure var: adding a member triggers a live
+// members/ onSnapshot update, which re-renders the whole Admin Dashboard
+// (including a fresh renderAddMemberForm() call) immediately -- a local
+// variable here would be wiped by that re-render before anyone could read
+// a just-created child's one-time temp password.
+let adminDashboardAddedThisSession = [];
+
 function renderAddMemberForm() {
   const form = el('form', {});
   const roleSelect = el('select', {}, [el('option', { value: 'child' }, 'Child'), el('option', { value: 'admin' }, 'Admin')]);
@@ -1381,23 +1401,48 @@ function renderAddMemberForm() {
   form.appendChild(usernameInput);
   form.appendChild(nameInput);
   form.appendChild(allowanceInput);
+  const errorEl = el('p', { class: 'error-text', style: 'margin:0 0 8px;' });
+  errorEl.hidden = true;
+  form.appendChild(errorEl);
   form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add'));
+
+  if (adminDashboardAddedThisSession.length > 0) {
+    form.appendChild(el('div', { class: 'muted', style: 'font-weight:700;margin:12px 0 6px;' }, 'Added this session:'));
+    adminDashboardAddedThisSession.forEach((a) => {
+      if (a.mode === 'created') {
+        form.appendChild(el('div', { class: 'credential-callout' }, [
+          el('div', { class: 'cred-label' }, 'Username'),
+          el('div', { class: 'cred-line' }, a.username),
+          el('div', { class: 'cred-label', style: 'margin-top:8px;' }, 'Temporary password'),
+          el('div', { class: 'cred-line' }, a.tempPassword),
+        ]));
+      } else {
+        form.appendChild(el('div', { class: 'booking-card' }, `Invited: ${a.email}`));
+      }
+    });
+  }
+
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    errorEl.hidden = true;
+    const enteredEmail = emailInput.hidden ? '' : emailInput.value.trim();
     try {
       const result = await callAddFamilyMember({
-        email: emailInput.hidden ? undefined : emailInput.value.trim(),
+        email: emailInput.hidden ? undefined : enteredEmail,
         username: usernameInput.hidden ? undefined : usernameInput.value.trim(),
         displayName: nameInput.value.trim(),
         role: roleSelect.value, baseWeeklyAllowanceCents: parseInt(allowanceInput.value, 10) || 0,
       });
       emailInput.value = ''; usernameInput.value = ''; nameInput.value = ''; allowanceInput.value = '';
       if (result.data.mode === 'created') {
-        alert(`Account created.\n\nUsername: ${result.data.username}\nTemporary password: ${result.data.tempPassword}\n\nWrite this down -- it won't be shown again. Give it to your child so they can sign in (Kid sign-in tab).`);
+        adminDashboardAddedThisSession.push({ mode: 'created', username: result.data.username, tempPassword: result.data.tempPassword });
       } else {
-        alert('Invite created -- they\'ll be added automatically the first time they sign in with Google.');
+        adminDashboardAddedThisSession.push({ mode: 'invite', email: enteredEmail });
       }
-    } catch (err) { alert(err.message); }
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    }
   });
   return form;
 }
@@ -1776,6 +1821,11 @@ const STARTER_TEMPLATES = [
 let wizardStep = 0;
 let wizardItems = STARTER_TEMPLATES.map((t) => ({ ...t }));
 let wizardSaveAsTemplates = true;
+// Persists across re-renders (adding a second person, navigating back and
+// forth) -- a single overwritable status line was too easy to lose a
+// child's one-time temp password in, since it just gets replaced or wiped
+// whenever the step re-renders.
+let wizardAddedThisSession = [];
 
 function renderWizardProgress() {
   const bar = document.getElementById('wizardProgress');
@@ -1804,9 +1854,29 @@ function renderWizardStep() {
     const roleLabel = isAdminStep ? 'admin' : 'child';
     const card = el('div', { class: 'wizard-card' });
     card.appendChild(el('h1', {}, isAdminStep ? 'Add other admins' : 'Add your kids'));
-    card.appendChild(el('p', { class: 'muted' }, isAdminStep
+    card.appendChild(el('p', {}, isAdminStep
       ? 'Optional -- add another parent/guardian who should also manage the app.'
       : "Pick a username and weekly allowance for each child -- no email needed. You'll get a temporary password to give them."));
+
+    // Persistent list of everyone added so far this step -- never
+    // overwritten, so a child's one-time temp password can't get lost by
+    // adding a second kid or navigating away and back.
+    const addedHere = wizardAddedThisSession.filter((a) => a.role === roleLabel);
+    if (addedHere.length > 0) {
+      card.appendChild(el('div', { class: 'muted', style: 'font-weight:700;margin-bottom:6px;' }, 'Added so far:'));
+      addedHere.forEach((a) => {
+        if (a.mode === 'created') {
+          card.appendChild(el('div', { class: 'credential-callout' }, [
+            el('div', { class: 'cred-label' }, 'Username'),
+            el('div', { class: 'cred-line' }, a.username),
+            el('div', { class: 'cred-label', style: 'margin-top:8px;' }, 'Temporary password'),
+            el('div', { class: 'cred-line' }, a.tempPassword),
+          ]));
+        } else {
+          card.appendChild(el('div', { class: 'booking-card' }, `Invited: ${a.email}`));
+        }
+      });
+    }
 
     const emailInput = isAdminStep ? el('input', { type: 'email', placeholder: 'Email' }) : null;
     const usernameInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off' });
@@ -1816,11 +1886,13 @@ function renderWizardStep() {
     if (usernameInput) card.appendChild(usernameInput);
     card.appendChild(nameInput);
     if (allowanceInput) card.appendChild(allowanceInput);
-    const statusEl = el('div', { class: 'muted' });
-    card.appendChild(statusEl);
+    const errorEl = el('p', { class: 'error-text', style: 'margin:0 0 8px;' });
+    errorEl.hidden = true;
+    card.appendChild(errorEl);
     card.appendChild(el('button', {
       class: 'pill primary', type: 'button', style: 'width:100%;margin-bottom:8px;',
       onclick: async () => {
+        errorEl.hidden = true;
         if (isAdminStep && !emailInput.value.trim()) return;
         if (!isAdminStep && !usernameInput.value.trim()) return;
         try {
@@ -1831,20 +1903,24 @@ function renderWizardStep() {
             baseWeeklyAllowanceCents: allowanceInput ? (parseInt(allowanceInput.value, 10) || 0) : 0,
           });
           if (result.data.mode === 'created') {
-            statusEl.textContent = `Added ${result.data.username} -- temporary password: ${result.data.tempPassword} (write this down, give it to them)`;
+            wizardAddedThisSession.push({ role: roleLabel, mode: 'created', username: result.data.username, tempPassword: result.data.tempPassword });
           } else {
-            statusEl.textContent = `Invited ${emailInput.value.trim()}`;
+            wizardAddedThisSession.push({ role: roleLabel, mode: 'invite', email: emailInput.value.trim() });
           }
           if (emailInput) emailInput.value = '';
           if (usernameInput) usernameInput.value = '';
           nameInput.value = ''; if (allowanceInput) allowanceInput.value = '';
-        } catch (err) { statusEl.textContent = err.message; }
+          renderWizardStep();
+        } catch (err) {
+          errorEl.textContent = err.message;
+          errorEl.hidden = false;
+        }
       },
     }, `Add another ${roleLabel}`));
 
     const nav = el('div', { style: 'display:flex;gap:8px;' }, [
       el('button', { class: 'pill', style: 'flex:1;', onclick: () => { wizardStep -= 1; renderWizardStep(); } }, 'Back'),
-      el('button', { class: 'pill primary', style: 'flex:1;', onclick: () => { wizardStep += 1; renderWizardStep(); } }, isAdminStep ? 'Next' : 'Next'),
+      el('button', { class: 'pill primary', style: 'flex:1;', onclick: () => { wizardStep += 1; renderWizardStep(); } }, 'Next'),
     ]);
     card.appendChild(nav);
     content.appendChild(card);
