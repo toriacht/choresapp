@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Family Chores</title>
+<meta name="theme-color" content="#1e6fb8" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="favicon.ico" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<script>
+  // Applied before any CSS/paint, so there's never a flash of the wrong theme.
+  (function () {
+    try {
+      var saved = localStorage.getItem('choresAppTheme');
+      var theme = saved || 'dark';
+      document.documentElement.setAttribute('data-theme', theme);
+    } catch (e) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    }
+  })();
+</script>
+<style>
+  :root {
+    --bg: #f7fafc; --panel: #ffffff; --panel2: #eaf3fb; --text: #0f172a;
+    --muted: #334155; --accent: #4fa8e8; --accent2: #1e6fb8;
+    --border: #e6edf5; --warn: #92400e; --warn-tint-rgb: 146, 64, 14;
+    --success: #15803d; --danger: #b91c1c; --accent2-fill: #1e6fb8;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f172a; --panel: #1e293b; --panel2: #2c3b52; --text: #f1f5f9;
+    --muted: #a8b7c9; --accent: #7ec4f6; --accent2: #6bb3ea;
+    --border: #33445c; --warn: #fbbf24; --warn-tint-rgb: 251, 191, 36;
+    --success: #6ee7a0; --danger: #fca5a5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  .page-wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.25rem; font-weight: 700; margin: 0; }
+  h2 { font-size: 1rem; font-weight: 700; margin: 0 0 10px; }
+  .app-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .brand { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+  .booking-card {
+    background: var(--panel); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px;
+    border-left: 3px solid var(--accent2); box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+  }
+  .booking-card.warn { border-left-color: var(--warn); }
+  .booking-card.done { border-left-color: var(--success); }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .muted { color: var(--muted); font-size: 0.85rem; }
+  .amount { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .amount.positive { color: var(--success); }
+  .amount.negative { color: var(--danger); }
+
+  .status-pill {
+    display: inline-block; border-radius: 999px; padding: 2px 9px; font-size: 0.65rem;
+    font-weight: 700; text-transform: uppercase; color: #fff;
+  }
+  .status-pending, .status-proposed { background: #64748b; }
+  .status-done { background: var(--accent2); }
+  .status-needs_review { background: #d97706; }
+  .status-approved, .status-paid { background: #16a34a; }
+  .status-rejected { background: #dc2626; }
+
+  button.pill, a.pill {
+    display: inline-block; border: none; border-radius: 999px; padding: 9px 16px;
+    font-size: 0.85rem; font-weight: 700; cursor: pointer; background: var(--panel2); color: var(--text);
+  }
+  button.pill.primary { background: var(--accent2-fill); color: #fff; }
+  button.pill.danger { background: var(--danger); color: #fff; }
+  button.pill:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.pill.small { padding: 6px 12px; font-size: 0.75rem; }
+
+  input, select, textarea {
+    width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 0.9rem; margin-bottom: 8px;
+  }
+  label { font-size: 0.78rem; font-weight: 600; color: var(--muted); display: block; margin-bottom: 4px; }
+  .field { margin-bottom: 10px; }
+  form .pill.primary { margin-top: 4px; }
+
+  .more-item { background: var(--panel); border-radius: 12px; margin-bottom: 8px; overflow: hidden; }
+  .more-item-title-row {
+    width: 100%; display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; background: none; border: none; cursor: pointer; color: var(--text); font-size: 0.9rem;
+  }
+  .more-item-chevron { transition: transform 0.15s ease; color: var(--muted); }
+  .more-item.expanded .more-item-chevron { transform: rotate(90deg); }
+  .more-item-body { display: none; padding: 0 14px 14px; }
+  .more-item.expanded .more-item-body { display: block; }
+
+  .skeleton-bar { height: 52px; border-radius: 12px; margin-bottom: 10px; background: var(--panel2); opacity: 0.6; }
+
+  .tab-page[hidden] { display: none; }
+  .empty-state { color: var(--muted); font-size: 0.85rem; padding: 24px 4px; text-align: center; }
+
+  .bottom-nav {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    display: flex; background: var(--panel); border-top: 1px solid var(--border);
+    box-shadow: 0 -2px 10px rgba(15,23,42,0.06);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .nav-btn {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 9px 4px 7px; border: none; background: none; color: var(--muted);
+    font-size: 0.65rem; font-weight: 600; cursor: pointer;
+  }
+  .nav-btn.active { color: var(--accent2); }
+  .nav-icon { width: 22px; height: 22px; }
+
+  .center-screen {
+    min-height: 70vh; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; text-align: center; gap: 14px; padding: 24px;
+  }
+  .center-screen p { color: var(--muted); max-width: 320px; margin: 0; }
+  .error-text { color: var(--danger); font-size: 0.85rem; margin-top: 6px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <div id="loadingScreen" class="center-screen">
+    <div class="skeleton-bar" style="width:120px;height:120px;border-radius:50%;"></div>
+    <p>Loading&hellip;</p>
+  </div>
+
+  <div id="signInScreen" class="center-screen" hidden>
+    <h1>Family Chores</h1>
+    <p>Track chores, allowances, and extra jobs together.</p>
+    <button class="pill primary" id="signInBtn">Sign in with Google</button>
+    <p class="error-text" id="signInError" hidden></p>
+  </div>
+
+  <div id="setupScreen" class="center-screen" hidden>
+    <h1>Almost there</h1>
+    <p>This Google account isn't set up in any family yet. Ask your family admin to add your email, or set up a brand-new family below.</p>
+    <form id="createFamilyForm" style="width:100%;max-width:280px;text-align:left;">
+      <div class="field">
+        <label for="familyNameInput">Family name</label>
+        <input id="familyNameInput" type="text" placeholder="e.g. The Smiths" required />
+      </div>
+      <button class="pill primary" type="submit" style="width:100%;">Create a new family</button>
+    </form>
+    <p class="error-text" id="setupError" hidden></p>
+    <button class="pill" id="setupSignOutBtn">Sign out</button>
+  </div>
+
+  <div id="app" hidden>
+    <div class="app-header">
+      <div>
+        <div class="brand">Family Chores</div>
+        <h1 id="pageTitle">Home</h1>
+      </div>
+      <button class="pill small" id="signOutBtn">Sign out</button>
+    </div>
+
+    <section class="tab-page" data-page="home" id="page-home"></section>
+    <section class="tab-page" data-page="chores" id="page-chores" hidden></section>
+    <section class="tab-page" data-page="ledger" id="page-ledger" hidden></section>
+    <section class="tab-page" data-page="jobs" id="page-jobs" hidden></section>
+    <section class="tab-page" data-page="admin" id="page-admin" hidden></section>
+
+    <nav class="bottom-nav" id="bottomNav">
+      <button type="button" class="nav-btn active" data-tab="home">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+        <span>Home</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="chores">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1h11"/></svg>
+        <span>Chores</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="ledger">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        <span>Ledger</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="jobs">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+        <span>Jobs</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="admin" id="adminNavBtn" hidden>
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+        <span>Admin</span>
+      </button>
+    </nav>
+  </div>
+
+</div>
+
+<script type="module">
+import {
+  initializeApp,
+} from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js';
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
+} from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js';
+import {
+  getFirestore, doc, getDoc, collection, query, where, orderBy, onSnapshot, connectFirestoreEmulator,
+} from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js';
+import {
+  getFunctions, httpsCallable, connectFunctionsEmulator,
+} from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-functions.js';
+import {
+  getStorage, ref, uploadBytes, getBytes, connectStorageEmulator,
+} from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-storage.js';
+
+// Firebase client config is meant to be public -- Firestore/Storage
+// Security Rules and Cloud Functions are what's actually private. Replace
+// these placeholder values with the ones from your Firebase project
+// settings (Project settings > General > Your apps > Web app).
+const firebaseConfig = {
+  apiKey: 'AIzaSyCITBcYhETNBShiL13zfC1oUbZ1bm6F_1A',
+  authDomain: 'chores-app-9e6a3.firebaseapp.com',
+  projectId: 'chores-app-9e6a3',
+  storageBucket: 'chores-app-9e6a3.firebasestorage.app',
+  messagingSenderId: '870507911406',
+  appId: '1:870507911406:web:d11d5cd64adf8f1e6ebbff',
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const functions = getFunctions(app);
+const storage = getStorage(app);
+
+if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+  connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
+  connectFirestoreEmulator(db, 'localhost', 8080);
+  connectFunctionsEmulator(functions, 'localhost', 5001);
+  connectStorageEmulator(storage, 'localhost', 9199);
+}
+
+const callMarkChoreDone = httpsCallable(functions, 'markChoreDone');
+const callApproveExtraJob = httpsCallable(functions, 'approveExtraJob');
+const callAdjustBalance = httpsCallable(functions, 'adjustBalance');
+const callAddFamilyMember = httpsCallable(functions, 'addFamilyMember');
+const callCreateFamilyAndAdmin = httpsCallable(functions, 'createFamilyAndAdmin');
+
+// ---- Same ISO-week algorithm as functions/lib/choreLog.js:getIsoWeekId,
+// duplicated here (not shared code -- this is a zero-build static frontend)
+// purely for display grouping. The server always has the final say on
+// which week a chore-log entry actually belongs to.
+function getIsoWeekId(date) {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+}
+
+function formatCents(cents, currency) {
+  const value = (cents || 0) / 100;
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'EUR' }).format(value);
+  } catch (e) {
+    return `${value.toFixed(2)}`;
+  }
+}
+
+function el(tag, attrs, children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'class') node.className = v;
+    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined) node.setAttribute(k, v);
+  }
+  for (const child of [].concat(children || [])) {
+    if (child === null || child === undefined) continue;
+    node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
+  }
+  return node;
+}
+
+// ---------------------------------------------------------------------
+// App state
+// ---------------------------------------------------------------------
+const state = {
+  user: null,
+  familyId: null,
+  role: null,
+  member: null,
+  family: null,
+  members: [],
+  chores: [],
+  choreLog: [],
+  choreTemplates: [],
+  catalog: [],
+  extraJobs: [],
+  ledger: [],
+  ledgerViewUid: null,
+  currentTab: localStorage.getItem('choresAppTab') || 'home',
+};
+let unsubscribers = [];
+
+function clearSubscriptions() {
+  unsubscribers.forEach((fn) => fn());
+  unsubscribers = [];
+}
+
+// ---------------------------------------------------------------------
+// Screens
+// ---------------------------------------------------------------------
+const screens = {
+  loading: document.getElementById('loadingScreen'),
+  signIn: document.getElementById('signInScreen'),
+  setup: document.getElementById('setupScreen'),
+  app: document.getElementById('app'),
+};
+function showScreen(name) {
+  Object.entries(screens).forEach(([key, node]) => { node.hidden = key !== name; });
+}
+
+document.getElementById('signInBtn').addEventListener('click', async () => {
+  document.getElementById('signInError').hidden = true;
+  try {
+    await signInWithPopup(auth, new GoogleAuthProvider());
+  } catch (err) {
+    const errorEl = document.getElementById('signInError');
+    errorEl.textContent = err.message;
+    errorEl.hidden = false;
+  }
+});
+document.getElementById('signOutBtn').addEventListener('click', () => signOut(auth));
+document.getElementById('setupSignOutBtn').addEventListener('click', () => signOut(auth));
+
+document.getElementById('createFamilyForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const familyName = document.getElementById('familyNameInput').value.trim();
+  const errorEl = document.getElementById('setupError');
+  errorEl.hidden = true;
+  try {
+    await callCreateFamilyAndAdmin({ familyName });
+    await resolveMembership();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.hidden = false;
+  }
+});
+
+// ---------------------------------------------------------------------
+// Auth + membership resolution
+// ---------------------------------------------------------------------
+onAuthStateChanged(auth, async (user) => {
+  clearSubscriptions();
+  state.user = user;
+  if (!user) {
+    showScreen('signIn');
+    return;
+  }
+  showScreen('loading');
+  await resolveMembership();
+});
+
+async function resolveMembership() {
+  const userFamilySnap = await getDoc(doc(db, `userFamilies/${state.user.uid}`));
+  if (!userFamilySnap.exists()) {
+    showScreen('setup');
+    return;
+  }
+  const { familyId, role } = userFamilySnap.data();
+  state.familyId = familyId;
+  state.role = role;
+  state.ledgerViewUid = state.user.uid;
+  document.getElementById('adminNavBtn').hidden = role !== 'admin';
+  startFamilySubscriptions();
+  showScreen('app');
+  switchTab(state.currentTab);
+}
+
+// ---------------------------------------------------------------------
+// Firestore subscriptions
+// ---------------------------------------------------------------------
+function startFamilySubscriptions() {
+  const familyId = state.familyId;
+
+  unsubscribers.push(onSnapshot(doc(db, `families/${familyId}`), (snap) => {
+    state.family = snap.exists() ? snap.data() : null;
+    renderCurrentTab();
+  }));
+
+  unsubscribers.push(onSnapshot(collection(db, `families/${familyId}/members`), (snap) => {
+    state.members = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+    const me = state.members.find((m) => m.uid === state.user.uid);
+    if (me) state.member = me;
+    renderCurrentTab();
+  }));
+
+  unsubscribers.push(onSnapshot(collection(db, `families/${familyId}/chores`), (snap) => {
+    state.chores = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderCurrentTab();
+  }));
+
+  const weekId = getIsoWeekId(new Date());
+  unsubscribers.push(onSnapshot(
+    query(collection(db, `families/${familyId}/choreLog`), where('weekId', '==', weekId)),
+    (snap) => {
+      state.choreLog = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderCurrentTab();
+    }
+  ));
+
+  unsubscribers.push(onSnapshot(collection(db, `families/${familyId}/choreTemplates`), (snap) => {
+    state.choreTemplates = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderCurrentTab();
+  }));
+
+  unsubscribers.push(onSnapshot(collection(db, `families/${familyId}/extraJobsCatalog`), (snap) => {
+    state.catalog = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderCurrentTab();
+  }));
+
+  unsubscribers.push(onSnapshot(
+    query(collection(db, `families/${familyId}/extraJobs`), orderBy('createdAt', 'desc')),
+    (snap) => {
+      state.extraJobs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderCurrentTab();
+    }
+  ));
+
+  subscribeLedger(state.ledgerViewUid);
+}
+
+let unsubLedger = null;
+function subscribeLedger(memberUid) {
+  if (unsubLedger) unsubLedger();
+  state.ledgerViewUid = memberUid;
+  unsubLedger = onSnapshot(
+    query(
+      collection(db, `families/${state.familyId}/ledger`),
+      where('memberUid', '==', memberUid),
+      orderBy('createdAt', 'desc')
+    ),
+    (snap) => {
+      state.ledger = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderCurrentTab();
+    }
+  );
+  unsubscribers.push(() => unsubLedger && unsubLedger());
+}
+
+// ---------------------------------------------------------------------
+// Tab navigation (bottom nav + swipe, mirrors the sibling project)
+// ---------------------------------------------------------------------
+const TITLES = { home: 'Home', chores: 'Chores', ledger: 'Ledger', jobs: 'Extra Jobs', admin: 'Admin' };
+
+function switchTab(tab) {
+  state.currentTab = tab;
+  localStorage.setItem('choresAppTab', tab);
+  document.getElementById('pageTitle').textContent = TITLES[tab] || 'Home';
+  document.querySelectorAll('.tab-page').forEach((section) => {
+    section.hidden = section.dataset.page !== tab;
+  });
+  document.querySelectorAll('.nav-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  window.scrollTo(0, 0);
+  renderCurrentTab();
+}
+
+document.getElementById('bottomNav').addEventListener('click', (event) => {
+  const btn = event.target.closest('.nav-btn');
+  if (btn && !btn.hidden) switchTab(btn.dataset.tab);
+});
+
+let touchStartX = null;
+document.addEventListener('touchstart', (e) => { touchStartX = e.changedTouches[0].clientX; }, { passive: true });
+document.addEventListener('touchend', (e) => {
+  if (touchStartX === null || screens.app.hidden) return;
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  touchStartX = null;
+  if (Math.abs(dx) < 60) return;
+  const order = ['home', 'chores', 'ledger', 'jobs', 'admin'].filter(
+    (t) => t !== 'admin' || state.role === 'admin'
+  );
+  const idx = order.indexOf(state.currentTab);
+  const nextIdx = dx < 0 ? idx + 1 : idx - 1;
+  if (nextIdx >= 0 && nextIdx < order.length) switchTab(order[nextIdx]);
+}, { passive: true });
+
+function renderCurrentTab() {
+  if (screens.app.hidden) return;
+  const renderers = { home: renderHome, chores: renderChores, ledger: renderLedger, jobs: renderJobs, admin: renderAdmin };
+  const renderer = renderers[state.currentTab];
+  if (renderer) renderer();
+}
+
+// ---------------------------------------------------------------------
+// Photo proof upload
+// ---------------------------------------------------------------------
+async function uploadProof(kind, entryId, file) {
+  if (!file) return null;
+  const path = `families/${state.familyId}/${kind}/${state.user.uid}/${entryId}.jpg`;
+  await uploadBytes(ref(storage, path), file, { contentType: file.type || 'image/jpeg' });
+  return path;
+}
+
+async function viewProof(path, imgSlot) {
+  imgSlot.textContent = 'Loading photo…';
+  try {
+    const bytes = await getBytes(ref(storage, path));
+    const url = URL.createObjectURL(new Blob([bytes]));
+    imgSlot.innerHTML = '';
+    imgSlot.appendChild(el('img', { src: url, style: 'max-width:100%;border-radius:8px;' }));
+  } catch (err) {
+    imgSlot.textContent = 'Could not load photo.';
+  }
+}
+
+// ---------------------------------------------------------------------
+// Home tab
+// ---------------------------------------------------------------------
+function renderHome() {
+  const container = document.getElementById('page-home');
+  container.innerHTML = '';
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+
+  container.appendChild(el('div', { class: 'booking-card' }, [
+    el('div', { class: 'muted' }, 'Your balance'),
+    el('div', { style: 'font-size:1.8rem;font-weight:800;' }, formatCents(state.member ? state.member.balanceCents : 0, currency)),
+  ]));
+
+  container.appendChild(el('h2', {}, "This week's chores"));
+
+  const myChores = state.chores.filter(
+    (c) => c.active !== false && (c.assignedTo || []).some((a) => a === state.user.uid || a === 'any')
+  );
+
+  if (myChores.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No chores assigned this week.'));
+    return;
+  }
+
+  myChores.forEach((chore) => {
+    const entry = state.choreLog.find((e) => e.choreId === chore.id && e.memberUid === state.user.uid);
+    const status = entry ? entry.status : 'pending';
+    const card = el('div', { class: `booking-card ${status === 'approved' ? 'done' : ''} ${status === 'rejected' ? 'warn' : ''}` });
+    const fileInputId = `proof-${chore.id}`;
+    card.appendChild(el('div', { class: 'row' }, [
+      el('div', {}, [
+        el('div', { style: 'font-weight:600;' }, chore.name),
+        chore.description ? el('div', { class: 'muted' }, chore.description) : null,
+      ]),
+      el('span', { class: `status-pill status-${status}` }, status.replace('_', ' ')),
+    ]));
+
+    if (status !== 'done' && status !== 'approved') {
+      const fileInput = el('input', { type: 'file', accept: 'image/*', capture: 'environment', id: fileInputId, style: 'margin-top:8px;' });
+      const markBtn = el('button', {
+        class: 'pill primary small', style: 'margin-top:8px;',
+        onclick: async () => {
+          markBtn.disabled = true;
+          try {
+            const weekId = getIsoWeekId(new Date());
+            const entryId = `${weekId}_${chore.id}_${state.user.uid}`;
+            const photoStoragePath = await uploadProof('choreProof', entryId, fileInput.files[0]);
+            await callMarkChoreDone({ choreId: chore.id, photoStoragePath });
+          } catch (err) {
+            alert(err.message);
+          } finally {
+            markBtn.disabled = false;
+          }
+        },
+      }, 'Mark done');
+      card.appendChild(fileInput);
+      card.appendChild(markBtn);
+    } else if (entry && entry.photoStoragePath) {
+      const slot = el('div', { class: 'muted' });
+      const viewBtn = el('button', { class: 'pill small', onclick: () => viewProof(entry.photoStoragePath, slot) }, 'View photo');
+      card.appendChild(viewBtn);
+      card.appendChild(slot);
+    }
+
+    container.appendChild(card);
+  });
+}
+
+// ---------------------------------------------------------------------
+// Chores tab
+// ---------------------------------------------------------------------
+function renderChores() {
+  const container = document.getElementById('page-chores');
+  container.innerHTML = '';
+
+  if (state.role === 'admin') {
+    const form = el('form', { class: 'booking-card' });
+    const nameInput = el('input', { type: 'text', placeholder: 'Chore name', required: true });
+    const descInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
+    const assignSelect = el('select', {});
+    assignSelect.appendChild(el('option', { value: 'any' }, 'Anyone'));
+    state.members.filter((m) => m.role === 'child').forEach((m) => {
+      assignSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email));
+    });
+    const frequencySelect = el('select', {}, [
+      el('option', { value: 'weekly' }, 'Standing weekly chore'),
+      el('option', { value: 'once' }, 'One-off task (this week only)'),
+    ]);
+
+    form.appendChild(el('label', {}, 'Add a chore'));
+    if (state.choreTemplates.length > 0) {
+      const templateSelect = el('select', {});
+      templateSelect.appendChild(el('option', { value: '' }, 'Quick-pick from list…'));
+      state.choreTemplates.forEach((t) => {
+        templateSelect.appendChild(el('option', { value: t.id }, t.name));
+      });
+      templateSelect.addEventListener('change', () => {
+        const t = state.choreTemplates.find((tt) => tt.id === templateSelect.value);
+        if (t) {
+          nameInput.value = t.name;
+          descInput.value = t.description || '';
+          frequencySelect.value = 'once';
+        }
+      });
+      form.appendChild(templateSelect);
+    }
+    form.appendChild(nameInput);
+    form.appendChild(descInput);
+    form.appendChild(assignSelect);
+    form.appendChild(frequencySelect);
+    form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add chore'));
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
+        name: nameInput.value.trim(),
+        description: descInput.value.trim(),
+        assignedTo: [assignSelect.value],
+        frequency: frequencySelect.value,
+        active: true,
+        createdBy: state.user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      nameInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly';
+    });
+    container.appendChild(form);
+
+    const needsReview = state.choreLog.filter((e) => e.status === 'done');
+    if (needsReview.length > 0) {
+      container.appendChild(el('h2', {}, 'Needs your review'));
+      needsReview.forEach((entry) => {
+        const chore = state.chores.find((c) => c.id === entry.choreId);
+        const kid = state.members.find((m) => m.uid === entry.memberUid);
+        const card = el('div', { class: 'booking-card warn' }, [
+          el('div', { class: 'row' }, [
+            el('div', {}, [
+              el('div', { style: 'font-weight:600;' }, chore ? chore.name : entry.choreId),
+              el('div', { class: 'muted' }, kid ? (kid.displayName || kid.email) : entry.memberUid),
+            ]),
+            el('span', { class: 'status-pill status-done' }, 'awaiting review'),
+          ]),
+        ]);
+        if (entry.photoStoragePath) {
+          const slot = el('div', { class: 'muted' });
+          card.appendChild(el('button', { class: 'pill small', onclick: () => viewProof(entry.photoStoragePath, slot) }, 'View photo'));
+          card.appendChild(slot);
+        }
+        const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
+        actions.appendChild(el('button', {
+          class: 'pill primary small',
+          onclick: async () => {
+            const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+            await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+              status: 'approved', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+            });
+          },
+        }, 'Approve'));
+        actions.appendChild(el('button', {
+          class: 'pill danger small',
+          onclick: async () => {
+            const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+            await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+              status: 'rejected', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+            });
+          },
+        }, 'Reject'));
+        card.appendChild(actions);
+        container.appendChild(card);
+      });
+    }
+  }
+
+  if (state.chores.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No chores yet.'));
+    return;
+  }
+
+  state.chores.forEach((chore) => {
+    const card = el('div', { class: `booking-card ${chore.active === false ? '' : ''}` });
+    const assignedLabel = (chore.assignedTo || []).includes('any')
+      ? 'Anyone'
+      : (chore.assignedTo || []).map((uid) => {
+          const m = state.members.find((mm) => mm.uid === uid);
+          return m ? (m.displayName || m.email) : uid;
+        }).join(', ');
+    card.appendChild(el('div', { class: 'row' }, [
+      el('div', {}, [
+        el('div', { style: 'font-weight:600;' }, chore.name + (chore.active === false ? ' (inactive)' : '')),
+        el('div', { class: 'muted' }, `Assigned: ${assignedLabel}`),
+      ]),
+      state.role === 'admin'
+        ? el('button', {
+            class: 'pill small',
+            onclick: async () => {
+              const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+              await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { active: chore.active === false });
+            },
+          }, chore.active === false ? 'Reactivate' : 'Deactivate')
+        : null,
+    ]));
+    container.appendChild(card);
+  });
+}
+
+// ---------------------------------------------------------------------
+// Ledger tab
+// ---------------------------------------------------------------------
+function renderLedger() {
+  const container = document.getElementById('page-ledger');
+  container.innerHTML = '';
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+
+  if (state.role === 'admin') {
+    const select = el('select', {
+      onchange: (e) => subscribeLedger(e.target.value),
+    });
+    state.members.forEach((m) => {
+      select.appendChild(el('option', { value: m.uid, selected: m.uid === state.ledgerViewUid ? 'selected' : null }, m.displayName || m.email));
+    });
+    container.appendChild(select);
+  }
+
+  if (state.ledger.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
+    return;
+  }
+
+  state.ledger.forEach((tx) => {
+    const positive = tx.amountCents >= 0;
+    container.appendChild(el('div', { class: 'booking-card' }, [
+      el('div', { class: 'row' }, [
+        el('div', {}, [
+          el('div', {}, tx.note || tx.type),
+          el('div', { class: 'muted' }, tx.type.replace(/_/g, ' ')),
+        ]),
+        el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+      ]),
+    ]));
+  });
+}
+
+// ---------------------------------------------------------------------
+// Extra Jobs tab
+// ---------------------------------------------------------------------
+function renderJobs() {
+  const container = document.getElementById('page-jobs');
+  container.innerHTML = '';
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+
+  if (state.role === 'child') {
+    container.appendChild(el('h2', {}, 'Available jobs'));
+    const activeCatalog = state.catalog.filter((c) => c.active !== false);
+    if (activeCatalog.length === 0) {
+      container.appendChild(el('div', { class: 'empty-state' }, 'No listed jobs right now.'));
+    }
+    activeCatalog.forEach((job) => {
+      container.appendChild(el('div', { class: 'booking-card' }, [
+        el('div', { class: 'row' }, [
+          el('div', {}, [
+            el('div', { style: 'font-weight:600;' }, job.name),
+            job.description ? el('div', { class: 'muted' }, job.description) : null,
+          ]),
+          el('div', { class: 'amount positive' }, formatCents(job.amountCents, currency)),
+        ]),
+        el('button', {
+          class: 'pill primary small', style: 'margin-top:8px;',
+          onclick: async () => {
+            const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+            await addDoc(fsCollection(db, `families/${state.familyId}/extraJobs`), {
+              description: job.name, proposedBy: state.user.uid, amountCents: job.amountCents,
+              catalogJobId: job.id, status: 'proposed', createdAt: serverTimestamp(),
+            });
+          },
+        }, 'Claim'),
+      ]));
+    });
+
+    const form = el('form', { class: 'booking-card' });
+    const descInput = el('input', { type: 'text', placeholder: 'Describe the job', required: true });
+    const amountInput = el('input', { type: 'number', min: '0', step: '1', placeholder: 'Amount you\'re asking for (cents)', required: true });
+    form.appendChild(el('label', {}, 'Propose your own job'));
+    form.appendChild(descInput);
+    form.appendChild(amountInput);
+    form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Propose'));
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await addDoc(fsCollection(db, `families/${state.familyId}/extraJobs`), {
+        description: descInput.value.trim(), proposedBy: state.user.uid,
+        amountCents: parseInt(amountInput.value, 10) || 0, catalogJobId: null,
+        status: 'proposed', createdAt: serverTimestamp(),
+      });
+      descInput.value = ''; amountInput.value = '';
+    });
+    container.appendChild(form);
+  }
+
+  container.appendChild(el('h2', { style: 'margin-top:16px;' }, state.role === 'admin' ? 'Pending approval' : 'Your jobs'));
+  const visibleJobs = state.role === 'admin'
+    ? state.extraJobs
+    : state.extraJobs.filter((j) => j.proposedBy === state.user.uid);
+
+  if (visibleJobs.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'Nothing here yet.'));
+    return;
+  }
+
+  visibleJobs.forEach((job) => {
+    const proposer = state.members.find((m) => m.uid === job.proposedBy);
+    const card = el('div', { class: 'booking-card' }, [
+      el('div', { class: 'row' }, [
+        el('div', {}, [
+          el('div', { style: 'font-weight:600;' }, job.description),
+          el('div', { class: 'muted' }, `${proposer ? proposer.displayName || proposer.email : job.proposedBy} · ${formatCents(job.amountCents, currency)}`),
+        ]),
+        el('span', { class: `status-pill status-${job.status}` }, job.status),
+      ]),
+    ]);
+    if (state.role === 'admin' && job.status === 'proposed') {
+      const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
+      actions.appendChild(el('button', {
+        class: 'pill primary small',
+        onclick: async () => {
+          try { await callApproveExtraJob({ jobId: job.id, approve: true }); } catch (err) { alert(err.message); }
+        },
+      }, 'Approve'));
+      actions.appendChild(el('button', {
+        class: 'pill danger small',
+        onclick: async () => {
+          try { await callApproveExtraJob({ jobId: job.id, approve: false }); } catch (err) { alert(err.message); }
+        },
+      }, 'Reject'));
+      card.appendChild(actions);
+    }
+    container.appendChild(card);
+  });
+}
+
+// ---------------------------------------------------------------------
+// Admin tab
+// ---------------------------------------------------------------------
+function renderAdmin() {
+  const container = document.getElementById('page-admin');
+  container.innerHTML = '';
+  if (state.role !== 'admin') {
+    container.appendChild(el('div', { class: 'empty-state' }, 'Admins only.'));
+    return;
+  }
+
+  // Add family member
+  const memberForm = el('form', { class: 'booking-card' });
+  const emailInput = el('input', { type: 'email', placeholder: 'Email', required: true });
+  const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
+  const roleSelect = el('select', {}, [el('option', { value: 'child' }, 'Child'), el('option', { value: 'admin' }, 'Admin')]);
+  const allowanceInput = el('input', { type: 'number', min: '0', step: '1', placeholder: 'Weekly allowance (cents)', required: true });
+  memberForm.appendChild(el('label', {}, 'Add a family member'));
+  memberForm.appendChild(emailInput);
+  memberForm.appendChild(nameInput);
+  memberForm.appendChild(roleSelect);
+  memberForm.appendChild(allowanceInput);
+  memberForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add'));
+  memberForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      await callAddFamilyMember({
+        email: emailInput.value.trim(), displayName: nameInput.value.trim(),
+        role: roleSelect.value, baseWeeklyAllowanceCents: parseInt(allowanceInput.value, 10) || 0,
+      });
+      emailInput.value = ''; nameInput.value = ''; allowanceInput.value = '';
+      alert('Invite created -- they\'ll be added automatically the first time they sign in.');
+    } catch (err) { alert(err.message); }
+  });
+  container.appendChild(memberForm);
+
+  // Ad hoc chore quick-pick templates
+  const templateForm = el('form', { class: 'booking-card' });
+  const templateNameInput = el('input', { type: 'text', placeholder: 'Template name (e.g. "Clean your room")', required: true });
+  const templateDescInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
+  templateForm.appendChild(el('label', {}, 'Add a quick-pick ad hoc chore'));
+  templateForm.appendChild(templateNameInput);
+  templateForm.appendChild(templateDescInput);
+  templateForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add to quick-pick list'));
+  templateForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+    await addDoc(fsCollection(db, `families/${state.familyId}/choreTemplates`), {
+      name: templateNameInput.value.trim(), description: templateDescInput.value.trim(),
+      createdBy: state.user.uid, createdAt: serverTimestamp(),
+    });
+    templateNameInput.value = ''; templateDescInput.value = '';
+  });
+  container.appendChild(templateForm);
+
+  // Extra jobs catalog
+  const catalogForm = el('form', { class: 'booking-card' });
+  const catNameInput = el('input', { type: 'text', placeholder: 'Job name', required: true });
+  const catAmountInput = el('input', { type: 'number', min: '0', step: '1', placeholder: 'Amount (cents)', required: true });
+  catalogForm.appendChild(el('label', {}, 'Add a listed extra job'));
+  catalogForm.appendChild(catNameInput);
+  catalogForm.appendChild(catAmountInput);
+  catalogForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add to list'));
+  catalogForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+    await addDoc(fsCollection(db, `families/${state.familyId}/extraJobsCatalog`), {
+      name: catNameInput.value.trim(), amountCents: parseInt(catAmountInput.value, 10) || 0,
+      active: true, createdBy: state.user.uid, createdAt: serverTimestamp(),
+    });
+    catNameInput.value = ''; catAmountInput.value = '';
+  });
+  container.appendChild(catalogForm);
+
+  // Manual balance adjustment (any time, not just Fridays)
+  const adjustForm = el('form', { class: 'booking-card' });
+  const memberSelect = el('select', {});
+  state.members.forEach((m) => memberSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email)));
+  const amountInput = el('input', { type: 'number', step: '1', placeholder: 'Amount in cents (negative to deduct)', required: true });
+  const noteInput = el('input', { type: 'text', placeholder: 'Reason', required: true });
+  adjustForm.appendChild(el('label', {}, 'Adjust a balance'));
+  adjustForm.appendChild(memberSelect);
+  adjustForm.appendChild(amountInput);
+  adjustForm.appendChild(noteInput);
+  adjustForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Apply adjustment'));
+  adjustForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      await callAdjustBalance({ memberUid: memberSelect.value, amountCents: parseInt(amountInput.value, 10), note: noteInput.value.trim() });
+      amountInput.value = ''; noteInput.value = '';
+    } catch (err) { alert(err.message); }
+  });
+  container.appendChild(adjustForm);
+}
+</script>
+</body>
+</html>
