@@ -214,7 +214,7 @@
     <form id="kidSignInForm" hidden style="width:100%;max-width:280px;text-align:left;">
       <div class="field">
         <label for="kidUsernameInput">Username</label>
-        <input id="kidUsernameInput" type="text" placeholder="e.g. alice" autocapitalize="off" autocomplete="username" required />
+        <input id="kidUsernameInput" type="text" placeholder="e.g. alice" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="username" required />
       </div>
       <div class="field">
         <label for="kidPasswordInput">Password</label>
@@ -1433,7 +1433,7 @@ function renderAddMemberForm() {
   const form = el('form', {});
   const roleSelect = el('select', {}, [el('option', { value: 'child' }, 'Child'), el('option', { value: 'admin' }, 'Admin')]);
   const emailInput = el('input', { type: 'email', placeholder: 'Email', required: true });
-  const usernameInput = el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off', required: true, hidden: true });
+  const usernameInput = el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', required: true, hidden: true });
   const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
   const allowanceInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Weekly allowance (e.g. 25)', required: true });
 
@@ -1890,7 +1890,7 @@ function renderWizardStep() {
       : "Pick a username and weekly allowance for each child -- no email needed. You'll get a temporary password to give them."));
 
     const emailInput = isAdminStep ? el('input', { type: 'email', placeholder: 'Email' }) : null;
-    const usernameInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off' });
+    const usernameInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
     const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
     const allowanceInput = isAdminStep ? null : el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Weekly allowance (e.g. 25)' });
     if (emailInput) card.appendChild(emailInput);
