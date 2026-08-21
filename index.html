@@ -197,6 +197,11 @@
     <div id="wizardContent"></div>
   </div>
 
+  <div id="tourScreen" hidden style="max-width:480px;margin:0 auto;padding-top:24px;">
+    <div class="wizard-progress" id="tourProgress"></div>
+    <div id="tourContent"></div>
+  </div>
+
   <div id="app" hidden>
     <div class="app-header">
       <div>
@@ -514,6 +519,7 @@ const screens = {
   signIn: document.getElementById('signInScreen'),
   setup: document.getElementById('setupScreen'),
   onboarding: document.getElementById('onboardingScreen'),
+  tour: document.getElementById('tourScreen'),
   app: document.getElementById('app'),
 };
 function showScreen(name) {
@@ -648,10 +654,20 @@ async function resolveMembership() {
   if (role === 'admin' && !onboardingDone) {
     showScreen('onboarding');
     renderWizardStep();
-  } else {
-    showScreen('app');
-    switchTab(state.currentTab);
+    return;
   }
+
+  let tourSeen = true;
+  try { tourSeen = localStorage.getItem('choresAppTourSeen') === 'true'; } catch (e) {}
+  if (role === 'child' && !tourSeen) {
+    showScreen('tour');
+    tourStep = 0;
+    renderTourStep();
+    return;
+  }
+
+  showScreen('app');
+  switchTab(state.currentTab);
 }
 
 // ---------------------------------------------------------------------
@@ -1159,6 +1175,10 @@ function renderMore() {
     el('div', { class: 'muted' }, state.member ? state.member.email : ''),
     el('div', { class: 'muted' }, 'Role: Child'),
   ]));
+  container.appendChild(el('button', {
+    class: 'pill', style: 'width:100%;margin-bottom:8px;',
+    onclick: () => { showScreen('tour'); tourStep = 0; renderTourStep(); },
+  }, 'Replay app tour'));
   container.appendChild(el('button', { class: 'pill', style: 'width:100%;', onclick: () => signOut(auth) }, 'Sign out'));
 }
 
@@ -1789,6 +1809,65 @@ function renderWizardStep() {
       }, 'Go to my dashboard'),
     ]));
   }
+}
+
+// ---------------------------------------------------------------------
+// First-time tour (child) -- a quick, dismissible explainer, not a data
+// wizard. Tracked in localStorage only (like theme/last-tab), not on the
+// member doc -- this is a low-stakes UI nicety, not something that needs
+// server-side tracking or a rules change; it just shows again on a new
+// device, which is a fine trade-off for something this lightweight.
+// ---------------------------------------------------------------------
+const TOUR_SLIDES = [
+  { title: 'Welcome!', body: "Here's a quick look around before you dive in." },
+  { title: 'Dashboard', body: 'See your balance and how much of this week\'s chores you\'ve done, at a glance.' },
+  { title: 'My Chores', body: 'Mark chores done (with a photo if you like), see whose turn it is on rotating chores, and propose a swap with a sibling if you want to trade.' },
+  { title: 'Extras', body: 'Claim a listed extra job or propose your own to earn a bit more, once an admin approves it.' },
+  { title: 'Earnings', body: 'Your full transaction history -- allowance, extra jobs, and any adjustments.' },
+];
+let tourStep = 0;
+
+function renderTourProgress() {
+  const bar = document.getElementById('tourProgress');
+  bar.innerHTML = '';
+  TOUR_SLIDES.forEach((_, i) => {
+    bar.appendChild(el('div', { class: `wizard-dot ${i <= tourStep ? 'active' : ''}` }));
+  });
+}
+
+function finishTour() {
+  try { localStorage.setItem('choresAppTourSeen', 'true'); } catch (e) {}
+  showScreen('app');
+  switchTab(state.currentTab);
+}
+
+function renderTourStep() {
+  renderTourProgress();
+  const content = document.getElementById('tourContent');
+  content.innerHTML = '';
+  const slide = TOUR_SLIDES[tourStep];
+  const isLast = tourStep === TOUR_SLIDES.length - 1;
+
+  const card = el('div', { class: 'wizard-card' }, [
+    el('h1', {}, slide.title),
+    el('p', { class: 'muted' }, slide.body),
+  ]);
+
+  const nav = el('div', { style: 'display:flex;gap:8px;' });
+  if (tourStep > 0) {
+    nav.appendChild(el('button', { class: 'pill', style: 'flex:1;', onclick: () => { tourStep -= 1; renderTourStep(); } }, 'Back'));
+  }
+  nav.appendChild(el('button', {
+    class: 'pill primary', style: 'flex:1;',
+    onclick: () => { if (isLast) { finishTour(); } else { tourStep += 1; renderTourStep(); } },
+  }, isLast ? 'Get started' : 'Next'));
+  card.appendChild(nav);
+
+  if (!isLast) {
+    card.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-top:8px;', onclick: finishTour }, 'Skip'));
+  }
+
+  content.appendChild(card);
 }
 </script>
 </body>
