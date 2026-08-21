@@ -174,7 +174,28 @@
   <div id="signInScreen" class="center-screen" hidden>
     <h1>Family Chores</h1>
     <p>Track chores, allowances, and extra jobs together.</p>
-    <button class="pill primary" id="signInBtn">Sign in with Google</button>
+
+    <div class="sub-tabs" style="width:100%;max-width:280px;">
+      <button type="button" class="sub-tab-btn active" id="signInModeParentBtn">Parent sign-in</button>
+      <button type="button" class="sub-tab-btn" id="signInModeKidBtn">Kid sign-in</button>
+    </div>
+
+    <div id="parentSignIn">
+      <button class="pill primary" id="signInBtn">Sign in with Google</button>
+    </div>
+
+    <form id="kidSignInForm" hidden style="width:100%;max-width:280px;text-align:left;">
+      <div class="field">
+        <label for="kidUsernameInput">Username</label>
+        <input id="kidUsernameInput" type="text" placeholder="e.g. alice" autocapitalize="off" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="kidPasswordInput">Password</label>
+        <input id="kidPasswordInput" type="password" autocomplete="current-password" required />
+      </div>
+      <button class="pill primary" type="submit" style="width:100%;">Sign in</button>
+    </form>
+
     <p class="error-text" id="signInError" hidden></p>
   </div>
 
@@ -200,6 +221,20 @@
   <div id="tourScreen" hidden style="max-width:480px;margin:0 auto;padding-top:24px;">
     <div class="wizard-progress" id="tourProgress"></div>
     <div id="tourContent"></div>
+  </div>
+
+  <div id="changePasswordScreen" class="center-screen" hidden>
+    <h1>You're using a temporary password</h1>
+    <p>Set a new password now, or keep using the temporary one -- either way you can change it again anytime.</p>
+    <form id="changePasswordForm" style="width:100%;max-width:280px;text-align:left;">
+      <div class="field">
+        <label for="newPasswordInput">New password</label>
+        <input id="newPasswordInput" type="password" autocomplete="new-password" minlength="6" />
+      </div>
+      <button class="pill primary" type="submit" style="width:100%;">Save new password</button>
+    </form>
+    <button class="pill" id="keepTempPasswordBtn">Keep this password for now</button>
+    <p class="error-text" id="changePasswordError" hidden></p>
   </div>
 
   <div id="app" hidden>
@@ -274,7 +309,8 @@ import {
   initializeApp,
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js';
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
+  getAuth, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, updatePassword,
+  signOut, onAuthStateChanged, connectAuthEmulator,
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, collection, query, where, orderBy, onSnapshot, connectFirestoreEmulator,
@@ -364,6 +400,14 @@ function resolveEffectiveAssignee(chore, acceptedSwapsThisWeek) {
   if (base === null) return null;
   const swap = (acceptedSwapsThisWeek || []).find((s) => s.choreId === chore.id && s.proposedBy === base);
   return swap ? swap.targetUid : base;
+}
+
+// ---- Same synthetic-email construction as functions/lib/invites.js, so a
+// username typed at sign-in maps to the exact same address the account was
+// created under. No lookup needed -- it's a pure function of the username.
+const CHILD_ACCOUNT_DOMAIN = 'childaccounts.choresapp.internal';
+function usernameToSyntheticEmail(username) {
+  return `${String(username || '').trim().toLowerCase()}@${CHILD_ACCOUNT_DOMAIN}`;
 }
 
 function formatCents(cents, currency) {
@@ -520,10 +564,69 @@ const screens = {
   setup: document.getElementById('setupScreen'),
   onboarding: document.getElementById('onboardingScreen'),
   tour: document.getElementById('tourScreen'),
+  changePassword: document.getElementById('changePasswordScreen'),
   app: document.getElementById('app'),
 };
 function showScreen(name) {
   Object.entries(screens).forEach(([key, node]) => { node.hidden = key !== name; });
+}
+
+document.getElementById('signInModeParentBtn').addEventListener('click', () => {
+  document.getElementById('signInModeParentBtn').classList.add('active');
+  document.getElementById('signInModeKidBtn').classList.remove('active');
+  document.getElementById('parentSignIn').hidden = false;
+  document.getElementById('kidSignInForm').hidden = true;
+});
+document.getElementById('signInModeKidBtn').addEventListener('click', () => {
+  document.getElementById('signInModeKidBtn').classList.add('active');
+  document.getElementById('signInModeParentBtn').classList.remove('active');
+  document.getElementById('parentSignIn').hidden = true;
+  document.getElementById('kidSignInForm').hidden = false;
+});
+
+document.getElementById('kidSignInForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const errorEl = document.getElementById('signInError');
+  errorEl.hidden = true;
+  const username = document.getElementById('kidUsernameInput').value;
+  const password = document.getElementById('kidPasswordInput').value;
+  try {
+    await signInWithEmailAndPassword(auth, usernameToSyntheticEmail(username), password);
+  } catch (err) {
+    console.error('[choresapp] kid sign-in ERROR:', err.code, err.message);
+    errorEl.textContent = err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found'
+      ? 'Wrong username or password.'
+      : `${err.code || ''}: ${err.message}`;
+    errorEl.hidden = false;
+  }
+});
+
+document.getElementById('changePasswordForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const errorEl = document.getElementById('changePasswordError');
+  errorEl.hidden = true;
+  const newPassword = document.getElementById('newPasswordInput').value;
+  if (newPassword.length < 6) {
+    errorEl.textContent = 'Password must be at least 6 characters.';
+    errorEl.hidden = false;
+    return;
+  }
+  try {
+    await updatePassword(auth.currentUser, newPassword);
+    await clearMustChangePassword();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.hidden = false;
+  }
+});
+document.getElementById('keepTempPasswordBtn').addEventListener('click', async () => {
+  try { await clearMustChangePassword(); } catch (err) { alert(err.message); }
+});
+async function clearMustChangePassword() {
+  const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+  await updateDoc(fsDoc(db, `families/${state.familyId}/members/${state.user.uid}`), { mustChangePassword: false });
+  showScreen('app');
+  switchTab(state.currentTab);
 }
 
 document.getElementById('signInBtn').addEventListener('click', async () => {
@@ -647,6 +750,9 @@ async function resolveMembership() {
   const familySnap = await getDoc(doc(db, `families/${familyId}`));
   state.family = familySnap.exists() ? familySnap.data() : null;
 
+  const memberSnap = await getDoc(doc(db, `families/${familyId}/members/${state.user.uid}`));
+  state.member = memberSnap.exists() ? memberSnap.data() : null;
+
   startFamilySubscriptions();
   updateNavForRole(role);
 
@@ -654,6 +760,11 @@ async function resolveMembership() {
   if (role === 'admin' && !onboardingDone) {
     showScreen('onboarding');
     renderWizardStep();
+    return;
+  }
+
+  if (role === 'child' && state.member && state.member.mustChangePassword) {
+    showScreen('changePassword');
     return;
   }
 
@@ -1248,24 +1359,44 @@ function makeExpandable(title, bodyNode) {
 
 function renderAddMemberForm() {
   const form = el('form', {});
-  const emailInput = el('input', { type: 'email', placeholder: 'Email', required: true });
-  const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
   const roleSelect = el('select', {}, [el('option', { value: 'child' }, 'Child'), el('option', { value: 'admin' }, 'Admin')]);
+  const emailInput = el('input', { type: 'email', placeholder: 'Email', required: true });
+  const usernameInput = el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off', required: true, hidden: true });
+  const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
   const allowanceInput = el('input', { type: 'number', min: '0', step: '1', placeholder: 'Weekly allowance (cents)', required: true });
-  form.appendChild(emailInput);
-  form.appendChild(nameInput);
+
+  function updateFieldsForRole() {
+    const isChild = roleSelect.value === 'child';
+    emailInput.hidden = isChild;
+    emailInput.required = !isChild;
+    usernameInput.hidden = !isChild;
+    usernameInput.required = isChild;
+  }
+  roleSelect.addEventListener('change', updateFieldsForRole);
+  updateFieldsForRole();
+
+  form.appendChild(el('label', {}, 'Role'));
   form.appendChild(roleSelect);
+  form.appendChild(emailInput);
+  form.appendChild(usernameInput);
+  form.appendChild(nameInput);
   form.appendChild(allowanceInput);
   form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add'));
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
-      await callAddFamilyMember({
-        email: emailInput.value.trim(), displayName: nameInput.value.trim(),
+      const result = await callAddFamilyMember({
+        email: emailInput.hidden ? undefined : emailInput.value.trim(),
+        username: usernameInput.hidden ? undefined : usernameInput.value.trim(),
+        displayName: nameInput.value.trim(),
         role: roleSelect.value, baseWeeklyAllowanceCents: parseInt(allowanceInput.value, 10) || 0,
       });
-      emailInput.value = ''; nameInput.value = ''; allowanceInput.value = '';
-      alert('Invite created -- they\'ll be added automatically the first time they sign in.');
+      emailInput.value = ''; usernameInput.value = ''; nameInput.value = ''; allowanceInput.value = '';
+      if (result.data.mode === 'created') {
+        alert(`Account created.\n\nUsername: ${result.data.username}\nTemporary password: ${result.data.tempPassword}\n\nWrite this down -- it won't be shown again. Give it to your child so they can sign in (Kid sign-in tab).`);
+      } else {
+        alert('Invite created -- they\'ll be added automatically the first time they sign in with Google.');
+      }
     } catch (err) { alert(err.message); }
   });
   return form;
@@ -1675,12 +1806,14 @@ function renderWizardStep() {
     card.appendChild(el('h1', {}, isAdminStep ? 'Add other admins' : 'Add your kids'));
     card.appendChild(el('p', { class: 'muted' }, isAdminStep
       ? 'Optional -- add another parent/guardian who should also manage the app.'
-      : "Add each child's email. They'll be added automatically the first time they sign in with Google."));
+      : "Pick a username and weekly allowance for each child -- no email needed. You'll get a temporary password to give them."));
 
-    const emailInput = el('input', { type: 'email', placeholder: 'Email' });
+    const emailInput = isAdminStep ? el('input', { type: 'email', placeholder: 'Email' }) : null;
+    const usernameInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off' });
     const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
     const allowanceInput = isAdminStep ? null : el('input', { type: 'number', min: '0', step: '1', placeholder: 'Weekly allowance (cents)' });
-    card.appendChild(emailInput);
+    if (emailInput) card.appendChild(emailInput);
+    if (usernameInput) card.appendChild(usernameInput);
     card.appendChild(nameInput);
     if (allowanceInput) card.appendChild(allowanceInput);
     const statusEl = el('div', { class: 'muted' });
@@ -1688,14 +1821,23 @@ function renderWizardStep() {
     card.appendChild(el('button', {
       class: 'pill primary', type: 'button', style: 'width:100%;margin-bottom:8px;',
       onclick: async () => {
-        if (!emailInput.value.trim()) return;
+        if (isAdminStep && !emailInput.value.trim()) return;
+        if (!isAdminStep && !usernameInput.value.trim()) return;
         try {
-          await callAddFamilyMember({
-            email: emailInput.value.trim(), displayName: nameInput.value.trim(), role: roleLabel,
+          const result = await callAddFamilyMember({
+            email: emailInput ? emailInput.value.trim() : undefined,
+            username: usernameInput ? usernameInput.value.trim() : undefined,
+            displayName: nameInput.value.trim(), role: roleLabel,
             baseWeeklyAllowanceCents: allowanceInput ? (parseInt(allowanceInput.value, 10) || 0) : 0,
           });
-          statusEl.textContent = `Added ${emailInput.value.trim()}`;
-          emailInput.value = ''; nameInput.value = ''; if (allowanceInput) allowanceInput.value = '';
+          if (result.data.mode === 'created') {
+            statusEl.textContent = `Added ${result.data.username} -- temporary password: ${result.data.tempPassword} (write this down, give it to them)`;
+          } else {
+            statusEl.textContent = `Invited ${emailInput.value.trim()}`;
+          }
+          if (emailInput) emailInput.value = '';
+          if (usernameInput) usernameInput.value = '';
+          nameInput.value = ''; if (allowanceInput) allowanceInput.value = '';
         } catch (err) { statusEl.textContent = err.message; }
       },
     }, `Add another ${roleLabel}`));
