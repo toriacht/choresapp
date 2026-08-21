@@ -174,6 +174,14 @@
   .wizard-card button.pill { font-size: 1rem; padding: 15px 20px; }
   .wizard-card button.pill.small { font-size: 0.85rem; padding: 8px 14px; }
 
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 100; background: rgba(15, 23, 42, 0.55);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-card {
+    background: var(--bg); border-radius: 16px; padding: 28px 22px; width: 100%;
+    max-width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+  }
   .credential-callout {
     background: var(--panel2); border: 2px solid var(--accent2); border-radius: 12px;
     padding: 14px 16px; margin-bottom: 10px;
@@ -254,6 +262,14 @@
     </form>
     <button class="pill" id="keepTempPasswordBtn">Keep this password for now</button>
     <p class="error-text" id="changePasswordError" hidden></p>
+  </div>
+
+  <div id="credentialModal" class="modal-overlay" hidden>
+    <div class="modal-card center-screen" style="min-height:0;">
+      <h1 id="credentialModalTitle"></h1>
+      <div id="credentialModalBody" style="width:100%;"></div>
+      <button class="pill primary" id="credentialModalDoneBtn" style="width:100%;">Done</button>
+    </div>
   </div>
 
   <div id="app" hidden>
@@ -436,6 +452,15 @@ function formatCents(cents, currency) {
   } catch (e) {
     return `${value.toFixed(2)}`;
   }
+}
+
+// Every money input in the app is typed by a human in whole currency units
+// (e.g. "25" or "25.50"), never in cents -- this is the one place that
+// converts to the integer cents every backend field/callable actually
+// expects, so nobody has to mentally do that math themselves.
+function centsFromMajorUnits(value) {
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? Math.round(n * 100) : 0;
 }
 
 function el(tag, attrs, children) {
@@ -647,6 +672,34 @@ async function clearMustChangePassword() {
   showScreen('app');
   switchTab(state.currentTab);
 }
+
+// A blocking modal, not an inline status line -- a new account's one-time
+// temp password was too easy to lose in an inline display that gets wiped
+// by the next re-render (adding a second person, or -- in the Admin
+// Dashboard's case -- the live members/ subscription firing and rebuilding
+// the whole panel). This overlay sits outside both the wizard and the
+// app's normal tab-rendering entirely, so nothing can silently clear it
+// out from under the admin before they've acknowledged it.
+function showCredentialModal({ title, created }) {
+  document.getElementById('credentialModalTitle').textContent = title;
+  const body = document.getElementById('credentialModalBody');
+  body.innerHTML = '';
+  if (created) {
+    body.appendChild(el('div', { class: 'credential-callout' }, [
+      el('div', { class: 'cred-label' }, 'Username'),
+      el('div', { class: 'cred-line' }, created.username),
+      el('div', { class: 'cred-label', style: 'margin-top:8px;' }, 'Temporary password'),
+      el('div', { class: 'cred-line' }, created.tempPassword),
+    ]));
+    body.appendChild(el('p', {}, "Write this down now -- it won't be shown again. Give it to your child so they can use \"Kid sign-in.\""));
+  } else {
+    body.appendChild(el('p', {}, "They'll be added automatically the first time they sign in with Google."));
+  }
+  document.getElementById('credentialModal').hidden = false;
+}
+document.getElementById('credentialModalDoneBtn').addEventListener('click', () => {
+  document.getElementById('credentialModal').hidden = true;
+});
 
 document.getElementById('signInBtn').addEventListener('click', async () => {
   document.getElementById('signInError').hidden = true;
@@ -1167,7 +1220,7 @@ function renderExtras() {
 
     const form = el('form', { class: 'booking-card' });
     const descInput = el('input', { type: 'text', placeholder: 'Describe the job', required: true });
-    const amountInput = el('input', { type: 'number', min: '0', step: '1', placeholder: 'Amount you\'re asking for (cents)', required: true });
+    const amountInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Amount you\'re asking for (e.g. 5.00)', required: true });
     form.appendChild(el('label', {}, 'Propose your own job'));
     form.appendChild(descInput);
     form.appendChild(amountInput);
@@ -1177,7 +1230,7 @@ function renderExtras() {
       const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
       await addDoc(fsCollection(db, `families/${state.familyId}/extraJobs`), {
         description: descInput.value.trim(), proposedBy: state.user.uid,
-        amountCents: parseInt(amountInput.value, 10) || 0, catalogJobId: null,
+        amountCents: centsFromMajorUnits(amountInput.value), catalogJobId: null,
         status: 'proposed', createdAt: serverTimestamp(),
       });
       descInput.value = ''; amountInput.value = '';
@@ -1190,7 +1243,7 @@ function renderExtras() {
     const catIconInput = el('input', { type: 'text', placeholder: '🚗', class: 'icon-input' });
     const catNameInput = el('input', { type: 'text', placeholder: 'Job name', required: true });
     const catDescInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
-    const catAmountInput = el('input', { type: 'number', min: '0', step: '1', placeholder: 'Amount (cents)', required: true });
+    const catAmountInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Amount (e.g. 5.00)', required: true });
     catalogForm.appendChild(el('label', {}, 'Add a listed extra job'));
     catalogForm.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [catIconInput, catNameInput]));
     catalogForm.appendChild(catDescInput);
@@ -1201,7 +1254,7 @@ function renderExtras() {
       const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
       await addDoc(fsCollection(db, `families/${state.familyId}/extraJobsCatalog`), {
         name: catNameInput.value.trim(), icon: catIconInput.value.trim() || null,
-        description: catDescInput.value.trim(), amountCents: parseInt(catAmountInput.value, 10) || 0,
+        description: catDescInput.value.trim(), amountCents: centsFromMajorUnits(catAmountInput.value),
         active: true, createdBy: state.user.uid, createdAt: serverTimestamp(),
       });
       catNameInput.value = ''; catIconInput.value = ''; catDescInput.value = ''; catAmountInput.value = '';
@@ -1376,20 +1429,13 @@ function makeExpandable(title, bodyNode) {
   return wrap;
 }
 
-// Module-level, not a local closure var: adding a member triggers a live
-// members/ onSnapshot update, which re-renders the whole Admin Dashboard
-// (including a fresh renderAddMemberForm() call) immediately -- a local
-// variable here would be wiped by that re-render before anyone could read
-// a just-created child's one-time temp password.
-let adminDashboardAddedThisSession = [];
-
 function renderAddMemberForm() {
   const form = el('form', {});
   const roleSelect = el('select', {}, [el('option', { value: 'child' }, 'Child'), el('option', { value: 'admin' }, 'Admin')]);
   const emailInput = el('input', { type: 'email', placeholder: 'Email', required: true });
   const usernameInput = el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off', required: true, hidden: true });
   const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
-  const allowanceInput = el('input', { type: 'number', min: '0', step: '1', placeholder: 'Weekly allowance (cents)', required: true });
+  const allowanceInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Weekly allowance (e.g. 25)', required: true });
 
   function updateFieldsForRole() {
     const isChild = roleSelect.value === 'child';
@@ -1412,22 +1458,6 @@ function renderAddMemberForm() {
   form.appendChild(errorEl);
   form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add'));
 
-  if (adminDashboardAddedThisSession.length > 0) {
-    form.appendChild(el('div', { class: 'muted', style: 'font-weight:700;margin:12px 0 6px;' }, 'Added this session:'));
-    adminDashboardAddedThisSession.forEach((a) => {
-      if (a.mode === 'created') {
-        form.appendChild(el('div', { class: 'credential-callout' }, [
-          el('div', { class: 'cred-label' }, 'Username'),
-          el('div', { class: 'cred-line' }, a.username),
-          el('div', { class: 'cred-label', style: 'margin-top:8px;' }, 'Temporary password'),
-          el('div', { class: 'cred-line' }, a.tempPassword),
-        ]));
-      } else {
-        form.appendChild(el('div', { class: 'booking-card' }, `Invited: ${a.email}`));
-      }
-    });
-  }
-
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     errorEl.hidden = true;
@@ -1437,13 +1467,13 @@ function renderAddMemberForm() {
         email: emailInput.hidden ? undefined : enteredEmail,
         username: usernameInput.hidden ? undefined : usernameInput.value.trim(),
         displayName: nameInput.value.trim(),
-        role: roleSelect.value, baseWeeklyAllowanceCents: parseInt(allowanceInput.value, 10) || 0,
+        role: roleSelect.value, baseWeeklyAllowanceCents: centsFromMajorUnits(allowanceInput.value),
       });
       emailInput.value = ''; usernameInput.value = ''; nameInput.value = ''; allowanceInput.value = '';
       if (result.data.mode === 'created') {
-        adminDashboardAddedThisSession.push({ mode: 'created', username: result.data.username, tempPassword: result.data.tempPassword });
+        showCredentialModal({ title: 'Account created', created: { username: result.data.username, tempPassword: result.data.tempPassword } });
       } else {
-        adminDashboardAddedThisSession.push({ mode: 'invite', email: enteredEmail });
+        showCredentialModal({ title: 'Invite created' });
       }
     } catch (err) {
       errorEl.textContent = err.message;
@@ -1457,7 +1487,7 @@ function renderAdjustBalanceForm() {
   const form = el('form', {});
   const memberSelect = el('select', {});
   state.members.forEach((m) => memberSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email)));
-  const amountInput = el('input', { type: 'number', step: '1', placeholder: 'Amount in cents (negative to deduct)', required: true });
+  const amountInput = el('input', { type: 'number', step: '0.01', placeholder: 'Amount, e.g. 5 (negative to deduct, e.g. -5)', required: true });
   const noteInput = el('input', { type: 'text', placeholder: 'Reason', required: true });
   form.appendChild(memberSelect);
   form.appendChild(amountInput);
@@ -1466,7 +1496,7 @@ function renderAdjustBalanceForm() {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
-      await callAdjustBalance({ memberUid: memberSelect.value, amountCents: parseInt(amountInput.value, 10), note: noteInput.value.trim() });
+      await callAdjustBalance({ memberUid: memberSelect.value, amountCents: centsFromMajorUnits(amountInput.value), note: noteInput.value.trim() });
       amountInput.value = ''; noteInput.value = '';
     } catch (err) { alert(err.message); }
   });
@@ -1827,11 +1857,6 @@ const STARTER_TEMPLATES = [
 let wizardStep = 0;
 let wizardItems = STARTER_TEMPLATES.map((t) => ({ ...t }));
 let wizardSaveAsTemplates = true;
-// Persists across re-renders (adding a second person, navigating back and
-// forth) -- a single overwritable status line was too easy to lose a
-// child's one-time temp password in, since it just gets replaced or wiped
-// whenever the step re-renders.
-let wizardAddedThisSession = [];
 
 function renderWizardProgress() {
   const bar = document.getElementById('wizardProgress');
@@ -1864,30 +1889,10 @@ function renderWizardStep() {
       ? 'Optional -- add another parent/guardian who should also manage the app.'
       : "Pick a username and weekly allowance for each child -- no email needed. You'll get a temporary password to give them."));
 
-    // Persistent list of everyone added so far this step -- never
-    // overwritten, so a child's one-time temp password can't get lost by
-    // adding a second kid or navigating away and back.
-    const addedHere = wizardAddedThisSession.filter((a) => a.role === roleLabel);
-    if (addedHere.length > 0) {
-      card.appendChild(el('div', { class: 'muted', style: 'font-weight:700;margin-bottom:6px;' }, 'Added so far:'));
-      addedHere.forEach((a) => {
-        if (a.mode === 'created') {
-          card.appendChild(el('div', { class: 'credential-callout' }, [
-            el('div', { class: 'cred-label' }, 'Username'),
-            el('div', { class: 'cred-line' }, a.username),
-            el('div', { class: 'cred-label', style: 'margin-top:8px;' }, 'Temporary password'),
-            el('div', { class: 'cred-line' }, a.tempPassword),
-          ]));
-        } else {
-          card.appendChild(el('div', { class: 'booking-card' }, `Invited: ${a.email}`));
-        }
-      });
-    }
-
     const emailInput = isAdminStep ? el('input', { type: 'email', placeholder: 'Email' }) : null;
     const usernameInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off' });
     const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
-    const allowanceInput = isAdminStep ? null : el('input', { type: 'number', min: '0', step: '1', placeholder: 'Weekly allowance (cents)' });
+    const allowanceInput = isAdminStep ? null : el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Weekly allowance (e.g. 25)' });
     if (emailInput) card.appendChild(emailInput);
     if (usernameInput) card.appendChild(usernameInput);
     card.appendChild(nameInput);
@@ -1906,17 +1911,16 @@ function renderWizardStep() {
             email: emailInput ? emailInput.value.trim() : undefined,
             username: usernameInput ? usernameInput.value.trim() : undefined,
             displayName: nameInput.value.trim(), role: roleLabel,
-            baseWeeklyAllowanceCents: allowanceInput ? (parseInt(allowanceInput.value, 10) || 0) : 0,
+            baseWeeklyAllowanceCents: allowanceInput ? centsFromMajorUnits(allowanceInput.value) : 0,
           });
-          if (result.data.mode === 'created') {
-            wizardAddedThisSession.push({ role: roleLabel, mode: 'created', username: result.data.username, tempPassword: result.data.tempPassword });
-          } else {
-            wizardAddedThisSession.push({ role: roleLabel, mode: 'invite', email: emailInput.value.trim() });
-          }
           if (emailInput) emailInput.value = '';
           if (usernameInput) usernameInput.value = '';
           nameInput.value = ''; if (allowanceInput) allowanceInput.value = '';
-          renderWizardStep();
+          if (result.data.mode === 'created') {
+            showCredentialModal({ title: 'Account created', created: { username: result.data.username, tempPassword: result.data.tempPassword } });
+          } else {
+            showCredentialModal({ title: 'Invite created' });
+          }
         } catch (err) {
           errorEl.textContent = err.message;
           errorEl.hidden = false;
