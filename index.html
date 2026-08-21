@@ -8,6 +8,7 @@
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="favicon.ico" />
 <link rel="apple-touch-icon" href="icon-192.png" />
+<meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <script>
@@ -207,7 +208,7 @@ import {
   initializeApp,
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js';
 import {
-  getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, connectAuthEmulator,
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, collection, query, where, orderBy, onSnapshot, connectFirestoreEmulator,
@@ -329,32 +330,22 @@ function showScreen(name) {
 document.getElementById('signInBtn').addEventListener('click', async () => {
   document.getElementById('signInError').hidden = true;
   try {
-    // Redirect, not popup: popups get silently blocked or fail on enough
-    // mobile browsers (especially iOS Safari and in-app browsers) that
-    // redirect is the reliable choice for a PWA meant to be used on phones.
-    await signInWithRedirect(auth, new GoogleAuthProvider());
+    // Popup, not redirect: real-world testing found signInWithRedirect's
+    // storage round-trip (needed to persist the pending sign-in across the
+    // navigation to Google and back) silently failing to survive on both
+    // Brave and Chrome/Android -- getRedirectResult() cleanly resolved to
+    // "no pending redirect" every time, no error thrown, nothing to catch.
+    // Popup avoids that round-trip entirely (same-tab postMessage instead),
+    // and the original popup failure (auth/unauthorized-domain) is now
+    // fixed at its actual source -- see docs/adr/adr-0015.
+    await signInWithPopup(auth, new GoogleAuthProvider());
   } catch (err) {
+    console.error('[choresapp] signInWithPopup ERROR:', err.code, err.message);
     const errorEl = document.getElementById('signInError');
-    errorEl.textContent = err.message;
+    errorEl.textContent = `${err.code || ''}: ${err.message}`;
     errorEl.hidden = false;
   }
 });
-
-// Completes the sign-in after the redirect back from Google. Errors here
-// (e.g. auth/unauthorized-domain) are the ones that actually matter for
-// signInWithRedirect -- surfaced on the sign-in screen the same way a
-// popup error would be.
-console.log('[choresapp] page load, checking for pending redirect result...');
-getRedirectResult(auth)
-  .then((result) => {
-    console.log('[choresapp] getRedirectResult resolved:', result ? `signed in as ${result.user.uid} (${result.user.email})` : '(no pending redirect -- normal on a fresh page load)');
-  })
-  .catch((err) => {
-    console.error('[choresapp] getRedirectResult ERROR:', err.code, err.message);
-    const errorEl = document.getElementById('signInError');
-    errorEl.textContent = `${err.code}: ${err.message}`;
-    errorEl.hidden = false;
-  });
 document.getElementById('signOutBtn').addEventListener('click', () => signOut(auth));
 document.getElementById('setupSignOutBtn').addEventListener('click', () => signOut(auth));
 
