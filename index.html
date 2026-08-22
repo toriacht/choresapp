@@ -151,6 +151,8 @@
   }
   .progress-ring-pct { font-size: 1.1rem; font-weight: 800; }
   .progress-ring-label { font-size: 0.6rem; color: var(--muted); }
+  .mini-bar { height: 8px; border-radius: 4px; background: var(--panel2); overflow: hidden; margin: 6px 0; }
+  .mini-bar-fill { height: 100%; background: var(--accent2); border-radius: 4px; }
 
   /* Day-by-day tabs on the child Dashboard -- a week of tappable/swipeable
      day chips, not a full calendar (see docs/adr for why). */
@@ -335,6 +337,7 @@
     <section class="tab-page" data-page="earnings" id="page-earnings" hidden></section>
     <section class="tab-page" data-page="more" id="page-more" hidden></section>
     <section class="tab-page" data-page="admindashboard" id="page-admindashboard" hidden></section>
+    <section class="tab-page" data-page="childdetail" id="page-childdetail" hidden></section>
     <section class="tab-page" data-page="managechores" id="page-managechores" hidden></section>
     <section class="tab-page" data-page="allactivity" id="page-allactivity" hidden></section>
     <section class="tab-page" data-page="settings" id="page-settings" hidden></section>
@@ -435,6 +438,8 @@ const callMarkChoreDone = httpsCallable(functions, 'markChoreDone');
 const callApproveExtraJob = httpsCallable(functions, 'approveExtraJob');
 const callAdjustBalance = httpsCallable(functions, 'adjustBalance');
 const callLogDeduction = httpsCallable(functions, 'logDeduction');
+const callApproveWeeklyPayout = httpsCallable(functions, 'approveWeeklyPayout');
+const callDeclineWeeklyPayout = httpsCallable(functions, 'declineWeeklyPayout');
 const callRegisterFcmToken = httpsCallable(functions, 'registerFcmToken');
 const callAddFamilyMember = httpsCallable(functions, 'addFamilyMember');
 const callCreateFamilyAndAdmin = httpsCallable(functions, 'createFamilyAndAdmin');
@@ -618,6 +623,8 @@ const state = {
   deductionsCatalog: [],
   extraJobs: [],
   notifications: [],
+  payouts: [],
+  selectedChildUid: null,
   ledger: [],
   ledgerViewUid: null,
   currentTab: localStorage.getItem('choresAppTab') || 'dashboard',
@@ -1250,6 +1257,14 @@ function startFamilySubscriptions() {
     }
   ));
 
+  unsubscribers.push(onSnapshot(
+    query(collection(db, `families/${familyId}/payouts`), where('weekId', '==', weekId)),
+    (snap) => {
+      state.payouts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderCurrentTab();
+    }
+  ));
+
   subscribeLedger(state.ledgerViewUid);
 }
 
@@ -1288,6 +1303,26 @@ function switchTab(tab) {
   renderCurrentTab();
 }
 
+// Drill-down into one child's detail from the Admin Dashboard -- not a
+// bottom-nav tab (deliberately absent from ADMIN_TABS, so it's never part
+// of the swipe order), so this bypasses switchTab's TITLES lookup to show
+// the child's own name instead. Re-scopes the shared ledger subscription to
+// this child (same "pick one member, view detail" mechanism All Activity's
+// own member dropdown already uses via subscribeLedger).
+function showChildDetail(uid) {
+  state.selectedChildUid = uid;
+  state.currentTab = 'childdetail';
+  const child = state.members.find((m) => m.uid === uid);
+  document.getElementById('pageTitle').textContent = child ? (child.displayName || child.email) : 'Child';
+  document.querySelectorAll('.tab-page').forEach((section) => {
+    section.hidden = section.dataset.page !== 'childdetail';
+  });
+  document.querySelectorAll('.nav-btn').forEach((btn) => btn.classList.remove('active'));
+  subscribeLedger(uid);
+  window.scrollTo(0, 0);
+  renderCurrentTab();
+}
+
 document.body.addEventListener('click', (event) => {
   const btn = event.target.closest('.nav-btn');
   if (btn && !btn.hidden && !btn.closest('[hidden]')) switchTab(btn.dataset.tab);
@@ -1311,7 +1346,7 @@ function renderCurrentTab() {
   const renderers = {
     dashboard: renderDashboard, chores: renderChores, extras: renderExtras,
     earnings: renderEarnings, more: renderMore,
-    admindashboard: renderAdminDashboard, managechores: renderManageChores,
+    admindashboard: renderAdminDashboard, childdetail: renderChildDetail, managechores: renderManageChores,
     allactivity: renderAllActivity, settings: renderSettings,
   };
   const renderer = renderers[state.currentTab];
@@ -1858,34 +1893,39 @@ function renderExtras() {
     return;
   }
 
-  visibleJobs.forEach((job) => {
-    const card = el('div', { class: 'booking-card' }, [
-      el('div', { class: 'row' }, [
-        el('div', {}, [
-          el('div', { style: 'font-weight:600;' }, job.description),
-          el('div', { class: 'muted' }, `${memberLabel(job.proposedBy)} · ${formatCents(job.amountCents, currency)}`),
-        ]),
-        el('span', { class: `status-pill status-${job.status}` }, job.status),
+  visibleJobs.forEach((job) => container.appendChild(renderExtraJobCard(job, currency)));
+}
+
+// Card for one extra-job proposal -- shared by the global Extras tab list
+// above and the per-child filtered view on Child Detail. Approve/reject
+// buttons only render for an admin viewing a still-'proposed' job.
+function renderExtraJobCard(job, currency) {
+  const card = el('div', { class: 'booking-card' }, [
+    el('div', { class: 'row' }, [
+      el('div', {}, [
+        el('div', { style: 'font-weight:600;' }, job.description),
+        el('div', { class: 'muted' }, `${memberLabel(job.proposedBy)} · ${formatCents(job.amountCents, currency)}`),
       ]),
-    ]);
-    if (state.role === 'admin' && job.status === 'proposed') {
-      const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
-      actions.appendChild(el('button', {
-        class: 'pill primary small',
-        onclick: async () => {
-          try { await callApproveExtraJob({ jobId: job.id, approve: true }); } catch (err) { alert(err.message); }
-        },
-      }, 'Approve'));
-      actions.appendChild(el('button', {
-        class: 'pill danger small',
-        onclick: async () => {
-          try { await callApproveExtraJob({ jobId: job.id, approve: false }); } catch (err) { alert(err.message); }
-        },
-      }, 'Reject'));
-      card.appendChild(actions);
-    }
-    container.appendChild(card);
-  });
+      el('span', { class: `status-pill status-${job.status}` }, job.status),
+    ]),
+  ]);
+  if (state.role === 'admin' && job.status === 'proposed') {
+    const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
+    actions.appendChild(el('button', {
+      class: 'pill primary small',
+      onclick: async () => {
+        try { await callApproveExtraJob({ jobId: job.id, approve: true }); } catch (err) { alert(err.message); }
+      },
+    }, 'Approve'));
+    actions.appendChild(el('button', {
+      class: 'pill danger small',
+      onclick: async () => {
+        try { await callApproveExtraJob({ jobId: job.id, approve: false }); } catch (err) { alert(err.message); }
+      },
+    }, 'Reject'));
+    card.appendChild(actions);
+  }
+  return card;
 }
 
 // ---------------------------------------------------------------------
@@ -1981,6 +2021,26 @@ function renderAdminDashboard() {
     ]),
   ]));
 
+  container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Children'));
+  if (children.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No children added yet.'));
+  }
+  children.forEach((child) => {
+    const progress = computeWeekProgressForMember(child.uid);
+    const pct = progress.total === 0 ? 100 : Math.round((progress.done / progress.total) * 100);
+    const attentionCount = computeChildAttentionCount(child.uid);
+    container.appendChild(el('div', { class: 'booking-card', style: 'cursor:pointer;', onclick: () => showChildDetail(child.uid) }, [
+      el('div', { class: 'row' }, [
+        el('div', {}, [
+          el('div', { style: 'font-weight:700;' }, child.displayName || child.email),
+          el('div', { class: 'muted' }, `${formatCents(child.balanceCents || 0, currency)} · ${progress.done}/${progress.total} done this week`),
+        ]),
+        attentionCount > 0 ? el('span', { class: 'status-pill status-done' }, `${attentionCount} to review`) : null,
+      ]),
+      el('div', { class: 'mini-bar' }, [el('div', { class: 'mini-bar-fill', style: `width:${pct}%;` })]),
+    ]));
+  });
+
   container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Quick actions'));
 
   container.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-bottom:8px;', onclick: () => switchTab('managechores') }, 'Manage chores'));
@@ -1988,6 +2048,157 @@ function renderAdminDashboard() {
 
   container.appendChild(makeExpandable('Add family member', renderAddMemberForm()));
   container.appendChild(makeExpandable('Adjust a balance', renderAdjustBalanceForm()));
+}
+
+// Sum of things awaiting an admin's action for one child: chores marked
+// done but not yet approved/rejected, extra jobs they've proposed that are
+// still 'proposed', and (at most one) pending weekly payout -- surfaced as
+// a single badge count on their Admin Dashboard card so an admin can tell
+// at a glance which child needs attention without opening each one.
+function computeChildAttentionCount(uid) {
+  const needsReview = state.choreLog.filter((e) => e.status === 'done' && e.memberUid === uid).length;
+  const pendingJobs = state.extraJobs.filter((j) => j.status === 'proposed' && j.proposedBy === uid).length;
+  const pendingPayout = state.payouts.some((p) => p.memberUid === uid && p.status === 'pending') ? 1 : 0;
+  return needsReview + pendingJobs + pendingPayout;
+}
+
+// ---------------------------------------------------------------------
+// Child Detail (admin) -- drill-down from an Admin Dashboard child card,
+// reached via showChildDetail(uid), never a bottom-nav tab itself.
+// ---------------------------------------------------------------------
+function renderChildDetail() {
+  const container = document.getElementById('page-childdetail');
+  container.innerHTML = '';
+  const uid = state.selectedChildUid;
+  const child = state.members.find((m) => m.uid === uid);
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+
+  if (!child) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'This child is no longer in your family.'));
+    return;
+  }
+
+  container.appendChild(el('button', { class: 'pill small', style: 'margin-bottom:8px;', onclick: () => switchTab('admindashboard') }, '‹ Back'));
+
+  const progress = computeWeekProgressForMember(uid);
+  const pct = progress.total === 0 ? 100 : Math.round((progress.done / progress.total) * 100);
+  container.appendChild(el('div', { class: 'booking-card' }, [
+    el('div', { style: 'font-weight:700;font-size:1.1rem;' }, child.displayName || child.email),
+    el('div', { class: 'muted' }, formatCents(child.balanceCents || 0, currency)),
+    el('div', { class: 'progress-ring', style: `--pct:${pct};margin-top:8px;` }, [
+      el('div', { class: 'progress-ring-inner' }, [
+        el('div', { class: 'progress-ring-pct' }, `${pct}%`),
+        el('div', { class: 'progress-ring-label' }, `${progress.done}/${progress.total} this week`),
+      ]),
+    ]),
+  ]));
+
+  const needsReview = state.choreLog.filter((e) => e.status === 'done' && e.memberUid === uid);
+  if (needsReview.length > 0) {
+    container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Chores to review'));
+    needsReview.forEach((entry) => container.appendChild(renderChoreReviewCard(entry)));
+  }
+
+  if (progress.items.length > 0) {
+    container.appendChild(el('h2', { style: 'margin-top:16px;' }, "This week's chores"));
+    progress.items.forEach((item) => {
+      container.appendChild(el('div', { class: 'booking-card' }, [
+        el('div', { class: 'row' }, [
+          el('div', { style: 'font-weight:600;' }, item.chore.name),
+          el('span', { class: `status-pill status-${item.satisfied ? 'approved' : 'pending'}` }, item.satisfied ? 'done' : 'not yet'),
+        ]),
+      ]));
+    });
+  }
+
+  const suggestedJobs = state.extraJobs.filter((j) => j.proposedBy === uid && j.status === 'proposed');
+  if (suggestedJobs.length > 0) {
+    container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Extra jobs suggested'));
+    suggestedJobs.forEach((job) => container.appendChild(renderExtraJobCard(job, currency)));
+  }
+
+  container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Log a deduction'));
+  const activeDeductions = state.deductionsCatalog.filter((d) => d.active !== false);
+  if (activeDeductions.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No deduction types set up yet -- add some in the Extras tab.'));
+  } else {
+    const dedForm = el('form', { class: 'booking-card' });
+    const itemSelect = el('select', {});
+    activeDeductions.forEach((d) => itemSelect.appendChild(el('option', { value: d.id }, `${d.name} (-${formatCents(d.amountCents, currency)})`)));
+    dedForm.appendChild(itemSelect);
+    const dedError = el('p', { class: 'error-text' });
+    dedError.hidden = true;
+    dedForm.appendChild(dedError);
+    dedForm.appendChild(el('button', { class: 'pill danger', type: 'submit' }, 'Log deduction'));
+    dedForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      dedError.hidden = true;
+      try {
+        await callLogDeduction({ memberUid: uid, catalogItemId: itemSelect.value });
+      } catch (err) {
+        dedError.textContent = err.message;
+        dedError.hidden = false;
+      }
+    });
+    container.appendChild(dedForm);
+  }
+
+  container.appendChild(makeExpandable('Add a bonus or custom adjustment', renderAdjustBalanceForm(uid)));
+
+  container.appendChild(el('h2', { style: 'margin-top:16px;' }, "This week's payout"));
+  const payout = state.payouts.find((p) => p.memberUid === uid);
+  if (!payout) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'Not settled yet.'));
+  } else {
+    const lines = (payout.actions || []).map((a) => el('div', { class: 'row' }, [
+      el('div', { class: 'muted' }, a.note || a.type.replace(/_/g, ' ')),
+      el('div', { class: `amount ${a.amountCents >= 0 ? 'positive' : 'negative'}` }, `${a.amountCents >= 0 ? '+' : ''}${formatCents(a.amountCents, currency)}`),
+    ]));
+    const card = el('div', { class: 'booking-card' }, [
+      ...lines,
+      el('div', { class: 'row', style: 'margin-top:8px;font-weight:700;' }, [
+        el('div', {}, 'Total'),
+        el('div', { class: `amount ${payout.totalAmountCents >= 0 ? 'positive' : 'negative'}` }, formatCents(payout.totalAmountCents, currency)),
+      ]),
+    ]);
+    if (payout.status === 'pending') {
+      const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
+      actions.appendChild(el('button', {
+        class: 'pill primary small',
+        onclick: async () => {
+          try { await callApproveWeeklyPayout({ payoutId: payout.id }); } catch (err) { alert(err.message); }
+        },
+      }, 'Approve'));
+      actions.appendChild(el('button', {
+        class: 'pill danger small',
+        onclick: async () => {
+          try { await callDeclineWeeklyPayout({ payoutId: payout.id }); } catch (err) { alert(err.message); }
+        },
+      }, 'Decline'));
+      card.appendChild(actions);
+    } else {
+      card.appendChild(el('span', { class: `status-pill status-${payout.status}` }, payout.status));
+    }
+    container.appendChild(card);
+  }
+
+  container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Recent activity'));
+  if (state.ledger.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
+  } else {
+    state.ledger.forEach((tx) => {
+      const positive = tx.amountCents >= 0;
+      container.appendChild(el('div', { class: 'booking-card' }, [
+        el('div', { class: 'row' }, [
+          el('div', {}, [
+            el('div', {}, tx.note || tx.type),
+            el('div', { class: 'muted' }, tx.type.replace(/_/g, ' ')),
+          ]),
+          el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+        ]),
+      ]));
+    });
+  }
 }
 
 function makeExpandable(title, bodyNode) {
@@ -2070,10 +2281,15 @@ function renderAddMemberForm() {
   return form;
 }
 
-function renderAdjustBalanceForm() {
+// presetMemberUid: when given (Child Detail's bonus/custom-deduction
+// shortcuts), the member picker is skipped and every adjustment applies to
+// that one child -- otherwise (Admin Dashboard's general-purpose version)
+// the admin picks from every family member.
+function renderAdjustBalanceForm(presetMemberUid = null) {
   const form = el('form', {});
   const memberSelect = el('select', {});
   state.members.forEach((m) => memberSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email)));
+  if (presetMemberUid) memberSelect.hidden = true;
   const amountInput = el('input', { type: 'number', step: '0.01', placeholder: 'Amount, e.g. 5 (negative to deduct, e.g. -5)', required: true });
   const noteInput = el('input', { type: 'text', placeholder: 'Reason', required: true });
   form.appendChild(memberSelect);
@@ -2083,11 +2299,57 @@ function renderAdjustBalanceForm() {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
-      await callAdjustBalance({ memberUid: memberSelect.value, amountCents: centsFromMajorUnits(amountInput.value), note: noteInput.value.trim() });
+      await callAdjustBalance({
+        memberUid: presetMemberUid || memberSelect.value,
+        amountCents: centsFromMajorUnits(amountInput.value),
+        note: noteInput.value.trim(),
+      });
       amountInput.value = ''; noteInput.value = '';
     } catch (err) { alert(err.message); }
   });
   return form;
+}
+
+// Approve/reject card for one "done, awaiting review" chore-log entry --
+// shared by the global "Needs your review" queue below and the per-child
+// filtered view on Child Detail.
+function renderChoreReviewCard(entry) {
+  const chore = state.chores.find((c) => c.id === entry.choreId);
+  const card = el('div', { class: 'booking-card warn' }, [
+    el('div', { class: 'row' }, [
+      el('div', {}, [
+        el('div', { style: 'font-weight:600;' }, chore ? chore.name : entry.choreId),
+        el('div', { class: 'muted' }, memberLabel(entry.memberUid)),
+      ]),
+      el('span', { class: 'status-pill status-done' }, 'awaiting review'),
+    ]),
+  ]);
+  if (entry.photoStoragePath) {
+    const slot = el('div', { class: 'muted' });
+    card.appendChild(el('button', { class: 'pill small', onclick: () => viewProof(entry.photoStoragePath, slot) }, 'View photo'));
+    card.appendChild(slot);
+  }
+  const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
+  actions.appendChild(el('button', {
+    class: 'pill primary small',
+    onclick: async () => {
+      const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+        status: 'approved', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+      });
+    },
+  }, 'Approve'));
+  actions.appendChild(el('button', {
+    class: 'pill danger small',
+    onclick: async () => {
+      const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+        status: 'rejected', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+      });
+    },
+  }, 'Reject'));
+  card.appendChild(actions);
+  return card;
 }
 
 // ---------------------------------------------------------------------
@@ -2241,44 +2503,7 @@ function renderActiveChores(container) {
   const needsReview = state.choreLog.filter((e) => e.status === 'done');
   if (needsReview.length > 0) {
     container.appendChild(el('h2', {}, 'Needs your review'));
-    needsReview.forEach((entry) => {
-      const chore = state.chores.find((c) => c.id === entry.choreId);
-      const card = el('div', { class: 'booking-card warn' }, [
-        el('div', { class: 'row' }, [
-          el('div', {}, [
-            el('div', { style: 'font-weight:600;' }, chore ? chore.name : entry.choreId),
-            el('div', { class: 'muted' }, memberLabel(entry.memberUid)),
-          ]),
-          el('span', { class: 'status-pill status-done' }, 'awaiting review'),
-        ]),
-      ]);
-      if (entry.photoStoragePath) {
-        const slot = el('div', { class: 'muted' });
-        card.appendChild(el('button', { class: 'pill small', onclick: () => viewProof(entry.photoStoragePath, slot) }, 'View photo'));
-        card.appendChild(slot);
-      }
-      const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
-      actions.appendChild(el('button', {
-        class: 'pill primary small',
-        onclick: async () => {
-          const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-          await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
-            status: 'approved', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
-          });
-        },
-      }, 'Approve'));
-      actions.appendChild(el('button', {
-        class: 'pill danger small',
-        onclick: async () => {
-          const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-          await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
-            status: 'rejected', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
-          });
-        },
-      }, 'Reject'));
-      card.appendChild(actions);
-      container.appendChild(card);
-    });
+    needsReview.forEach((entry) => container.appendChild(renderChoreReviewCard(entry)));
   }
 
   if (state.chores.length === 0) {
