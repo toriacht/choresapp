@@ -29,13 +29,13 @@
   :root {
     --bg: #f7fafc; --panel: #ffffff; --panel2: #eafaf0; --text: #0f172a;
     --muted: #334155; --accent: #22b573; --accent2: #1b7a43;
-    --border: #e6edf5; --warn: #92400e; --warn-tint-rgb: 146, 64, 14;
+    --border: #e6edf5; --warn: #ea580c; --warn-tint-rgb: 234, 88, 12;
     --success: #15803d; --danger: #b91c1c; --accent2-fill: #1b7a43;
   }
   :root[data-theme="dark"] {
     --bg: #0f172a; --panel: #1e293b; --panel2: #223a2c; --text: #f1f5f9;
     --muted: #a8b7c9; --accent: #4ade80; --accent2: #34c759;
-    --border: #33445c; --warn: #fbbf24; --warn-tint-rgb: 251, 191, 36;
+    --border: #33445c; --warn: #fb923c; --warn-tint-rgb: 251, 146, 60;
     --success: #6ee7a0; --danger: #fca5a5; --accent2-fill: #34c759;
   }
   * { box-sizing: border-box; }
@@ -68,8 +68,8 @@
     display: inline-block; border-radius: 999px; padding: 2px 9px; font-size: 0.65rem;
     font-weight: 700; text-transform: uppercase; color: #fff;
   }
-  .status-pending, .status-proposed { background: #64748b; }
-  .status-done { background: var(--accent2); }
+  .status-pending { background: #64748b; }
+  .status-done, .status-proposed { background: var(--warn); }
   .status-approved, .status-paid, .status-accepted { background: #16a34a; }
   .status-rejected, .status-declined { background: #dc2626; }
 
@@ -105,6 +105,25 @@
   .more-item.expanded .more-item-chevron { transform: rotate(90deg); }
   .more-item-body { display: none; padding: 0 14px 14px; }
   .more-item.expanded .more-item-body { display: block; }
+  .more-item-title-row.link .more-item-chevron { transform: none; }
+
+  /* Mirrors the sibling pitchschedule app's More-tab menu system exactly
+     (same class names/shape) -- a plain-info app there, but the pattern
+     transfers directly: a list of tappable rows, some disclosures, some
+     direct actions, one toggle switch. */
+  .more-toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; }
+  .more-toggle-label { font-weight: 700; font-size: 0.9rem; }
+  .theme-switch { position: relative; display: inline-block; width: 46px; height: 26px; flex-shrink: 0; }
+  .theme-switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .theme-switch-slider { position: absolute; inset: 0; background: var(--border); border-radius: 999px; transition: background 0.15s ease; pointer-events: none; }
+  .theme-switch-slider::before {
+    content: ''; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px;
+    background: #ffffff; border-radius: 50%; transition: transform 0.15s ease; box-shadow: 0 1px 2px rgba(15,23,42,0.3);
+  }
+  .theme-switch input:checked + .theme-switch-slider { background: var(--accent2-fill); }
+  .theme-switch input:checked + .theme-switch-slider::before { transform: translateX(20px); }
+  .theme-switch input:focus-visible + .theme-switch-slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .signout-row { width: 100%; text-align: center; padding: 12px 14px; background: none; border: none; color: var(--danger); font-size: 0.9rem; font-weight: 700; cursor: pointer; }
 
   .skeleton-bar { height: 52px; border-radius: 12px; margin-bottom: 10px; background: var(--panel2); opacity: 0.6; }
 
@@ -143,7 +162,10 @@
   .progress-ring {
     width: 96px; height: 96px; border-radius: 50%; margin: 0 auto 8px;
     display: flex; align-items: center; justify-content: center;
-    background: conic-gradient(var(--accent2) calc(var(--pct, 0) * 1%), var(--panel2) 0);
+    flex: none;
+    /* background is always supplied inline per-instance (a 2- or 3-color
+       conic-gradient -- see renderProgressRing) since a plain CSS custom
+       property can't parameterize which color goes with which segment. */
   }
   .progress-ring-inner {
     width: 74px; height: 74px; border-radius: 50%; background: var(--panel);
@@ -151,6 +173,19 @@
   }
   .progress-ring-pct { font-size: 1.1rem; font-weight: 800; }
   .progress-ring-label { font-size: 0.6rem; color: var(--muted); }
+  .progress-ring.small { width: 44px; height: 44px; margin: 0; }
+  .progress-ring.small .progress-ring-inner { width: 34px; height: 34px; }
+  .progress-ring.small .progress-ring-pct { font-size: 0.68rem; }
+  .progress-ring.small .progress-ring-label { display: none; }
+  .ring-heading { font-size: 0.78rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 8px; }
+  .payment-line { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
+  .payment-line:last-child { border-bottom: none; }
+  .payment-line.pending { opacity: 0.75; }
+  .payment-line-label { display: flex; align-items: center; gap: 6px; }
+  .balance-delta { font-weight: 700; font-size: 1.1rem; }
+  .balance-delta.positive { color: var(--success); }
+  .balance-delta.negative { color: var(--danger); }
+  .balance-delta.zero { color: var(--muted); }
   .mini-bar { height: 8px; border-radius: 4px; background: var(--panel2); overflow: hidden; margin: 6px 0; }
   .mini-bar-fill { height: 100%; background: var(--accent2); border-radius: 4px; }
 
@@ -204,7 +239,12 @@
     max-width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
   }
 
-  .bell-btn { position: relative; font-size: 1.1rem; line-height: 1; padding: 9px 12px; }
+  .bell-btn {
+    position: relative; display: inline-flex; align-items: center; justify-content: center;
+    width: 38px; height: 38px; border-radius: 999px; border: none; background: var(--panel2);
+    color: var(--accent2); cursor: pointer;
+  }
+  .bell-btn .nav-icon { width: 20px; height: 20px; }
   .notif-badge {
     position: absolute; top: -4px; right: -4px; background: var(--danger); color: #fff;
     font-size: 0.6rem; font-weight: 800; border-radius: 999px; min-width: 16px; height: 16px;
@@ -324,10 +364,10 @@
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
         <button id="installBtn" class="install-cta" style="display:none;"></button>
-        <button class="pill small bell-btn" id="notifBellBtn" aria-label="Notifications">
-          🔔<span id="notifBadge" class="notif-badge" hidden>0</span>
+        <button class="bell-btn" id="notifBellBtn" aria-label="Notifications">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+          <span id="notifBadge" class="notif-badge" hidden>0</span>
         </button>
-        <button class="pill small" id="signOutBtn">Sign out</button>
       </div>
     </div>
 
@@ -676,7 +716,13 @@ function computeWeekProgressForMember(memberUid) {
             if (e.memberUid === memberUid) return true;
             return daySwaps.some((s) => s.choreId === chore.id && s.dateId === e.dateId && s.proposedBy === memberUid && s.targetUid === e.memberUid);
           });
-      items.push({ chore, mode, satisfied, executingUid: memberUid });
+      // Marked done by a child but not yet reviewed -- shown as its own
+      // "awaiting approval" segment/pill rather than lumped in with either
+      // "done" or "not started" (see renderProgressRing/adr for the color).
+      const pending = !satisfied && (mode === 'sharedAny'
+        ? state.choreLog.some((e) => e.choreId === chore.id && e.status === 'done' && pool.includes(e.memberUid))
+        : state.choreLog.some((e) => e.choreId === chore.id && e.memberUid === memberUid && e.status === 'done'));
+      items.push({ chore, mode, satisfied, pending, executingUid: memberUid });
     } else {
       const base = resolveBaseAssignee(chore);
       if (base !== memberUid) return;
@@ -684,12 +730,35 @@ function computeWeekProgressForMember(memberUid) {
       const satisfied = state.choreLog.some(
         (e) => e.choreId === chore.id && e.memberUid === executingUid && e.status === 'approved'
       );
-      items.push({ chore, mode, satisfied, executingUid });
+      const pending = !satisfied && state.choreLog.some(
+        (e) => e.choreId === chore.id && e.memberUid === executingUid && e.status === 'done'
+      );
+      items.push({ chore, mode, satisfied, pending, executingUid });
     }
   });
 
   const done = items.filter((i) => i.satisfied).length;
-  return { total: items.length, done, items };
+  const pendingCount = items.filter((i) => i.pending).length;
+  return { total: items.length, done, pendingCount, items };
+}
+
+// Shared progress-ring builder -- a 3-segment conic-gradient donut (green
+// approved, orange awaiting-approval, muted not-started-yet) so the same
+// component reads identically everywhere it's used: the child's own
+// Dashboard (today + this week) and the admin's per-child summary card.
+// `small` renders the compact center-label-free variant used in a list row.
+function renderProgressRing({ approvedCount, pendingCount = 0, total, label, sub, small = false }) {
+  const approvedPct = total === 0 ? 100 : (approvedCount / total) * 100;
+  const pendingPct = total === 0 ? 0 : (pendingCount / total) * 100;
+  const stop1 = approvedPct;
+  const stop2 = Math.min(100, approvedPct + pendingPct);
+  const gradient = `conic-gradient(var(--success) 0% ${stop1}%, var(--warn) ${stop1}% ${stop2}%, var(--panel2) ${stop2}% 100%)`;
+  return el('div', { class: `progress-ring ${small ? 'small' : ''}`, style: `background:${gradient};` }, [
+    el('div', { class: 'progress-ring-inner' }, [
+      el('div', { class: 'progress-ring-pct' }, label),
+      sub ? el('div', { class: 'progress-ring-label' }, sub) : null,
+    ]),
+  ]);
 }
 
 // For "My Chores" specifically (not the Dashboard/Admin progress %, which
@@ -986,7 +1055,6 @@ document.getElementById('signInBtn').addEventListener('click', async () => {
     errorEl.hidden = false;
   }
 });
-document.getElementById('signOutBtn').addEventListener('click', () => signOut(auth));
 document.getElementById('setupSignOutBtn').addEventListener('click', () => signOut(auth));
 
 // ---------- Install prompt (friendlier than expecting people to find the
@@ -1052,17 +1120,17 @@ isMessagingSupported().then((supported) => {
 }).catch(() => {});
 
 function renderNotificationSettingsButton(container) {
-  container.appendChild(el('button', {
-    class: 'pill', style: 'width:100%;margin-bottom:8px;',
-    onclick: async () => {
+  container.appendChild(renderMoreLink(
+    isPushEnabledLocally() ? 'Notifications enabled' : 'Enable notifications',
+    async () => {
       try {
         await enablePushNotifications();
         renderCurrentTab();
       } catch (err) {
         alert(err.message);
       }
-    },
-  }, isPushEnabledLocally() ? '🔔 Notifications enabled' : '🔔 Enable notifications'));
+    }
+  ));
 }
 
 function isStandalone() {
@@ -1328,12 +1396,43 @@ document.body.addEventListener('click', (event) => {
   if (btn && !btn.hidden && !btn.closest('[hidden]')) switchTab(btn.dataset.tab);
 });
 
-let touchStartX = null;
-document.addEventListener('touchstart', (e) => { touchStartX = e.changedTouches[0].clientX; }, { passive: true });
+// One delegated listener handles both left/right gestures app-wide: on
+// every tab except Chores, a swipe moves between bottom-nav tabs; on
+// Chores, it moves between day chips instead (there's no per-render
+// listener to accumulate this way -- a fresh pair attached inside
+// renderChores on its freshly-created container would pile up on every
+// re-render, since innerHTML='' clears children but not the persistent
+// #page-chores element's own listeners). Horizontal-dominant (|dx| > |dy|)
+// keeps an ordinary vertical scroll from ever being misread as either kind
+// of swipe.
+let touchStart = null;
+document.addEventListener('touchstart', (e) => {
+  touchStart = { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+}, { passive: true });
 document.addEventListener('touchend', (e) => {
-  if (touchStartX === null || screens.app.hidden) return;
-  const dx = e.changedTouches[0].clientX - touchStartX;
-  touchStartX = null;
+  if (touchStart === null || screens.app.hidden) return;
+  const dx = e.changedTouches[0].clientX - touchStart.x;
+  const dy = e.changedTouches[0].clientY - touchStart.y;
+  touchStart = null;
+  if (Math.abs(dx) < 40 || Math.abs(dx) <= Math.abs(dy)) return;
+
+  if (state.currentTab === 'chores') {
+    const today = new Date();
+    const weekDates = getIsoWeekDates(today);
+    const weekDateIds = weekDates.map(getIsoDateId);
+    const todayDateId = getIsoDateId(today);
+    const selectedDateId = selectedDashboardDateId && weekDateIds.includes(selectedDashboardDateId)
+      ? selectedDashboardDateId
+      : todayDateId;
+    const idx = weekDateIds.indexOf(selectedDateId);
+    const nextIdx = dx < 0 ? idx + 1 : idx - 1;
+    if (nextIdx >= 0 && nextIdx < weekDateIds.length) {
+      selectedDashboardDateId = weekDateIds[nextIdx];
+      renderChores();
+    }
+    return;
+  }
+
   if (Math.abs(dx) < 60) return;
   const order = state.role === 'admin' ? ADMIN_TABS : CHILD_TABS;
   const idx = order.indexOf(state.currentTab);
@@ -1384,13 +1483,18 @@ function choreLabel(chore) {
 // + today progress rings, a status-only list. All marking-done/swapping
 // happens on the Chores tab instead; tapping an item here deep-links there.
 // ---------------------------------------------------------------------
-function computePendingStreakBonusCents(memberUid) {
+// One line per daily chore with an active (nonzero) streak this member is
+// on track for -- e.g. "5-day streak: Make your bed" -- rather than a
+// single opaque total, so the itemized payment list below the rings can
+// name exactly which streak is paying what (matches the payout ledger's
+// own per-action note once it's actually settled Friday).
+function computePendingStreakBonusLines(memberUid) {
   const today = new Date();
   const todayDateId = getIsoDateId(today);
   const weekDateIds = getIsoWeekDates(today).map(getIsoDateId);
   const daySwaps = acceptedDaySwaps();
   const pool0 = activeChildUids();
-  let total = 0;
+  const lines = [];
   state.chores.forEach((chore) => {
     if (chore.active === false || chore.frequency !== 'daily') return;
     const bonusPerDay = chore.dailyStreakBonusCentsPerDay;
@@ -1398,9 +1502,34 @@ function computePendingStreakBonusCents(memberUid) {
     if (resolveAssignmentMode(chore) !== 'eachMember') return;
     if (!resolvePool(chore, pool0).includes(memberUid)) return;
     const streak = getDisplayStreak(chore, memberUid, weekDateIds, todayDateId, daySwaps);
-    total += streak * bonusPerDay;
+    if (streak > 0) lines.push({ label: `${streak}-day streak: ${chore.name}`, cents: streak * bonusPerDay });
   });
-  return total;
+  return lines;
+}
+
+function pctLabel(approved, total) {
+  return total === 0 ? '100%' : `${Math.round((approved / total) * 100)}%`;
+}
+
+// Everything about this week's payout that hasn't landed in the ledger yet
+// -- the base allowance (if the gate is still on track and Friday hasn't
+// settled it already) and each active daily streak's accruing bonus.
+// Shared by the Dashboard's balance projection and the Earnings tab (which
+// shows it as a "still to come" section ahead of the settled history).
+function computePendingPaymentLines(memberUid, member) {
+  const weekId = getIsoWeekId(new Date());
+  const thisWeekLedger = state.ledger.filter((tx) => tx.weekId === weekId && tx.memberUid === memberUid);
+  const weekProgress = computeWeekProgressForMember(memberUid);
+  const onTrack = weekProgress.total === 0 || weekProgress.done === weekProgress.total;
+  const alreadySettled = thisWeekLedger.some((tx) => tx.type === 'weekly_payout' || tx.type === 'chore_shortfall_pending_review');
+  const pendingAllowanceCents = alreadySettled ? 0 : (onTrack ? (member ? member.baseWeeklyAllowanceCents || 0 : 0) : 0);
+  const streakLines = computePendingStreakBonusLines(memberUid);
+
+  const lines = [];
+  if (pendingAllowanceCents > 0) lines.push({ label: 'Base allowance', cents: pendingAllowanceCents, pending: true });
+  streakLines.forEach((l) => lines.push({ label: l.label, cents: l.cents, pending: true }));
+
+  return { lines, thisWeekLedger, onTrack, alreadySettled, weekProgress };
 }
 
 function renderDashboard() {
@@ -1409,74 +1538,101 @@ function renderDashboard() {
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
   const today = new Date();
   const todayDateId = getIsoDateId(today);
-  const weekId = getIsoWeekId(today);
 
-  const thisWeekLedger = state.ledger.filter((tx) => tx.weekId === weekId);
-  const extrasCents = thisWeekLedger.filter((tx) => tx.type === 'extra_job_credit').reduce((s, tx) => s + tx.amountCents, 0);
-  const deductionsCents = thisWeekLedger.filter((tx) => tx.type === 'deduction').reduce((s, tx) => s + tx.amountCents, 0);
-  const alreadySettled = thisWeekLedger.some((tx) => tx.type === 'weekly_payout' || tx.type === 'chore_shortfall_pending_review');
-  const weekProgress = computeWeekProgressForMember(state.user.uid);
-  const onTrack = weekProgress.total === 0 || weekProgress.done === weekProgress.total;
-  const pendingAllowanceCents = alreadySettled ? 0 : (onTrack ? (state.member ? state.member.baseWeeklyAllowanceCents || 0 : 0) : 0);
-  const pendingStreakCents = computePendingStreakBonusCents(state.user.uid);
+  const { lines: pendingLines, thisWeekLedger, onTrack, alreadySettled, weekProgress } =
+    computePendingPaymentLines(state.user.uid, state.member);
+  const thisWeekNetCents = thisWeekLedger.reduce((s, tx) => s + tx.amountCents, 0);
+  const pendingTotalCents = pendingLines.reduce((s, l) => s + l.cents, 0);
+  // The headline number is the balance as it stood at the start of THIS
+  // week (current balance minus everything that's already settled this
+  // week) -- the delta beside it is what's moved (settled) plus what's
+  // still projected (pending allowance/streak bonus), so together they
+  // read as "where you started, here's what changed."
+  const startingBalanceCents = (state.member ? state.member.balanceCents : 0) - thisWeekNetCents;
+  const projectedDeltaCents = thisWeekNetCents + pendingTotalCents;
 
-  const balanceCard = el('div', { class: 'booking-card' }, [
-    el('div', { class: 'muted' }, 'My Balance'),
-    el('div', { style: 'font-size:1.8rem;font-weight:800;' }, formatCents(state.member ? state.member.balanceCents : 0, currency)),
-  ]);
-  const breakdown = [];
-  if (pendingAllowanceCents > 0) {
-    breakdown.push(`+${formatCents(pendingAllowanceCents, currency)} allowance (pending, released Friday)`);
-  } else if (!alreadySettled && !onTrack) {
-    breakdown.push('Allowance at risk -- not all chores done yet this week');
-  }
-  if (extrasCents > 0) breakdown.push(`+${formatCents(extrasCents, currency)} extra jobs this week`);
-  if (deductionsCents < 0) breakdown.push(`${formatCents(deductionsCents, currency)} deductions this week`);
-  if (pendingStreakCents > 0) breakdown.push(`+${formatCents(pendingStreakCents, currency)} streak bonus (pending, released Friday)`);
-  if (breakdown.length > 0) {
-    balanceCard.appendChild(el('div', { class: 'muted', style: 'margin-top:8px;line-height:1.6;' },
-      breakdown.map((line) => el('div', {}, line))));
-  }
+  const balanceCard = el('div', { class: 'booking-card' });
+  balanceCard.appendChild(el('div', { class: 'muted' }, 'This week started at'));
+  balanceCard.appendChild(el('div', { class: 'row', style: 'align-items:baseline;gap:10px;justify-content:flex-start;' }, [
+    el('div', { style: 'font-size:1.8rem;font-weight:800;' }, formatCents(startingBalanceCents, currency)),
+    el('div', { class: `balance-delta ${projectedDeltaCents > 0 ? 'positive' : projectedDeltaCents < 0 ? 'negative' : 'zero'}` },
+      `${projectedDeltaCents > 0 ? '+' : ''}${formatCents(projectedDeltaCents, currency)}`),
+  ]));
   container.appendChild(balanceCard);
 
+  // Weekly ring LEFT, today's ring RIGHT -- each clearly headed, each a
+  // 3-color donut (green approved / orange awaiting approval / muted not
+  // started) so a glance shows not just "how much" but "how much is stuck
+  // waiting on me to review" too.
   const dayItems = getDayViewItems(todayDateId);
-  const dayDone = dayItems.filter((i) => i.status === 'approved' || i.status === 'done').length;
-  const dayPct = dayItems.length === 0 ? 100 : Math.round((dayDone / dayItems.length) * 100);
-  const weekPct = weekProgress.total === 0 ? 100 : Math.round((weekProgress.done / weekProgress.total) * 100);
+  const dayApproved = dayItems.filter((i) => i.status === 'approved').length;
+  const dayPending = dayItems.filter((i) => i.status === 'done').length;
 
   container.appendChild(el('div', { class: 'stat-grid' }, [
     el('div', { class: 'booking-card', style: 'text-align:center;' }, [
-      el('div', { class: 'progress-ring', style: `--pct:${dayPct};` }, [
-        el('div', { class: 'progress-ring-inner' }, [
-          el('div', { class: 'progress-ring-pct' }, `${dayPct}%`),
-          el('div', { class: 'progress-ring-label' }, 'today'),
-        ]),
-      ]),
-      el('div', { class: 'muted' }, `${dayDone}/${dayItems.length} today`),
+      el('div', { class: 'ring-heading' }, 'This week'),
+      renderProgressRing({
+        approvedCount: weekProgress.done, pendingCount: weekProgress.pendingCount, total: weekProgress.total,
+        label: pctLabel(weekProgress.done, weekProgress.total),
+      }),
+      el('div', { class: 'muted' }, `${weekProgress.done}/${weekProgress.total} done`),
     ]),
     el('div', { class: 'booking-card', style: 'text-align:center;' }, [
-      el('div', { class: 'progress-ring', style: `--pct:${weekPct};` }, [
-        el('div', { class: 'progress-ring-inner' }, [
-          el('div', { class: 'progress-ring-pct' }, `${weekPct}%`),
-          el('div', { class: 'progress-ring-label' }, 'this week'),
-        ]),
-      ]),
-      el('div', { class: 'muted' }, `${weekProgress.done}/${weekProgress.total} this week`),
+      el('div', { class: 'ring-heading' }, 'Today'),
+      renderProgressRing({
+        approvedCount: dayApproved, pendingCount: dayPending, total: dayItems.length,
+        label: pctLabel(dayApproved, dayItems.length),
+      }),
+      el('div', { class: 'muted' }, `${dayApproved}/${dayItems.length} done`),
     ]),
   ]));
+
+  // Itemized payment list, right below the rings -- every settled entry
+  // this week (from the ledger) plus every still-projected one (pending
+  // allowance, each active streak), so the delta badge above is never an
+  // opaque number: every line here sums to exactly it.
+  const paymentLines = [
+    ...thisWeekLedger.map((tx) => ({ label: tx.note || tx.type.replace(/_/g, ' '), cents: tx.amountCents, pending: false })),
+    ...pendingLines,
+  ];
+
+  if (paymentLines.length > 0 || (!alreadySettled && !onTrack)) {
+    container.appendChild(el('h2', { style: 'margin-top:16px;' }, "This week's payments"));
+    const listCard = el('div', { class: 'booking-card' });
+    paymentLines.forEach((line) => {
+      const positive = line.cents >= 0;
+      listCard.appendChild(el('div', { class: `payment-line ${line.pending ? 'pending' : ''}` }, [
+        el('div', { class: 'payment-line-label' }, [
+          el('span', {}, line.label),
+          line.pending ? el('span', { class: 'status-pill status-done' }, 'pending') : null,
+        ]),
+        el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(line.cents, currency)}`),
+      ]));
+    });
+    if (!alreadySettled && !onTrack) {
+      listCard.appendChild(el('div', { class: 'payment-line' }, [
+        el('div', { class: 'muted' }, 'Allowance at risk -- not all chores done yet this week'),
+      ]));
+    }
+    container.appendChild(listCard);
+  }
 
   ['dailyTask', 'chore'].forEach((cat) => {
     const items = weekProgress.items.filter((i) => (i.chore.category || 'chore') === cat);
     if (items.length === 0) return;
     container.appendChild(el('h2', { style: 'margin-top:16px;' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
     items.forEach((item) => {
+      let pillLabel, pillClass, cardClass;
+      if (item.satisfied) { pillLabel = 'done'; pillClass = 'status-approved'; cardClass = 'done'; }
+      else if (item.pending) { pillLabel = 'awaiting approval'; pillClass = 'status-done'; cardClass = ''; }
+      else { pillLabel = 'to do'; pillClass = 'status-pending'; cardClass = ''; }
       container.appendChild(el('div', {
-        class: `booking-card ${item.satisfied ? 'done' : ''}`, style: 'cursor:pointer;',
+        class: `booking-card ${cardClass}`, style: 'cursor:pointer;',
         onclick: () => switchTab('chores'),
       }, [
         el('div', { class: 'row' }, [
           choreLabel(item.chore),
-          el('span', { class: `status-pill status-${item.satisfied ? 'approved' : 'pending'}` }, item.satisfied ? 'done' : 'to do'),
+          el('span', { class: `status-pill ${pillClass}` }, pillLabel),
         ]),
       ]));
     });
@@ -1558,9 +1714,12 @@ function renderChores() {
     });
   }
 
-  // Day tabs -- current ISO week only (Mon..Sun), swipe left/right to move
-  // between adjacent days. Scoped touch listeners + stopPropagation keep
-  // this independent of the app-wide tab-switch swipe on document.
+  // Day tabs -- current ISO week only (Mon..Sun). Swipe left/right ANYWHERE
+  // on this page (not just the narrow chip row) moves between adjacent
+  // days -- the document-level app-tab swipe explicitly opts out for the
+  // 'chores' tab (see its own listener) so the two gestures never compete.
+  // Horizontal-dominant check (|dx| > |dy|) keeps an ordinary vertical
+  // scroll on this page from ever being misread as a day-swipe.
   const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const dayTabs = el('div', { class: 'day-tabs' });
   weekDates.forEach((d, i) => {
@@ -1570,26 +1729,11 @@ function renderChores() {
     dayTabs.appendChild(el('button', {
       type: 'button',
       class: `day-chip ${isActive ? 'active' : ''} ${isToday ? 'today' : ''}`,
-      onclick: () => { selectedDashboardDateId = dId; renderDashboard(); },
+      onclick: () => { selectedDashboardDateId = dId; renderChores(); },
     }, [
       el('div', { class: 'day-chip-label' }, dayNames[i]),
       el('div', { class: 'day-chip-date' }, String(d.getUTCDate())),
     ]));
-  });
-  let dayTouchStartX = null;
-  dayTabs.addEventListener('touchstart', (e) => { dayTouchStartX = e.changedTouches[0].clientX; }, { passive: true });
-  dayTabs.addEventListener('touchend', (e) => {
-    if (dayTouchStartX === null) return;
-    const dx = e.changedTouches[0].clientX - dayTouchStartX;
-    dayTouchStartX = null;
-    if (Math.abs(dx) < 40) return;
-    e.stopPropagation();
-    const idx = weekDates.findIndex((d) => getIsoDateId(d) === selectedDateId);
-    const nextIdx = dx < 0 ? idx + 1 : idx - 1;
-    if (nextIdx >= 0 && nextIdx < weekDates.length) {
-      selectedDashboardDateId = getIsoDateId(weekDates[nextIdx]);
-      renderDashboard();
-    }
   });
   container.appendChild(dayTabs);
 
@@ -1629,6 +1773,7 @@ function renderChores() {
       let pillLabel, pillClass;
       if (missed) { pillLabel = 'missed'; pillClass = 'status-rejected'; }
       else if (notYetDue) { pillLabel = 'not due yet'; pillClass = 'status-pending'; }
+      else if (status === 'done') { pillLabel = 'awaiting approval'; pillClass = 'status-done'; }
       else { pillLabel = status.replace('_', ' '); pillClass = `status-${status}`; }
 
       card.appendChild(el('div', { class: 'row' }, [
@@ -1639,6 +1784,7 @@ function renderChores() {
           (!isMyGate && iCanExecute) ? el('div', { class: 'muted' }, `Covering this for ${memberLabel(resolveBaseAssignee(chore))} (swap)`) : null,
           (isMyGate && !iCanExecute) ? el('div', { class: 'muted' }, `Swapped to ${memberLabel(executingUid)} this week`) : null,
           (swappedAwayToday && selectedDateId === todayDateId) ? el('div', { class: 'muted' }, `Swapped to ${memberLabel(dayExecutingUid)} today`) : null,
+          (status === 'rejected' && entry && entry.reviewNote) ? el('div', { class: 'muted' }, `Rejected: ${entry.reviewNote}`) : null,
           isDaily ? renderStreakBadge(chore, executingUid, weekDates, todayDateId) : null,
         ]),
         el('span', { class: `status-pill ${pillClass}` }, pillLabel),
@@ -1666,7 +1812,7 @@ function renderChores() {
               markBtn.disabled = false;
             }
           },
-        }, 'Mark done');
+        }, status === 'rejected' ? 'Try again' : 'Mark done');
         card.appendChild(fileInput);
         card.appendChild(attachBtn);
         card.appendChild(markBtn);
@@ -1936,18 +2082,51 @@ function renderEarnings() {
   container.innerHTML = '';
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
 
+  // Still-accruing amounts (pending allowance, active streaks) shown ahead
+  // of the settled history -- the same lines the Dashboard's balance
+  // projection uses, so the two never disagree about what's coming.
+  const { lines: pendingLines } = computePendingPaymentLines(state.user.uid, state.member);
+  if (pendingLines.length > 0) {
+    container.appendChild(el('h2', {}, 'Still to come'));
+    const pendingCard = el('div', { class: 'booking-card' });
+    pendingLines.forEach((line) => {
+      pendingCard.appendChild(el('div', { class: 'payment-line pending' }, [
+        el('div', { class: 'payment-line-label' }, [
+          el('span', {}, line.label),
+          el('span', { class: 'status-pill status-done' }, 'pending'),
+        ]),
+        el('div', { class: 'amount positive' }, `+${formatCents(line.cents, currency)}`),
+      ]));
+    });
+    container.appendChild(pendingCard);
+  }
+
   if (state.ledger.length === 0) {
-    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
+    if (pendingLines.length === 0) container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
     return;
   }
 
+  // Settled history, grouped by month (state.ledger is already sorted
+  // newest-first, so a simple "did the month change" scan is enough --
+  // no month cap, this naturally shows this month and keeps going back as
+  // far as the family's history does).
+  container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'History'));
+  let currentMonthKey = null;
   state.ledger.forEach((tx) => {
+    const d = tx.createdAt && typeof tx.createdAt.toDate === 'function' ? tx.createdAt.toDate() : null;
+    const monthKey = d ? `${d.getFullYear()}-${d.getMonth()}` : 'unknown';
+    if (monthKey !== currentMonthKey) {
+      currentMonthKey = monthKey;
+      const label = d ? d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) : 'Earlier';
+      container.appendChild(el('div', { class: 'ring-heading', style: 'margin-top:14px;' }, label));
+    }
     const positive = tx.amountCents >= 0;
+    const dateLabel = d ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
     container.appendChild(el('div', { class: 'booking-card' }, [
       el('div', { class: 'row' }, [
         el('div', {}, [
           el('div', {}, tx.note || tx.type),
-          el('div', { class: 'muted' }, tx.type.replace(/_/g, ' ')),
+          el('div', { class: 'muted' }, [tx.type.replace(/_/g, ' '), dateLabel ? ` · ${dateLabel}` : ''].join('')),
         ]),
         el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
       ]),
@@ -1966,16 +2145,18 @@ function renderMore() {
     el('div', { class: 'muted' }, state.member ? state.member.email : ''),
     el('div', { class: 'muted' }, 'Role: Child'),
   ]));
-  container.appendChild(el('button', {
-    class: 'pill', style: 'width:100%;margin-bottom:8px;',
-    onclick: () => { showScreen('tour'); tourStep = 0; renderTourStep(); },
-  }, 'Replay app tour'));
-  container.appendChild(el('button', {
-    class: 'pill', style: 'width:100%;margin-bottom:8px;',
-    onclick: () => showScreen('changePassword'),
-  }, 'Change password'));
+
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+  container.appendChild(renderMoreToggle('☾ Dark mode', currentTheme === 'dark', (checked) => {
+    const next = checked ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('choresAppTheme', next); } catch (e) {}
+  }));
+  container.appendChild(renderMoreLink('Replay app tour', () => { showScreen('tour'); tourStep = 0; renderTourStep(); }));
+  container.appendChild(renderMoreLink('Change password', () => showScreen('changePassword')));
   renderNotificationSettingsButton(container);
-  container.appendChild(el('button', { class: 'pill', style: 'width:100%;', onclick: () => signOut(auth) }, 'Sign out'));
+
+  container.appendChild(el('button', { class: 'signout-row', onclick: () => signOut(auth) }, 'Sign out'));
 }
 
 // ---------------------------------------------------------------------
@@ -2021,23 +2202,34 @@ function renderAdminDashboard() {
     ]),
   ]));
 
-  container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Children'));
+  const familyNeedsReview = state.choreLog.filter((e) => e.status === 'done');
+  container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
+    el('h2', {}, 'Children'),
+    familyNeedsReview.length > 0 ? el('button', {
+      class: 'pill small', onclick: async (event) => {
+        event.target.disabled = true;
+        try { await approveAllChoreLogEntries(familyNeedsReview); } catch (err) { alert(err.message); }
+      },
+    }, `Approve all (${familyNeedsReview.length})`) : null,
+  ]));
   if (children.length === 0) {
     container.appendChild(el('div', { class: 'empty-state' }, 'No children added yet.'));
   }
   children.forEach((child) => {
     const progress = computeWeekProgressForMember(child.uid);
-    const pct = progress.total === 0 ? 100 : Math.round((progress.done / progress.total) * 100);
     const attentionCount = computeChildAttentionCount(child.uid);
     container.appendChild(el('div', { class: 'booking-card', style: 'cursor:pointer;', onclick: () => showChildDetail(child.uid) }, [
       el('div', { class: 'row' }, [
         el('div', {}, [
           el('div', { style: 'font-weight:700;' }, child.displayName || child.email),
           el('div', { class: 'muted' }, `${formatCents(child.balanceCents || 0, currency)} · ${progress.done}/${progress.total} done this week`),
+          attentionCount > 0 ? el('span', { class: 'status-pill status-done', style: 'margin-top:6px;display:inline-block;' }, `${attentionCount} to review`) : null,
         ]),
-        attentionCount > 0 ? el('span', { class: 'status-pill status-done' }, `${attentionCount} to review`) : null,
+        renderProgressRing({
+          approvedCount: progress.done, pendingCount: progress.pendingCount, total: progress.total,
+          label: pctLabel(progress.done, progress.total), small: true,
+        }),
       ]),
-      el('div', { class: 'mini-bar' }, [el('div', { class: 'mini-bar-fill', style: `width:${pct}%;` })]),
     ]));
   });
 
@@ -2095,17 +2287,27 @@ function renderChildDetail() {
 
   const needsReview = state.choreLog.filter((e) => e.status === 'done' && e.memberUid === uid);
   if (needsReview.length > 0) {
-    container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Chores to review'));
+    container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
+      el('h2', {}, 'Chores to review'),
+      el('button', {
+        class: 'pill small', onclick: async (event) => {
+          event.target.disabled = true;
+          try { await approveAllChoreLogEntries(needsReview); } catch (err) { alert(err.message); }
+        },
+      }, `Approve all (${needsReview.length})`),
+    ]));
     needsReview.forEach((entry) => container.appendChild(renderChoreReviewCard(entry)));
   }
 
   if (progress.items.length > 0) {
     container.appendChild(el('h2', { style: 'margin-top:16px;' }, "This week's chores"));
     progress.items.forEach((item) => {
+      const pillClass = item.satisfied ? 'status-approved' : item.pending ? 'status-done' : 'status-pending';
+      const pillLabel = item.satisfied ? 'done' : item.pending ? 'awaiting approval' : 'not yet';
       container.appendChild(el('div', { class: 'booking-card' }, [
         el('div', { class: 'row' }, [
           el('div', { style: 'font-weight:600;' }, item.chore.name),
-          el('span', { class: `status-pill status-${item.satisfied ? 'approved' : 'pending'}` }, item.satisfied ? 'done' : 'not yet'),
+          el('span', { class: `status-pill ${pillClass}` }, pillLabel),
         ]),
       ]));
     });
@@ -2199,6 +2401,31 @@ function renderChildDetail() {
       ]));
     });
   }
+}
+
+// A plain action row (no disclosure body) in the pitchschedule-style More
+// menu -- tapping it fires immediately rather than expanding, so its
+// chevron is static rather than the rotate-on-expand one makeExpandable
+// uses (the .link modifier disables that rotation).
+function renderMoreLink(title, onclick) {
+  const wrap = el('div', { class: 'more-item' });
+  wrap.appendChild(el('button', {
+    type: 'button', class: 'more-item-title-row link', onclick,
+  }, [el('span', {}, title), el('span', { class: 'more-item-chevron' }, '›')]));
+  return wrap;
+}
+
+// The one toggle-switch row (dark mode) in the More menu, mirroring
+// pitchschedule's .theme-switch exactly.
+function renderMoreToggle(label, checked, onchange) {
+  const wrap = el('div', { class: 'more-item' });
+  const input = el('input', { type: 'checkbox', ...(checked ? { checked: 'checked' } : {}) });
+  input.addEventListener('change', () => onchange(input.checked));
+  wrap.appendChild(el('div', { class: 'more-toggle-row' }, [
+    el('span', { class: 'more-toggle-label' }, label),
+    el('label', { class: 'theme-switch' }, [input, el('span', { class: 'theme-switch-slider' })]),
+  ]));
+  return wrap;
 }
 
 function makeExpandable(title, bodyNode) {
@@ -2352,6 +2579,24 @@ function renderChoreReviewCard(entry) {
   return card;
 }
 
+// Bulk-approves every given "done, awaiting review" entry in one batched
+// write (same direct rules-permitted admin update as the individual
+// Approve button -- see firestore.rules' choreLog match block, which
+// already allows status -> 'approved'/'rejected'; a batch is just many of
+// that same write committed atomically). Used by both the per-child
+// "Approve all" (Child Detail) and the family-wide one (Admin Dashboard).
+async function approveAllChoreLogEntries(entries) {
+  if (entries.length === 0) return;
+  const { writeBatch, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+  const batch = writeBatch(db);
+  entries.forEach((entry) => {
+    batch.update(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+      status: 'approved', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+    });
+  });
+  await batch.commit();
+}
+
 // ---------------------------------------------------------------------
 // Manage Chores tab (admin) -- Active Chores / Chore Library
 // ---------------------------------------------------------------------
@@ -2502,7 +2747,15 @@ function renderActiveChores(container) {
 
   const needsReview = state.choreLog.filter((e) => e.status === 'done');
   if (needsReview.length > 0) {
-    container.appendChild(el('h2', {}, 'Needs your review'));
+    container.appendChild(el('div', { class: 'row', style: 'align-items:center;' }, [
+      el('h2', {}, 'Needs your review'),
+      el('button', {
+        class: 'pill small', onclick: async (event) => {
+          event.target.disabled = true;
+          try { await approveAllChoreLogEntries(needsReview); } catch (err) { alert(err.message); }
+        },
+      }, `Approve all (${needsReview.length})`),
+    ]));
     needsReview.forEach((entry) => container.appendChild(renderChoreReviewCard(entry)));
   }
 
@@ -2628,18 +2881,11 @@ function renderSettings() {
   container.innerHTML = '';
 
   const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
-  container.appendChild(el('div', { class: 'booking-card row' }, [
-    el('div', {}, 'Dark mode'),
-    el('button', {
-      class: 'pill small',
-      onclick: () => {
-        const next = currentTheme === 'dark' ? 'light' : 'dark';
-        document.documentElement.setAttribute('data-theme', next);
-        try { localStorage.setItem('choresAppTheme', next); } catch (e) {}
-        renderSettings();
-      },
-    }, currentTheme === 'dark' ? 'Switch to light' : 'Switch to dark'),
-  ]));
+  container.appendChild(renderMoreToggle('☾ Dark mode', currentTheme === 'dark', (checked) => {
+    const next = checked ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('choresAppTheme', next); } catch (e) {}
+  }));
 
   const settingsForm = el('form', { class: 'booking-card' });
   const currencySelect = el('select', {}, ['EUR', 'USD', 'GBP'].map((c) => el('option', { value: c }, c)));
@@ -2663,13 +2909,9 @@ function renderSettings() {
   container.appendChild(settingsForm);
 
   renderNotificationSettingsButton(container);
+  container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; renderWizardStep(); }));
 
-  container.appendChild(el('button', {
-    class: 'pill', style: 'width:100%;margin-bottom:8px;',
-    onclick: () => { showScreen('onboarding'); wizardStep = 0; renderWizardStep(); },
-  }, 'Run setup wizard'));
-
-  container.appendChild(el('button', { class: 'pill', style: 'width:100%;', onclick: () => signOut(auth) }, 'Sign out'));
+  container.appendChild(el('button', { class: 'signout-row', onclick: () => signOut(auth) }, 'Sign out'));
 }
 
 // ---------------------------------------------------------------------
