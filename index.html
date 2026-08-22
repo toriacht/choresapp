@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Family Chores</title>
-<meta name="theme-color" content="#1e6fb8" />
+<meta name="theme-color" content="#1b7a43" />
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="favicon.ico" />
 <link rel="apple-touch-icon" href="icon-192.png" />
@@ -27,16 +27,16 @@
 </script>
 <style>
   :root {
-    --bg: #f7fafc; --panel: #ffffff; --panel2: #eaf3fb; --text: #0f172a;
-    --muted: #334155; --accent: #4fa8e8; --accent2: #1e6fb8;
+    --bg: #f7fafc; --panel: #ffffff; --panel2: #eafaf0; --text: #0f172a;
+    --muted: #334155; --accent: #22b573; --accent2: #1b7a43;
     --border: #e6edf5; --warn: #92400e; --warn-tint-rgb: 146, 64, 14;
-    --success: #15803d; --danger: #b91c1c; --accent2-fill: #1e6fb8;
+    --success: #15803d; --danger: #b91c1c; --accent2-fill: #1b7a43;
   }
   :root[data-theme="dark"] {
-    --bg: #0f172a; --panel: #1e293b; --panel2: #2c3b52; --text: #f1f5f9;
-    --muted: #a8b7c9; --accent: #7ec4f6; --accent2: #6bb3ea;
+    --bg: #0f172a; --panel: #1e293b; --panel2: #223a2c; --text: #f1f5f9;
+    --muted: #a8b7c9; --accent: #4ade80; --accent2: #34c759;
     --border: #33445c; --warn: #fbbf24; --warn-tint-rgb: 251, 191, 36;
-    --success: #6ee7a0; --danger: #fca5a5;
+    --success: #6ee7a0; --danger: #fca5a5; --accent2-fill: #34c759;
   }
   * { box-sizing: border-box; }
   body {
@@ -56,6 +56,7 @@
   }
   .booking-card.warn { border-left-color: var(--warn); }
   .booking-card.done { border-left-color: var(--success); }
+  .booking-card.missed { opacity: 0.6; border-left-color: var(--danger); }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .muted { color: var(--muted); font-size: 0.85rem; }
   .amount { font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -151,6 +152,24 @@
   .progress-ring-pct { font-size: 1.1rem; font-weight: 800; }
   .progress-ring-label { font-size: 0.6rem; color: var(--muted); }
 
+  /* Day-by-day tabs on the child Dashboard -- a week of tappable/swipeable
+     day chips, not a full calendar (see docs/adr for why). */
+  .day-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .day-chip {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 8px 2px; border-radius: 12px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--muted); cursor: pointer; font-weight: 600;
+  }
+  .day-chip-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .day-chip-date { font-size: 0.95rem; font-weight: 800; }
+  .day-chip.today { border-color: var(--accent2); }
+  .day-chip.active { background: var(--accent2-fill); border-color: var(--accent2-fill); color: #fff; }
+
+  .streak-badge {
+    display: inline-block; margin-top: 4px; background: var(--panel2); color: var(--accent2);
+    font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+  }
+
   .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
   .stat-tile { background: var(--panel); border-radius: 12px; padding: 12px 14px; }
   .stat-tile .stat-value { font-size: 1.3rem; font-weight: 800; }
@@ -189,11 +208,12 @@
 <div class="page-wrap">
 
   <div id="loadingScreen" class="center-screen">
-    <div class="skeleton-bar" style="width:120px;height:120px;border-radius:50%;"></div>
+    <img src="icon-512.png" alt="" width="96" height="96" style="border-radius:20px;" />
     <p>Loading&hellip;</p>
   </div>
 
   <div id="signInScreen" class="center-screen" hidden>
+    <img src="icon-512.png" alt="" width="72" height="72" style="border-radius:16px;" />
     <h1>Family Chores</h1>
     <p>Track chores, allowances, and extra jobs together.</p>
 
@@ -283,7 +303,6 @@
     </div>
 
     <section class="tab-page" data-page="dashboard" id="page-dashboard"></section>
-    <section class="tab-page" data-page="mychores" id="page-mychores" hidden></section>
     <section class="tab-page" data-page="extras" id="page-extras" hidden></section>
     <section class="tab-page" data-page="earnings" id="page-earnings" hidden></section>
     <section class="tab-page" data-page="more" id="page-more" hidden></section>
@@ -296,10 +315,6 @@
       <button type="button" class="nav-btn active" data-tab="dashboard">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
         <span>Dashboard</span>
-      </button>
-      <button type="button" class="nav-btn" data-tab="mychores">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1h11"/></svg>
-        <span>My Chores</span>
       </button>
       <button type="button" class="nav-btn" data-tab="extras">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
@@ -404,6 +419,32 @@ function getIsoWeekId(date) {
   return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
 }
 
+// ---- Same day-level helpers as functions/lib/choreLog.js, duplicated here
+// for display only -- the server (markChoreDone) stays authoritative for
+// which id/day an entry actually lands on.
+function getIsoDateId(date) {
+  return date.toISOString().slice(0, 10);
+}
+function resolveLogEntryId({ chore, choreId, uid, weekId, dateId }) {
+  return chore.frequency === 'daily'
+    ? `${dateId}_${choreId}_${uid}`
+    : `${weekId}_${choreId}_${uid}`;
+}
+// The 7 calendar days (Mon..Sun, UTC) of the ISO week containing `date` --
+// mirrors getIsoWeekId's own Monday-anchored week boundary so the day tabs
+// always line up with the exact week the backend groups chores into.
+function getIsoWeekDates(date) {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dayNum = d.getUTCDay() || 7;
+  const monday = new Date(d);
+  monday.setUTCDate(d.getUTCDate() - (dayNum - 1));
+  return Array.from({ length: 7 }, (_, i) => {
+    const day = new Date(monday);
+    day.setUTCDate(monday.getUTCDate() + i);
+    return day;
+  });
+}
+
 // ---- Same assignment-resolution logic as functions/lib/choreAssignment.js,
 // duplicated here for display only -- server (markChoreDone/settlement)
 // stays authoritative. See that file's comments for the full reasoning.
@@ -495,10 +536,10 @@ function memberLabel(uid) {
 // ---------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------
-const CHILD_TABS = ['dashboard', 'mychores', 'extras', 'earnings', 'more'];
+const CHILD_TABS = ['dashboard', 'extras', 'earnings', 'more'];
 const ADMIN_TABS = ['admindashboard', 'managechores', 'allactivity', 'settings'];
 const TITLES = {
-  dashboard: 'Dashboard', mychores: 'My Chores', extras: 'Extras', earnings: 'Earnings', more: 'More',
+  dashboard: 'Dashboard', extras: 'Extras', earnings: 'Earnings', more: 'More',
   admindashboard: 'Admin Dashboard', managechores: 'Manage Chores', allactivity: 'All Activity', settings: 'Settings',
 };
 
@@ -607,6 +648,47 @@ function getMyChoresListItems() {
   });
 
   return items;
+}
+
+// The Dashboard's day-by-day view, built on top of getMyChoresListItems.
+// A 'daily' chore gets its own entry per calendar day (dateId-scoped, so
+// Monday and Tuesday are independent); everything else keeps one shared
+// status for the whole week, just shown on every day until it's done --
+// matching resolveLogEntryId's id scheme on the backend. Only "today" is
+// ever actionable (mark-done); other days are a read-only view of that
+// day's (or that week's) status.
+function getDayViewItems(dateId) {
+  const todayDateId = getIsoDateId(new Date());
+  return getMyChoresListItems().map((item) => {
+    const { chore, executingUid, iCanExecute } = item;
+    const isDaily = chore.frequency === 'daily';
+    const entry = isDaily
+      ? state.choreLog.find((e) => e.choreId === chore.id && e.memberUid === executingUid && e.dateId === dateId)
+      : state.choreLog.find((e) => e.choreId === chore.id && e.memberUid === executingUid);
+    const status = entry ? entry.status : 'pending';
+    const isPastDay = dateId < todayDateId;
+    const isFutureDay = dateId > todayDateId;
+    const missed = isDaily && isPastDay && !entry;
+    const notYetDue = isDaily && isFutureDay && !entry;
+    const actionable = iCanExecute && dateId === todayDateId && status !== 'done' && status !== 'approved';
+    return { ...item, entry, status, isDaily, missed, notYetDue, actionable };
+  });
+}
+
+// Streak badge for a 'daily' chore: consecutive-this-week count of
+// APPROVED days (not just self-marked 'done') ending today -- matching the
+// same trust boundary the payout gate already uses elsewhere, a child's own
+// mark isn't enough for a streak to count either. Purely a display extra,
+// no new Firestore fields, no payout effect (see docs/adr).
+function renderStreakBadge(chore, executingUid, weekDates, todayDateId) {
+  const daysSoFar = weekDates.filter((d) => getIsoDateId(d) <= todayDateId);
+  const approvedCount = daysSoFar.filter((d) => {
+    const dId = getIsoDateId(d);
+    return state.choreLog.some((e) => e.choreId === chore.id && e.memberUid === executingUid && e.dateId === dId && e.status === 'approved');
+  }).length;
+  if (approvedCount === 0) return null;
+  const perfect = approvedCount === 7;
+  return el('div', { class: 'streak-badge' }, perfect ? '⭐ Perfect week' : `🔥 ${approvedCount}/${daysSoFar.length} this week`);
 }
 
 // ---------------------------------------------------------------------
@@ -971,7 +1053,7 @@ document.addEventListener('touchend', (e) => {
 function renderCurrentTab() {
   if (screens.app.hidden) return;
   const renderers = {
-    dashboard: renderDashboard, mychores: renderMyChores, extras: renderExtras,
+    dashboard: renderDashboard, extras: renderExtras,
     earnings: renderEarnings, more: renderMore,
     admindashboard: renderAdminDashboard, managechores: renderManageChores,
     allactivity: renderAllActivity, settings: renderSettings,
@@ -1009,72 +1091,29 @@ function choreLabel(chore) {
 // ---------------------------------------------------------------------
 // Dashboard tab (child) -- read-only overview
 // ---------------------------------------------------------------------
+let selectedDashboardDateId = null;
+
 function renderDashboard() {
   const container = document.getElementById('page-dashboard');
   container.innerHTML = '';
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+  const today = new Date();
+  const todayDateId = getIsoDateId(today);
+  const weekDates = getIsoWeekDates(today);
+  if (!selectedDashboardDateId || !weekDates.some((d) => getIsoDateId(d) === selectedDashboardDateId)) {
+    selectedDashboardDateId = todayDateId;
+  }
+  const selectedDateId = selectedDashboardDateId;
 
   container.appendChild(el('div', { class: 'booking-card' }, [
     el('div', { class: 'muted' }, 'My Balance'),
     el('div', { style: 'font-size:1.8rem;font-weight:800;' }, formatCents(state.member ? state.member.balanceCents : 0, currency)),
   ]));
 
-  const progress = computeWeekProgressForMember(state.user.uid);
-  const pct = progress.total === 0 ? 100 : Math.round((progress.done / progress.total) * 100);
-  const ringCard = el('div', { class: 'booking-card', style: 'text-align:center;' });
-  const ring = el('div', { class: 'progress-ring', style: `--pct:${pct};` }, [
-    el('div', { class: 'progress-ring-inner' }, [
-      el('div', { class: 'progress-ring-pct' }, `${pct}%`),
-      el('div', { class: 'progress-ring-label' }, 'done'),
-    ]),
-  ]);
-  ringCard.appendChild(ring);
-  ringCard.appendChild(el('div', { class: 'muted' }, `${progress.done} done · ${progress.total - progress.done} to do · Goal: 100% by Friday`));
-  container.appendChild(ringCard);
-
-  ['dailyTask', 'chore'].forEach((cat) => {
-    const items = progress.items.filter((i) => (i.chore.category || 'chore') === cat);
-    if (items.length === 0) return;
-    container.appendChild(el('h2', { style: 'margin-top:16px;' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
-    items.forEach((item) => {
-      container.appendChild(el('div', { class: `booking-card ${item.satisfied ? 'done' : ''}` }, [
-        el('div', { class: 'row' }, [
-          choreLabel(item.chore),
-          el('span', { class: `status-pill status-${item.satisfied ? 'approved' : 'pending'}` }, item.satisfied ? 'done' : 'to do'),
-        ]),
-      ]));
-    });
-  });
-
-  container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
-    el('h2', {}, 'Recent activity'),
-    el('button', { class: 'pill small', onclick: () => switchTab('earnings') }, 'View all'),
-  ]));
-  if (state.ledger.length === 0) {
-    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
-  } else {
-    state.ledger.slice(0, 3).forEach((tx) => {
-      const positive = tx.amountCents >= 0;
-      container.appendChild(el('div', { class: 'booking-card' }, [
-        el('div', { class: 'row' }, [
-          el('div', {}, tx.note || tx.type),
-          el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
-        ]),
-      ]));
-    });
-  }
-}
-
-// ---------------------------------------------------------------------
-// My Chores tab (child) -- mark done, photo proof, swaps
-// ---------------------------------------------------------------------
-function renderMyChores() {
-  const container = document.getElementById('page-mychores');
-  container.innerHTML = '';
-
-  const myProposals = state.choreSwaps.filter((s) => s.proposedBy === state.user.uid && s.status === 'proposed');
+  // Swap requests/proposals are a week-wide arrangement, not tied to any one
+  // day, so they sit above the day tabs rather than inside a specific day.
   const requestsForMe = state.choreSwaps.filter((s) => s.targetUid === state.user.uid && s.status === 'proposed');
-
+  const myProposals = state.choreSwaps.filter((s) => s.proposedBy === state.user.uid && s.status === 'proposed');
   if (requestsForMe.length > 0) {
     container.appendChild(el('h2', {}, 'Swap requests for you'));
     requestsForMe.forEach((swap) => {
@@ -1095,7 +1134,6 @@ function renderMyChores() {
       ]));
     });
   }
-
   if (myProposals.length > 0) {
     container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Your pending swap proposals'));
     myProposals.forEach((swap) => {
@@ -1110,77 +1148,165 @@ function renderMyChores() {
     });
   }
 
-  container.appendChild(el('h2', { style: 'margin-top:16px;' }, "This week's chores"));
-  const items = getMyChoresListItems();
+  // Day tabs -- current ISO week only (Mon..Sun), swipe left/right to move
+  // between adjacent days. Scoped touch listeners + stopPropagation keep
+  // this independent of the app-wide tab-switch swipe on document.
+  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const dayTabs = el('div', { class: 'day-tabs' });
+  weekDates.forEach((d, i) => {
+    const dId = getIsoDateId(d);
+    const isToday = dId === todayDateId;
+    const isActive = dId === selectedDateId;
+    dayTabs.appendChild(el('button', {
+      type: 'button',
+      class: `day-chip ${isActive ? 'active' : ''} ${isToday ? 'today' : ''}`,
+      onclick: () => { selectedDashboardDateId = dId; renderDashboard(); },
+    }, [
+      el('div', { class: 'day-chip-label' }, dayNames[i]),
+      el('div', { class: 'day-chip-date' }, String(d.getUTCDate())),
+    ]));
+  });
+  let dayTouchStartX = null;
+  dayTabs.addEventListener('touchstart', (e) => { dayTouchStartX = e.changedTouches[0].clientX; }, { passive: true });
+  dayTabs.addEventListener('touchend', (e) => {
+    if (dayTouchStartX === null) return;
+    const dx = e.changedTouches[0].clientX - dayTouchStartX;
+    dayTouchStartX = null;
+    if (Math.abs(dx) < 40) return;
+    e.stopPropagation();
+    const idx = weekDates.findIndex((d) => getIsoDateId(d) === selectedDateId);
+    const nextIdx = dx < 0 ? idx + 1 : idx - 1;
+    if (nextIdx >= 0 && nextIdx < weekDates.length) {
+      selectedDashboardDateId = getIsoDateId(weekDates[nextIdx]);
+      renderDashboard();
+    }
+  });
+  container.appendChild(dayTabs);
+
+  const items = getDayViewItems(selectedDateId);
+  const doneCount = items.filter((i) => i.status === 'approved' || i.status === 'done').length;
+  const pct = items.length === 0 ? 100 : Math.round((doneCount / items.length) * 100);
+  const dateLabel = new Date(`${selectedDateId}T00:00:00Z`)
+    .toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+
+  const ringCard = el('div', { class: 'booking-card', style: 'text-align:center;' });
+  ringCard.appendChild(el('div', { class: 'muted', style: 'margin-bottom:4px;' }, dateLabel));
+  ringCard.appendChild(el('div', { class: 'progress-ring', style: `--pct:${pct};` }, [
+    el('div', { class: 'progress-ring-inner' }, [
+      el('div', { class: 'progress-ring-pct' }, `${pct}%`),
+      el('div', { class: 'progress-ring-label' }, 'done'),
+    ]),
+  ]));
+  ringCard.appendChild(el('div', { class: 'muted' }, `${doneCount} done · ${items.length - doneCount} to do`));
+  container.appendChild(ringCard);
 
   if (items.length === 0) {
-    container.appendChild(el('div', { class: 'empty-state' }, 'No chores assigned this week.'));
-    return;
+    container.appendChild(el('div', { class: 'empty-state' }, 'Nothing assigned this week.'));
   }
 
-  items.forEach(({ chore, mode, satisfied, executingUid, isMyGate, iCanExecute }) => {
-    const entry = state.choreLog.find((e) => e.choreId === chore.id && e.memberUid === executingUid);
-    const status = entry ? entry.status : 'pending';
-    const card = el('div', { class: `booking-card ${status === 'approved' ? 'done' : ''} ${status === 'rejected' ? 'warn' : ''}` });
+  ['dailyTask', 'chore'].forEach((cat) => {
+    const catItems = items.filter((i) => (i.chore.category || 'chore') === cat);
+    if (catItems.length === 0) return;
+    container.appendChild(el('h2', { style: 'margin-top:16px;' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
 
-    card.appendChild(el('div', { class: 'row' }, [
-      el('div', {}, [
-        el('div', { style: 'font-weight:600;' }, [choreLabel(chore)]),
-        chore.description ? el('div', { class: 'muted' }, chore.description) : null,
-        (mode === 'rotating') ? el('div', { class: 'muted' }, `Rotates — ${memberLabel(executingUid)}'s turn this week`) : null,
-        (!isMyGate && iCanExecute) ? el('div', { class: 'muted' }, `Covering this for ${memberLabel(resolveBaseAssignee(chore))} (swap)`) : null,
-        (isMyGate && !iCanExecute) ? el('div', { class: 'muted' }, `Swapped to ${memberLabel(executingUid)} this week`) : null,
-      ]),
-      el('span', { class: `status-pill status-${status}` }, status.replace('_', ' ')),
-    ]));
+    catItems.forEach((item) => {
+      const { chore, mode, executingUid, isMyGate, iCanExecute, entry, status, isDaily, missed, notYetDue, actionable } = item;
+      const cardClass = missed ? 'missed'
+        : (status === 'approved' || status === 'done') ? 'done'
+        : (status === 'rejected') ? 'warn' : '';
+      const card = el('div', { class: `booking-card ${cardClass}` });
 
-    if (iCanExecute && status !== 'done' && status !== 'approved') {
-      const fileInput = el('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'margin-top:8px;' });
-      const markBtn = el('button', {
-        class: 'pill primary small', style: 'margin-top:8px;',
-        onclick: async () => {
-          markBtn.disabled = true;
-          try {
-            const weekId = getIsoWeekId(new Date());
-            const entryId = `${weekId}_${chore.id}_${state.user.uid}`;
-            const photoStoragePath = await uploadProof('choreProof', entryId, fileInput.files[0]);
-            await callMarkChoreDone({ choreId: chore.id, photoStoragePath });
-          } catch (err) {
-            alert(err.message);
-          } finally {
-            markBtn.disabled = false;
-          }
-        },
-      }, 'Mark done');
-      card.appendChild(fileInput);
-      card.appendChild(markBtn);
-    } else if (entry && entry.photoStoragePath) {
-      const slot = el('div', { class: 'muted' });
-      card.appendChild(el('button', { class: 'pill small', onclick: () => viewProof(entry.photoStoragePath, slot) }, 'View photo'));
-      card.appendChild(slot);
-    }
+      let pillLabel, pillClass;
+      if (missed) { pillLabel = 'missed'; pillClass = 'status-rejected'; }
+      else if (notYetDue) { pillLabel = 'not due yet'; pillClass = 'status-pending'; }
+      else { pillLabel = status.replace('_', ' '); pillClass = `status-${status}`; }
 
-    // Propose a swap -- only for fixed/rotating chores (matching
-    // proposeChoreSwap's server-side rule) where it's both my gate AND
-    // nobody's already covering it via an existing swap.
-    if ((mode === 'fixed' || mode === 'rotating') && isMyGate && iCanExecute) {
-      const otherKids = state.members.filter((m) => m.role === 'child' && m.active !== false && m.uid !== state.user.uid);
-      if (otherKids.length > 0) {
-        const targetSelect = el('select', { style: 'margin-top:8px;' });
-        otherKids.forEach((m) => targetSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email)));
-        const swapBtn = el('button', {
-          class: 'pill small',
+      card.appendChild(el('div', { class: 'row' }, [
+        el('div', {}, [
+          el('div', { style: 'font-weight:600;' }, [choreLabel(chore)]),
+          chore.description ? el('div', { class: 'muted' }, chore.description) : null,
+          (mode === 'rotating') ? el('div', { class: 'muted' }, `Rotates — ${memberLabel(executingUid)}'s turn this week`) : null,
+          (!isMyGate && iCanExecute) ? el('div', { class: 'muted' }, `Covering this for ${memberLabel(resolveBaseAssignee(chore))} (swap)`) : null,
+          (isMyGate && !iCanExecute) ? el('div', { class: 'muted' }, `Swapped to ${memberLabel(executingUid)} this week`) : null,
+          isDaily ? renderStreakBadge(chore, executingUid, weekDates, todayDateId) : null,
+        ]),
+        el('span', { class: `status-pill ${pillClass}` }, pillLabel),
+      ]));
+
+      if (actionable) {
+        const fileInput = el('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'margin-top:8px;', hidden: true });
+        const attachBtn = el('button', {
+          type: 'button', class: 'pill small', style: 'margin-top:8px;',
+          onclick: () => fileInput.click(),
+        }, '📷 Add photo (optional)');
+        const markBtn = el('button', {
+          class: 'pill primary small', style: 'margin-top:8px;margin-left:6px;',
           onclick: async () => {
-            try { await callProposeChoreSwap({ choreId: chore.id, targetUid: targetSelect.value }); } catch (err) { alert(err.message); }
+            markBtn.disabled = true;
+            try {
+              const weekId = getIsoWeekId(new Date());
+              const dateId = getIsoDateId(new Date());
+              const entryId = resolveLogEntryId({ chore, choreId: chore.id, uid: state.user.uid, weekId, dateId });
+              const photoStoragePath = await uploadProof('choreProof', entryId, fileInput.files[0]);
+              await callMarkChoreDone({ choreId: chore.id, photoStoragePath });
+            } catch (err) {
+              alert(err.message);
+            } finally {
+              markBtn.disabled = false;
+            }
           },
-        }, 'Propose swap');
-        card.appendChild(targetSelect);
-        card.appendChild(swapBtn);
+        }, 'Mark done');
+        card.appendChild(fileInput);
+        card.appendChild(attachBtn);
+        card.appendChild(markBtn);
+      } else if (entry && entry.photoStoragePath) {
+        const slot = el('div', { class: 'muted' });
+        card.appendChild(el('button', { class: 'pill small', onclick: () => viewProof(entry.photoStoragePath, slot) }, 'View photo'));
+        card.appendChild(slot);
       }
-    }
 
-    container.appendChild(card);
+      // Propose a swap -- only for fixed/rotating chores (matching
+      // proposeChoreSwap's server-side rule), only from today's tab (a
+      // swap is a "right now" action, same as marking done), and only
+      // while it's still my gate to hand off.
+      if ((mode === 'fixed' || mode === 'rotating') && isMyGate && iCanExecute
+          && selectedDateId === todayDateId && status !== 'approved' && status !== 'done') {
+        const otherKids = state.members.filter((m) => m.role === 'child' && m.active !== false && m.uid !== state.user.uid);
+        if (otherKids.length > 0) {
+          const targetSelect = el('select', { style: 'margin-top:8px;' });
+          otherKids.forEach((m) => targetSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email)));
+          const swapBtn = el('button', {
+            class: 'pill small',
+            onclick: async () => {
+              try { await callProposeChoreSwap({ choreId: chore.id, targetUid: targetSelect.value }); } catch (err) { alert(err.message); }
+            },
+          }, 'Propose swap');
+          card.appendChild(targetSelect);
+          card.appendChild(swapBtn);
+        }
+      }
+
+      container.appendChild(card);
+    });
   });
+
+  container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
+    el('h2', {}, 'Recent activity'),
+    el('button', { class: 'pill small', onclick: () => switchTab('earnings') }, 'View all'),
+  ]));
+  if (state.ledger.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
+  } else {
+    state.ledger.slice(0, 3).forEach((tx) => {
+      const positive = tx.amountCents >= 0;
+      container.appendChild(el('div', { class: 'booking-card' }, [
+        el('div', { class: 'row' }, [
+          el('div', {}, tx.note || tx.type),
+          el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+        ]),
+      ]));
+    });
+  }
 }
 
 // ---------------------------------------------------------------------
