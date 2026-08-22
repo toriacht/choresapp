@@ -182,10 +182,6 @@
   .payment-line:last-child { border-bottom: none; }
   .payment-line.pending { opacity: 0.75; }
   .payment-line-label { display: flex; align-items: center; gap: 6px; }
-  .balance-delta { font-weight: 700; font-size: 1.1rem; }
-  .balance-delta.positive { color: var(--success); }
-  .balance-delta.negative { color: var(--danger); }
-  .balance-delta.zero { color: var(--muted); }
   .mini-bar { height: 8px; border-radius: 4px; background: var(--panel2); overflow: hidden; margin: 6px 0; }
   .mini-bar-fill { height: 100%; background: var(--accent2); border-radius: 4px; }
 
@@ -377,7 +373,7 @@
     <section class="tab-page" data-page="earnings" id="page-earnings" hidden></section>
     <section class="tab-page" data-page="more" id="page-more" hidden></section>
     <section class="tab-page" data-page="admindashboard" id="page-admindashboard" hidden></section>
-    <section class="tab-page" data-page="childdetail" id="page-childdetail" hidden></section>
+    <section class="tab-page" data-page="kids" id="page-kids" hidden></section>
     <section class="tab-page" data-page="managechores" id="page-managechores" hidden></section>
     <section class="tab-page" data-page="allactivity" id="page-allactivity" hidden></section>
     <section class="tab-page" data-page="settings" id="page-settings" hidden></section>
@@ -409,6 +405,10 @@
       <button type="button" class="nav-btn active" data-tab="admindashboard">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
         <span>Dashboard</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="kids">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="3"/><circle cx="17" cy="8" r="2.3"/><path d="M3 21v-2a5 5 0 015-5h2a5 5 0 015 5v2"/><path d="M15.5 13.2A4.2 4.2 0 0121 17v1.5"/></svg>
+        <span>Kids</span>
       </button>
       <button type="button" class="nav-btn" data-tab="managechores">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1h11"/></svg>
@@ -642,10 +642,10 @@ function memberLabel(uid) {
 // App state
 // ---------------------------------------------------------------------
 const CHILD_TABS = ['dashboard', 'chores', 'extras', 'earnings', 'more'];
-const ADMIN_TABS = ['admindashboard', 'managechores', 'allactivity', 'settings'];
+const ADMIN_TABS = ['admindashboard', 'kids', 'managechores', 'allactivity', 'settings'];
 const TITLES = {
   dashboard: 'Dashboard', chores: 'Chores', extras: 'Extras', earnings: 'Earnings', more: 'More',
-  admindashboard: 'Admin Dashboard', managechores: 'Manage Chores', allactivity: 'All Activity', settings: 'Settings',
+  admindashboard: 'Admin Dashboard', kids: 'Kids', managechores: 'Manage Chores', allactivity: 'All Activity', settings: 'Settings',
 };
 
 const state = {
@@ -664,7 +664,6 @@ const state = {
   extraJobs: [],
   notifications: [],
   payouts: [],
-  selectedChildUid: null,
   ledger: [],
   ledgerViewUid: null,
   currentTab: localStorage.getItem('choresAppTab') || 'dashboard',
@@ -1371,24 +1370,16 @@ function switchTab(tab) {
   renderCurrentTab();
 }
 
-// Drill-down into one child's detail from the Admin Dashboard -- not a
-// bottom-nav tab (deliberately absent from ADMIN_TABS, so it's never part
-// of the swipe order), so this bypasses switchTab's TITLES lookup to show
-// the child's own name instead. Re-scopes the shared ledger subscription to
-// this child (same "pick one member, view detail" mechanism All Activity's
-// own member dropdown already uses via subscribeLedger).
-function showChildDetail(uid) {
-  state.selectedChildUid = uid;
-  state.currentTab = 'childdetail';
-  const child = state.members.find((m) => m.uid === uid);
-  document.getElementById('pageTitle').textContent = child ? (child.displayName || child.email) : 'Child';
-  document.querySelectorAll('.tab-page').forEach((section) => {
-    section.hidden = section.dataset.page !== 'childdetail';
-  });
-  document.querySelectorAll('.nav-btn').forEach((btn) => btn.classList.remove('active'));
-  subscribeLedger(uid);
-  window.scrollTo(0, 0);
-  renderCurrentTab();
+// Which child is currently expanded in the Kids tab -- reset to the first
+// active child by renderKids whenever the selection points at nobody (first
+// load, or that child having been deactivated/removed since).
+let selectedKidUid = null;
+
+// Deep-link from an Admin Dashboard child card straight into that child's
+// Kids tab section.
+function openKid(uid) {
+  selectedKidUid = uid;
+  switchTab('kids');
 }
 
 document.body.addEventListener('click', (event) => {
@@ -1445,7 +1436,7 @@ function renderCurrentTab() {
   const renderers = {
     dashboard: renderDashboard, chores: renderChores, extras: renderExtras,
     earnings: renderEarnings, more: renderMore,
-    admindashboard: renderAdminDashboard, childdetail: renderChildDetail, managechores: renderManageChores,
+    admindashboard: renderAdminDashboard, kids: renderKids, managechores: renderManageChores,
     allactivity: renderAllActivity, settings: renderSettings,
   };
   const renderer = renderers[state.currentTab];
@@ -1516,20 +1507,54 @@ function pctLabel(approved, total) {
 // settled it already) and each active daily streak's accruing bonus.
 // Shared by the Dashboard's balance projection and the Earnings tab (which
 // shows it as a "still to come" section ahead of the settled history).
+// Settlement no longer credits the ledger directly -- it stages a
+// families/{familyId}/payouts/{weekId}_{memberUid} doc an admin must
+// approve/decline (see functions/lib/settlement.js). So "what's coming
+// this week" has three different sources of truth depending on where in
+// that lifecycle a member currently is, and this picks the right one:
+// 1. A payout doc exists and is still 'pending' -- settlement already ran
+//    and computed the real, final numbers; show exactly those, awaiting
+//    admin approval (not "released Friday" -- that's no longer when money
+//    actually moves).
+// 2. A payout doc exists and is 'approved' -- the money is already in the
+//    ledger as individual entries, so there's nothing left pending.
+// 3. A payout doc exists and is 'declined' -- nothing pending either; nothing
+//    from that computed payout is coming.
+// 4. No payout doc yet -- settlement hasn't run this week yet, so this is a
+//    live, still-changing PROJECTION of what settlement would compute if it
+//    ran right now (the same computeCurrentStreak-based estimate as before).
 function computePendingPaymentLines(memberUid, member) {
   const weekId = getIsoWeekId(new Date());
   const thisWeekLedger = state.ledger.filter((tx) => tx.weekId === weekId && tx.memberUid === memberUid);
   const weekProgress = computeWeekProgressForMember(memberUid);
   const onTrack = weekProgress.total === 0 || weekProgress.done === weekProgress.total;
-  const alreadySettled = thisWeekLedger.some((tx) => tx.type === 'weekly_payout' || tx.type === 'chore_shortfall_pending_review');
-  const pendingAllowanceCents = alreadySettled ? 0 : (onTrack ? (member ? member.baseWeeklyAllowanceCents || 0 : 0) : 0);
-  const streakLines = computePendingStreakBonusLines(memberUid);
+  const payout = state.payouts.find((p) => p.memberUid === memberUid);
 
-  const lines = [];
-  if (pendingAllowanceCents > 0) lines.push({ label: 'Base allowance', cents: pendingAllowanceCents, pending: true });
-  streakLines.forEach((l) => lines.push({ label: l.label, cents: l.cents, pending: true }));
+  let baseLine = null;
+  let extraLines = [];
+  let awaitingApproval = false;
+  let alreadySettled = false;
 
-  return { lines, thisWeekLedger, onTrack, alreadySettled, weekProgress };
+  if (payout && payout.status === 'pending') {
+    awaitingApproval = true;
+    (payout.actions || []).forEach((a) => {
+      const line = { label: a.note || a.type.replace(/_/g, ' '), cents: a.amountCents, pending: true, awaitingApproval: true };
+      if (a.type === 'weekly_payout') baseLine = line; else extraLines.push(line);
+    });
+  } else if (payout) {
+    // 'approved' (already individual ledger rows) or 'declined' (nothing
+    // coming) -- either way, settlement already ran and nothing is pending.
+    alreadySettled = true;
+  } else {
+    // Settlement hasn't run for this week yet -- a live, still-changing
+    // projection of what it WOULD compute right now.
+    const pendingAllowanceCents = onTrack ? (member ? member.baseWeeklyAllowanceCents || 0 : 0) : 0;
+    if (pendingAllowanceCents > 0) baseLine = { label: 'Base allowance', cents: pendingAllowanceCents, pending: true };
+    extraLines = computePendingStreakBonusLines(memberUid).map((l) => ({ label: l.label, cents: l.cents, pending: true }));
+  }
+
+  const lines = [...(baseLine ? [baseLine] : []), ...extraLines];
+  return { lines, baseLine, extraLines, thisWeekLedger, onTrack, alreadySettled, awaitingApproval, weekProgress };
 }
 
 function renderDashboard() {
@@ -1539,25 +1564,47 @@ function renderDashboard() {
   const today = new Date();
   const todayDateId = getIsoDateId(today);
 
-  const { lines: pendingLines, thisWeekLedger, onTrack, alreadySettled, weekProgress } =
+  const { lines: pendingLines, baseLine, extraLines, thisWeekLedger, onTrack, alreadySettled, awaitingApproval, weekProgress } =
     computePendingPaymentLines(state.user.uid, state.member);
-  const thisWeekNetCents = thisWeekLedger.reduce((s, tx) => s + tx.amountCents, 0);
-  const pendingTotalCents = pendingLines.reduce((s, l) => s + l.cents, 0);
-  // The headline number is the balance as it stood at the start of THIS
-  // week (current balance minus everything that's already settled this
-  // week) -- the delta beside it is what's moved (settled) plus what's
-  // still projected (pending allowance/streak bonus), so together they
-  // read as "where you started, here's what changed."
-  const startingBalanceCents = (state.member ? state.member.balanceCents : 0) - thisWeekNetCents;
-  const projectedDeltaCents = thisWeekNetCents + pendingTotalCents;
+
+  // Base = this week's allowance, whether it's already an actual ledger
+  // row (paid) or still a line item (awaiting approval / a live
+  // projection) -- exactly one of those is ever nonzero at a time, so
+  // adding them together just picks whichever applies right now. Same
+  // idea for Extras (everything that isn't the base allowance itself:
+  // deductions, extra jobs, streak bonuses, manual adjustments).
+  const settledBaseCents = thisWeekLedger.filter((tx) => tx.type === 'weekly_payout').reduce((s, tx) => s + tx.amountCents, 0);
+  const baseAmountCents = settledBaseCents + (baseLine ? baseLine.cents : 0);
+  const settledExtrasCents = thisWeekLedger.filter((tx) => tx.type !== 'weekly_payout').reduce((s, tx) => s + tx.amountCents, 0);
+  const pendingExtrasCents = extraLines.reduce((s, l) => s + l.cents, 0);
+  const extrasAmountCents = settledExtrasCents + pendingExtrasCents;
+  const totalCents = baseAmountCents + extrasAmountCents;
 
   const balanceCard = el('div', { class: 'booking-card' });
-  balanceCard.appendChild(el('div', { class: 'muted' }, 'This week started at'));
-  balanceCard.appendChild(el('div', { class: 'row', style: 'align-items:baseline;gap:10px;justify-content:flex-start;' }, [
-    el('div', { style: 'font-size:1.8rem;font-weight:800;' }, formatCents(startingBalanceCents, currency)),
-    el('div', { class: `balance-delta ${projectedDeltaCents > 0 ? 'positive' : projectedDeltaCents < 0 ? 'negative' : 'zero'}` },
-      `${projectedDeltaCents > 0 ? '+' : ''}${formatCents(projectedDeltaCents, currency)}`),
+  balanceCard.appendChild(el('div', { class: 'row' }, [
+    el('div', { class: 'muted' }, 'My Balance'),
+    el('div', { style: 'font-weight:800;' }, formatCents(state.member ? state.member.balanceCents : 0, currency)),
   ]));
+  balanceCard.appendChild(el('div', { class: 'stat-grid', style: 'margin-top:10px;margin-bottom:0;' }, [
+    el('div', { class: 'stat-tile' }, [
+      el('div', { class: 'stat-value' }, formatCents(baseAmountCents, currency)),
+      el('div', { class: 'stat-label' }, 'Base'),
+    ]),
+    el('div', { class: 'stat-tile' }, [
+      el('div', { class: 'stat-value', style: `color:${extrasAmountCents < 0 ? 'var(--danger)' : 'var(--success)'};` },
+        `${extrasAmountCents >= 0 ? '+' : ''}${formatCents(extrasAmountCents, currency)}`),
+      el('div', { class: 'stat-label' }, 'Extras'),
+    ]),
+  ]));
+  balanceCard.appendChild(el('div', { class: 'muted', style: 'text-align:center;margin-top:6px;' },
+    `This week's total (${formatCents(totalCents, currency)})`));
+  if (awaitingApproval) {
+    balanceCard.appendChild(el('div', { class: 'muted', style: 'text-align:center;margin-top:4px;' },
+      el('span', { class: 'status-pill status-done' }, 'awaiting admin approval')));
+  } else if (!alreadySettled && !onTrack) {
+    balanceCard.appendChild(el('div', { class: 'muted', style: 'text-align:center;margin-top:4px;' },
+      'Base at risk -- not all chores done yet this week'));
+  }
   container.appendChild(balanceCard);
 
   // Weekly ring LEFT, today's ring RIGHT -- each clearly headed, each a
@@ -1596,7 +1643,7 @@ function renderDashboard() {
     ...pendingLines,
   ];
 
-  if (paymentLines.length > 0 || (!alreadySettled && !onTrack)) {
+  if (paymentLines.length > 0 || (!alreadySettled && !awaitingApproval && !onTrack)) {
     container.appendChild(el('h2', { style: 'margin-top:16px;' }, "This week's payments"));
     const listCard = el('div', { class: 'booking-card' });
     paymentLines.forEach((line) => {
@@ -1604,14 +1651,14 @@ function renderDashboard() {
       listCard.appendChild(el('div', { class: `payment-line ${line.pending ? 'pending' : ''}` }, [
         el('div', { class: 'payment-line-label' }, [
           el('span', {}, line.label),
-          line.pending ? el('span', { class: 'status-pill status-done' }, 'pending') : null,
+          line.pending ? el('span', { class: 'status-pill status-done' }, line.awaitingApproval ? 'awaiting approval' : 'pending') : null,
         ]),
         el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(line.cents, currency)}`),
       ]));
     });
-    if (!alreadySettled && !onTrack) {
+    if (!alreadySettled && !awaitingApproval && !onTrack) {
       listCard.appendChild(el('div', { class: 'payment-line' }, [
-        el('div', { class: 'muted' }, 'Allowance at risk -- not all chores done yet this week'),
+        el('div', { class: 'muted' }, 'Base at risk -- not all chores done yet this week'),
       ]));
     }
     container.appendChild(listCard);
@@ -2093,7 +2140,7 @@ function renderEarnings() {
       pendingCard.appendChild(el('div', { class: 'payment-line pending' }, [
         el('div', { class: 'payment-line-label' }, [
           el('span', {}, line.label),
-          el('span', { class: 'status-pill status-done' }, 'pending'),
+          el('span', { class: 'status-pill status-done' }, line.awaitingApproval ? 'awaiting approval' : 'pending'),
         ]),
         el('div', { class: 'amount positive' }, `+${formatCents(line.cents, currency)}`),
       ]));
@@ -2218,7 +2265,7 @@ function renderAdminDashboard() {
   children.forEach((child) => {
     const progress = computeWeekProgressForMember(child.uid);
     const attentionCount = computeChildAttentionCount(child.uid);
-    container.appendChild(el('div', { class: 'booking-card', style: 'cursor:pointer;', onclick: () => showChildDetail(child.uid) }, [
+    container.appendChild(el('div', { class: 'booking-card', style: 'cursor:pointer;', onclick: () => openKid(child.uid) }, [
       el('div', { class: 'row' }, [
         el('div', {}, [
           el('div', { style: 'font-weight:700;' }, child.displayName || child.email),
@@ -2235,11 +2282,9 @@ function renderAdminDashboard() {
 
   container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Quick actions'));
 
+  container.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-bottom:8px;', onclick: () => switchTab('kids') }, 'Manage kids'));
   container.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-bottom:8px;', onclick: () => switchTab('managechores') }, 'Manage chores'));
-  container.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-bottom:8px;', onclick: () => switchTab('allactivity') }, 'View all activity'));
-
-  container.appendChild(makeExpandable('Add family member', renderAddMemberForm()));
-  container.appendChild(makeExpandable('Adjust a balance', renderAdjustBalanceForm()));
+  container.appendChild(el('button', { class: 'pill', style: 'width:100%;', onclick: () => switchTab('allactivity') }, 'View all activity'));
 }
 
 // Sum of things awaiting an admin's action for one child: chores marked
@@ -2255,13 +2300,46 @@ function computeChildAttentionCount(uid) {
 }
 
 // ---------------------------------------------------------------------
-// Child Detail (admin) -- drill-down from an Admin Dashboard child card,
-// reached via showChildDetail(uid), never a bottom-nav tab itself.
+// Kids tab (admin) -- one chip per child (mirrors the child Chores tab's
+// day-chip row), each expanding into that child's full management view:
+// approvals, deductions, bonuses, payout approval, and activity. This is
+// the one place in the admin UI that actually mutates a child's state --
+// the Admin Dashboard itself only reads and quick-approves (see
+// renderAdminDashboard).
 // ---------------------------------------------------------------------
-function renderChildDetail() {
-  const container = document.getElementById('page-childdetail');
+function renderKids() {
+  const container = document.getElementById('page-kids');
   container.innerHTML = '';
-  const uid = state.selectedChildUid;
+  const children = state.members.filter((m) => m.role === 'child' && m.active !== false);
+
+  if (children.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No children added yet.'));
+    container.appendChild(makeExpandable('Add a child', renderAddMemberForm()));
+    return;
+  }
+
+  if (!children.some((c) => c.uid === selectedKidUid)) selectedKidUid = children[0].uid;
+  if (state.ledgerViewUid !== selectedKidUid) subscribeLedger(selectedKidUid);
+
+  const chipRow = el('div', { class: 'day-tabs' });
+  children.forEach((child) => {
+    const attentionCount = computeChildAttentionCount(child.uid);
+    chipRow.appendChild(el('button', {
+      type: 'button',
+      class: `day-chip${child.uid === selectedKidUid ? ' active' : ''}`,
+      onclick: () => { selectedKidUid = child.uid; renderKids(); },
+    }, [
+      el('div', { class: 'day-chip-date' }, child.displayName || child.email),
+      attentionCount > 0 ? el('div', { class: 'day-chip-label' }, `${attentionCount} to review`) : null,
+    ]));
+  });
+  container.appendChild(chipRow);
+  container.appendChild(makeExpandable('+ Add another child', renderAddMemberForm()));
+
+  renderKidDetailBody(container, selectedKidUid);
+}
+
+function renderKidDetailBody(container, uid) {
   const child = state.members.find((m) => m.uid === uid);
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
 
@@ -2269,8 +2347,6 @@ function renderChildDetail() {
     container.appendChild(el('div', { class: 'empty-state' }, 'This child is no longer in your family.'));
     return;
   }
-
-  container.appendChild(el('button', { class: 'pill small', style: 'margin-bottom:8px;', onclick: () => switchTab('admindashboard') }, '‹ Back'));
 
   const progress = computeWeekProgressForMember(uid);
   const pct = progress.total === 0 ? 100 : Math.round((progress.done / progress.total) * 100);
@@ -2284,6 +2360,8 @@ function renderChildDetail() {
       ]),
     ]),
   ]));
+
+  container.appendChild(renderEditableAllowanceCard(child, currency));
 
   const needsReview = state.choreLog.filter((e) => e.status === 'done' && e.memberUid === uid);
   if (needsReview.length > 0) {
@@ -2401,6 +2479,42 @@ function renderChildDetail() {
       ]));
     });
   }
+}
+
+// A child's base weekly allowance is set once at creation (renderAddMemberForm)
+// but families' circumstances change, so admins need to retune it afterwards
+// too -- writes straight to members/{uid} since firestore.rules already lets
+// an admin update any member field except balanceCents (money only ever
+// moves through writeLedgerEntry in Cloud Functions), so no new callable is
+// needed just for this one field.
+function renderEditableAllowanceCard(child, currency) {
+  const input = el('input', {
+    type: 'number', min: '0', step: '0.01', style: 'max-width:120px;',
+    value: ((child.baseWeeklyAllowanceCents || 0) / 100).toFixed(2),
+  });
+  const saveBtn = el('button', { type: 'button', class: 'pill small' }, 'Save');
+  const errorEl = el('p', { class: 'error-text', style: 'margin:4px 0 0;' });
+  errorEl.hidden = true;
+  saveBtn.addEventListener('click', async () => {
+    errorEl.hidden = true;
+    saveBtn.disabled = true;
+    try {
+      const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await updateDoc(fsDoc(db, `families/${state.familyId}/members/${child.uid}`), {
+        baseWeeklyAllowanceCents: centsFromMajorUnits(input.value),
+      });
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+  return el('div', { class: 'booking-card' }, [
+    el('label', {}, `Base weekly allowance (${currency})`),
+    el('div', { style: 'display:flex;gap:8px;align-items:center;' }, [input, saveBtn]),
+    errorEl,
+  ]);
 }
 
 // A plain action row (no disclosure body) in the pitchschedule-style More
@@ -2781,7 +2895,7 @@ function renderActiveChores(container) {
       } else {
         assignedLabel = memberLabel((chore.assignedTo || [])[0]);
       }
-      container.appendChild(el('div', { class: 'booking-card' }, [
+      const card = el('div', { class: 'booking-card' }, [
         el('div', { class: 'row' }, [
           el('div', {}, [
             el('div', { style: 'font-weight:600;' }, [choreLabel(chore), chore.active === false ? ' (inactive)' : '']),
@@ -2795,7 +2909,36 @@ function renderActiveChores(container) {
             },
           }, chore.active === false ? 'Reactivate' : 'Deactivate'),
         ]),
-      ]));
+      ]);
+      // Streak bonus only ever applies to a daily chore everyone does
+      // individually (see settlement.js's streak-bonus pass, and the
+      // matching visibility gate on the create form's streakBonusInput) --
+      // any other mode has no per-day streak to bonus at all.
+      if (mode === 'eachMember' && chore.frequency === 'daily') {
+        card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:10px;' }, [
+          el('label', { style: 'margin:0;' }, 'Streak bonus/day'),
+          (() => {
+            const input = el('input', {
+              type: 'number', min: '0', step: '0.01', style: 'max-width:100px;',
+              value: ((chore.dailyStreakBonusCentsPerDay || 0) / 100).toFixed(2),
+            });
+            const saveBtn = el('button', {
+              type: 'button', class: 'pill small',
+              onclick: async () => {
+                saveBtn.disabled = true;
+                try {
+                  const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+                  await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), {
+                    dailyStreakBonusCentsPerDay: centsFromMajorUnits(input.value),
+                  });
+                } catch (err) { alert(err.message); } finally { saveBtn.disabled = false; }
+              },
+            }, 'Save');
+            return el('div', { style: 'display:flex;gap:8px;' }, [input, saveBtn]);
+          })(),
+        ]));
+      }
+      container.appendChild(card);
     });
   });
 }
