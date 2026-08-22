@@ -202,6 +202,19 @@
     max-width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
   }
 
+  .bell-btn { position: relative; font-size: 1.1rem; line-height: 1; padding: 9px 12px; }
+  .notif-badge {
+    position: absolute; top: -4px; right: -4px; background: var(--danger); color: #fff;
+    font-size: 0.6rem; font-weight: 800; border-radius: 999px; min-width: 16px; height: 16px;
+    display: flex; align-items: center; justify-content: center; padding: 0 3px;
+  }
+  .notif-item { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .notif-item:last-child { border-bottom: none; }
+  .notif-item.unread { font-weight: 700; }
+  .notif-item-title { font-size: 0.9rem; }
+  .notif-item-body { font-size: 0.8rem; color: var(--muted); font-weight: 400; margin-top: 2px; }
+  .notif-item-time { font-size: 0.7rem; color: var(--muted); font-weight: 400; margin-top: 2px; }
+
 </style>
 </head>
 <body>
@@ -290,6 +303,17 @@
     </div>
   </div>
 
+  <div id="notifModal" class="modal-overlay" hidden>
+    <div class="modal-card" style="min-height:0;max-height:80vh;display:flex;flex-direction:column;">
+      <div class="row" style="margin-bottom:10px;">
+        <h1 style="font-size:1.15rem;">Notifications</h1>
+        <button class="pill small" id="notifMarkAllReadBtn">Mark all read</button>
+      </div>
+      <div id="notifModalBody" style="overflow-y:auto;flex:1;"></div>
+      <button class="pill primary" id="notifModalDoneBtn" style="width:100%;margin-top:10px;">Close</button>
+    </div>
+  </div>
+
   <div id="app" hidden>
     <div class="app-header">
       <div>
@@ -298,11 +322,15 @@
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
         <button id="installBtn" class="install-cta" style="display:none;"></button>
+        <button class="pill small bell-btn" id="notifBellBtn" aria-label="Notifications">
+          🔔<span id="notifBadge" class="notif-badge" hidden>0</span>
+        </button>
         <button class="pill small" id="signOutBtn">Sign out</button>
       </div>
     </div>
 
     <section class="tab-page" data-page="dashboard" id="page-dashboard"></section>
+    <section class="tab-page" data-page="chores" id="page-chores" hidden></section>
     <section class="tab-page" data-page="extras" id="page-extras" hidden></section>
     <section class="tab-page" data-page="earnings" id="page-earnings" hidden></section>
     <section class="tab-page" data-page="more" id="page-more" hidden></section>
@@ -315,6 +343,10 @@
       <button type="button" class="nav-btn active" data-tab="dashboard">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
         <span>Dashboard</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="chores">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1h11"/></svg>
+        <span>Chores</span>
       </button>
       <button type="button" class="nav-btn" data-tab="extras">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
@@ -369,6 +401,9 @@ import {
 import {
   getStorage, ref, uploadBytes, getBytes, connectStorageEmulator,
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-storage.js';
+import {
+  getMessaging, getToken, onMessage, isSupported as isMessagingSupported,
+} from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-messaging.js';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -399,6 +434,8 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
 const callMarkChoreDone = httpsCallable(functions, 'markChoreDone');
 const callApproveExtraJob = httpsCallable(functions, 'approveExtraJob');
 const callAdjustBalance = httpsCallable(functions, 'adjustBalance');
+const callLogDeduction = httpsCallable(functions, 'logDeduction');
+const callRegisterFcmToken = httpsCallable(functions, 'registerFcmToken');
 const callAddFamilyMember = httpsCallable(functions, 'addFamilyMember');
 const callCreateFamilyAndAdmin = httpsCallable(functions, 'createFamilyAndAdmin');
 const callProposeChoreSwap = httpsCallable(functions, 'proposeChoreSwap');
@@ -475,6 +512,29 @@ function resolveEffectiveAssignee(chore, acceptedSwapsThisWeek) {
   const swap = (acceptedSwapsThisWeek || []).find((s) => s.choreId === chore.id && s.proposedBy === base);
   return swap ? swap.targetUid : base;
 }
+// Day-swap counterpart, for an eachMember daily chore (no single base
+// assignee -- every pool member owns their own instance per date).
+function resolveEffectiveAssigneeForDate(choreId, ownerUid, dateId, acceptedDaySwaps) {
+  const swap = (acceptedDaySwaps || []).find((s) => s.choreId === choreId && s.dateId === dateId && s.proposedBy === ownerUid);
+  return swap ? swap.targetUid : ownerUid;
+}
+// Current streak length for one daily chore, from ownerUid's perspective
+// (a day covered by an accepted day-swap still counts toward the ORIGINAL
+// owner's streak, via resolveEffectiveAssigneeForDate). Resets to 0 the
+// instant a day since Monday isn't approved; a later resumed day starts
+// climbing again from 1. Days after todayDateId are never evaluated.
+function computeCurrentStreak({ choreId, executingUid: ownerUid, choreLogEntries, weekDateIds, todayDateId, acceptedDaySwaps = [] }) {
+  let streak = 0;
+  for (const dateId of weekDateIds) {
+    if (dateId > todayDateId) break;
+    const executingUid = resolveEffectiveAssigneeForDate(choreId, ownerUid, dateId, acceptedDaySwaps);
+    const approved = (choreLogEntries || []).some(
+      (e) => e.choreId === choreId && e.memberUid === executingUid && e.dateId === dateId && e.status === 'approved'
+    );
+    streak = approved ? streak + 1 : 0;
+  }
+  return streak;
+}
 
 // ---- Same synthetic-email construction as functions/lib/invites.js, so a
 // username typed at sign-in maps to the exact same address the account was
@@ -536,10 +596,10 @@ function memberLabel(uid) {
 // ---------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------
-const CHILD_TABS = ['dashboard', 'extras', 'earnings', 'more'];
+const CHILD_TABS = ['dashboard', 'chores', 'extras', 'earnings', 'more'];
 const ADMIN_TABS = ['admindashboard', 'managechores', 'allactivity', 'settings'];
 const TITLES = {
-  dashboard: 'Dashboard', extras: 'Extras', earnings: 'Earnings', more: 'More',
+  dashboard: 'Dashboard', chores: 'Chores', extras: 'Extras', earnings: 'Earnings', more: 'More',
   admindashboard: 'Admin Dashboard', managechores: 'Manage Chores', allactivity: 'All Activity', settings: 'Settings',
 };
 
@@ -555,7 +615,9 @@ const state = {
   choreTemplates: [],
   choreSwaps: [],
   catalog: [],
+  deductionsCatalog: [],
   extraJobs: [],
+  notifications: [],
   ledger: [],
   ledgerViewUid: null,
   currentTab: localStorage.getItem('choresAppTab') || 'dashboard',
@@ -574,6 +636,11 @@ function activeChildUids() {
 function acceptedSwaps() {
   return state.choreSwaps.filter((s) => s.status === 'accepted');
 }
+// Day-swaps (eachMember daily chores) carry a dateId; week-swaps
+// (fixed/rotating) don't -- same distinction as settlement.js's daySwaps.
+function acceptedDaySwaps() {
+  return state.choreSwaps.filter((s) => s.status === 'accepted' && s.dateId);
+}
 
 // Mirrors functions/lib/settlement.js:computeSettlementActions' per-member
 // logic client-side, for display only (progress ring / My Chores / Admin
@@ -582,6 +649,7 @@ function acceptedSwaps() {
 function computeWeekProgressForMember(memberUid) {
   const pool0 = activeChildUids();
   const swaps = acceptedSwaps();
+  const daySwaps = acceptedDaySwaps();
   const items = [];
 
   state.chores.forEach((chore) => {
@@ -591,9 +659,16 @@ function computeWeekProgressForMember(memberUid) {
     if (mode === 'sharedAny' || mode === 'eachMember') {
       const pool = resolvePool(chore, pool0);
       if (!pool.includes(memberUid)) return;
+      // eachMember: usually the member's own entry; if a specific date was
+      // day-swapped away, the covering child's entry for that date counts
+      // too (matches settlement.js's identical fix).
       const satisfied = mode === 'sharedAny'
         ? state.choreLog.some((e) => e.choreId === chore.id && e.status === 'approved' && pool.includes(e.memberUid))
-        : state.choreLog.some((e) => e.choreId === chore.id && e.memberUid === memberUid && e.status === 'approved');
+        : state.choreLog.some((e) => {
+            if (e.choreId !== chore.id || e.status !== 'approved') return false;
+            if (e.memberUid === memberUid) return true;
+            return daySwaps.some((s) => s.choreId === chore.id && s.dateId === e.dateId && s.proposedBy === memberUid && s.targetUid === e.memberUid);
+          });
       items.push({ chore, mode, satisfied, executingUid: memberUid });
     } else {
       const base = resolveBaseAssignee(chore);
@@ -659,36 +734,74 @@ function getMyChoresListItems() {
 // day's (or that week's) status.
 function getDayViewItems(dateId) {
   const todayDateId = getIsoDateId(new Date());
+  const daySwaps = acceptedDaySwaps();
   return getMyChoresListItems().map((item) => {
-    const { chore, executingUid, iCanExecute } = item;
+    const { chore, mode, executingUid, iCanExecute } = item;
     const isDaily = chore.frequency === 'daily';
+    // For an eachMember daily chore, a day-swap can hand THIS specific date
+    // off to someone else -- resolve who's actually on the hook for this
+    // exact date before looking up the entry (mirrors the backend's
+    // resolveEffectiveAssigneeForDate, used by settlement/streak too).
+    const dayExecutingUid = (isDaily && mode === 'eachMember')
+      ? resolveEffectiveAssigneeForDate(chore.id, executingUid, dateId, daySwaps)
+      : executingUid;
+    const dayICanExecute = (isDaily && mode === 'eachMember') ? dayExecutingUid === state.user.uid : iCanExecute;
+    const swappedAwayToday = (isDaily && mode === 'eachMember') && dayExecutingUid !== executingUid;
     const entry = isDaily
-      ? state.choreLog.find((e) => e.choreId === chore.id && e.memberUid === executingUid && e.dateId === dateId)
+      ? state.choreLog.find((e) => e.choreId === chore.id && e.memberUid === dayExecutingUid && e.dateId === dateId)
       : state.choreLog.find((e) => e.choreId === chore.id && e.memberUid === executingUid);
     const status = entry ? entry.status : 'pending';
     const isPastDay = dateId < todayDateId;
     const isFutureDay = dateId > todayDateId;
     const missed = isDaily && isPastDay && !entry;
     const notYetDue = isDaily && isFutureDay && !entry;
-    const actionable = iCanExecute && dateId === todayDateId && status !== 'done' && status !== 'approved';
-    return { ...item, entry, status, isDaily, missed, notYetDue, actionable };
+    const actionable = dayICanExecute && dateId === todayDateId && status !== 'done' && status !== 'approved';
+    return { ...item, entry, status, isDaily, missed, notYetDue, actionable, dayExecutingUid, swappedAwayToday };
   });
 }
 
-// Streak badge for a 'daily' chore: consecutive-this-week count of
-// APPROVED days (not just self-marked 'done') ending today -- matching the
-// same trust boundary the payout gate already uses elsewhere, a child's own
-// mark isn't enough for a streak to count either. Purely a display extra,
-// no new Firestore fields, no payout effect (see docs/adr).
+// Display-only variant of computeCurrentStreak: settlement.js evaluates the
+// streak at the exact moment of Friday's payout, so "today not done yet"
+// correctly means "broken, pays 0" there -- but showing that same 0 to a
+// child at 9am, hours before their day is even over, reads as punishing
+// rather than encouraging ("keep going" was the ask). So for display only,
+// if today isn't approved *yet*, fall back to yesterday's confirmed streak
+// (still > 0 if the streak was intact through yesterday) instead of
+// flashing 0 the instant a new day starts; the moment today IS approved,
+// this matches computeCurrentStreak exactly again.
+function getDisplayStreak(chore, executingUid, weekDateIds, todayDateId, daySwaps) {
+  const todayExecutingUid = resolveEffectiveAssigneeForDate(chore.id, executingUid, todayDateId, daySwaps);
+  const todayApproved = state.choreLog.some(
+    (e) => e.choreId === chore.id && e.memberUid === todayExecutingUid && e.dateId === todayDateId && e.status === 'approved'
+  );
+  const todayIdx = weekDateIds.indexOf(todayDateId);
+  const evalDateId = todayApproved || todayIdx <= 0 ? todayDateId : weekDateIds[todayIdx - 1];
+  return computeCurrentStreak({
+    choreId: chore.id, executingUid, choreLogEntries: state.choreLog,
+    weekDateIds, todayDateId: evalDateId, acceptedDaySwaps: daySwaps,
+  });
+}
+
+// Streak badge for a 'daily' chore -- see getDisplayStreak for why "today"
+// doesn't zero the badge out before the day is even over. If the chore has
+// a dailyStreakBonusCentsPerDay configured, shows the accruing "pending,
+// paid Friday if it holds" amount too -- the same figure settlement.js
+// will actually pay if the streak survives to Friday (using the exact,
+// non-display computeCurrentStreak there). Purely a display extra
+// otherwise; no new Firestore fields, no payout effect on its own.
 function renderStreakBadge(chore, executingUid, weekDates, todayDateId) {
-  const daysSoFar = weekDates.filter((d) => getIsoDateId(d) <= todayDateId);
-  const approvedCount = daysSoFar.filter((d) => {
-    const dId = getIsoDateId(d);
-    return state.choreLog.some((e) => e.choreId === chore.id && e.memberUid === executingUid && e.dateId === dId && e.status === 'approved');
-  }).length;
-  if (approvedCount === 0) return null;
-  const perfect = approvedCount === 7;
-  return el('div', { class: 'streak-badge' }, perfect ? '⭐ Perfect week' : `🔥 ${approvedCount}/${daysSoFar.length} this week`);
+  const weekDateIds = weekDates.map(getIsoDateId);
+  const streak = getDisplayStreak(chore, executingUid, weekDateIds, todayDateId, acceptedDaySwaps());
+  if (streak === 0) return null;
+  const daysSoFar = weekDateIds.filter((d) => d <= todayDateId).length;
+  const perfect = streak === daysSoFar;
+  const bonusPerDay = chore.dailyStreakBonusCentsPerDay;
+  let bonusText = '';
+  if (Number.isInteger(bonusPerDay) && bonusPerDay > 0) {
+    const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+    bonusText = ` · ${formatCents(streak * bonusPerDay, currency)} pending`;
+  }
+  return el('div', { class: 'streak-badge' }, (perfect ? '⭐ Perfect week' : `🔥 ${streak}-day streak`) + bonusText);
 }
 
 // ---------------------------------------------------------------------
@@ -789,6 +902,64 @@ document.getElementById('credentialModalDoneBtn').addEventListener('click', () =
   document.getElementById('credentialModal').hidden = true;
 });
 
+// ---------------------------------------------------------------------
+// Notification inbox -- bell icon + badge (always live, via the realtime
+// listener in startFamilySubscriptions) opening a simple read/mark-read
+// modal. This is the reliable backbone regardless of push permission/
+// platform support -- see functions/lib/notify.js.
+// ---------------------------------------------------------------------
+function renderNotifBadge() {
+  const unread = state.notifications.filter((n) => !n.read).length;
+  const badge = document.getElementById('notifBadge');
+  badge.hidden = unread === 0;
+  badge.textContent = unread > 9 ? '9+' : String(unread);
+}
+
+function formatNotifTime(ts) {
+  if (!ts || typeof ts.toDate !== 'function') return '';
+  try {
+    return ts.toDate().toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  } catch (e) {
+    return '';
+  }
+}
+
+async function markNotifRead(notifId) {
+  const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+  await updateDoc(fsDoc(db, `families/${state.familyId}/members/${state.user.uid}/notifications/${notifId}`), { read: true });
+}
+
+function renderNotifModalBody() {
+  const body = document.getElementById('notifModalBody');
+  body.innerHTML = '';
+  if (state.notifications.length === 0) {
+    body.appendChild(el('div', { class: 'empty-state' }, 'No notifications yet.'));
+    return;
+  }
+  state.notifications.forEach((n) => {
+    body.appendChild(el('div', {
+      class: `notif-item ${n.read ? '' : 'unread'}`,
+      onclick: () => { if (!n.read) markNotifRead(n.id); },
+    }, [
+      el('div', { class: 'notif-item-title' }, n.title || ''),
+      n.body ? el('div', { class: 'notif-item-body' }, n.body) : null,
+      el('div', { class: 'notif-item-time' }, formatNotifTime(n.createdAt)),
+    ]));
+  });
+}
+
+document.getElementById('notifBellBtn').addEventListener('click', () => {
+  renderNotifModalBody();
+  document.getElementById('notifModal').hidden = false;
+});
+document.getElementById('notifModalDoneBtn').addEventListener('click', () => {
+  document.getElementById('notifModal').hidden = true;
+});
+document.getElementById('notifMarkAllReadBtn').addEventListener('click', async () => {
+  const unread = state.notifications.filter((n) => !n.read);
+  await Promise.all(unread.map((n) => markNotifRead(n.id)));
+});
+
 document.getElementById('signInBtn').addEventListener('click', async () => {
   document.getElementById('signInError').hidden = true;
   try {
@@ -815,6 +986,77 @@ document.getElementById('setupSignOutBtn').addEventListener('click', () => signO
 // browser's menu themselves) -- same pattern as the sibling pitchschedule app.
 let deferredInstallPrompt = null;
 const installBtn = document.getElementById('installBtn');
+
+// sw.js existed but was never actually registered -- neither the offline
+// shell caching nor (now) push notifications can work without this.
+let swRegistration = null;
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js')
+    .then((reg) => { swRegistration = reg; })
+    .catch((err) => console.error('[choresapp] service worker registration failed:', err));
+}
+
+// ---------------------------------------------------------------------
+// Push notifications -- best-effort layer on top of the always-on in-app
+// inbox (see functions/lib/notify.js). Requires a Web Push certificate
+// (VAPID key) generated once in Firebase Console -- Project settings >
+// Cloud Messaging > Web configuration > Web Push certificates -- see
+// docs/DEPLOYMENT.md. Until that's filled in below, "Enable notifications"
+// just explains that it isn't configured yet rather than silently failing.
+// ---------------------------------------------------------------------
+const FCM_VAPID_KEY = '';
+
+async function enablePushNotifications() {
+  if (!FCM_VAPID_KEY) {
+    throw new Error('Push notifications aren\'t configured yet -- ask the app owner to finish setup.');
+  }
+  if (!(await isMessagingSupported())) {
+    throw new Error('Push notifications aren\'t supported on this browser/device.');
+  }
+  if (!swRegistration) {
+    throw new Error('Still finishing setup -- try again in a moment.');
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    throw new Error('Notification permission was not granted.');
+  }
+  const messaging = getMessaging(app);
+  const token = await getToken(messaging, { vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: swRegistration });
+  if (!token) {
+    throw new Error('Could not get a notification token.');
+  }
+  await callRegisterFcmToken({ token });
+  try { localStorage.setItem('choresAppPushEnabled', 'true'); } catch (e) {}
+}
+
+function isPushEnabledLocally() {
+  try { return localStorage.getItem('choresAppPushEnabled') === 'true'; } catch (e) { return false; }
+}
+
+// Foreground messages: the in-app inbox's realtime Firestore listener
+// already updates the bell badge/list the instant a notification doc is
+// written, so there's nothing extra to do here while the tab is open --
+// onMessage only exists so FCM doesn't warn about an unhandled foreground
+// message; the OS-level banner (sw.js's onBackgroundMessage) only fires
+// when the tab is NOT in focus anyway.
+isMessagingSupported().then((supported) => {
+  if (!supported) return;
+  onMessage(getMessaging(app), () => {});
+}).catch(() => {});
+
+function renderNotificationSettingsButton(container) {
+  container.appendChild(el('button', {
+    class: 'pill', style: 'width:100%;margin-bottom:8px;',
+    onclick: async () => {
+      try {
+        await enablePushNotifications();
+        renderCurrentTab();
+      } catch (err) {
+        alert(err.message);
+      }
+    },
+  }, isPushEnabledLocally() ? '🔔 Notifications enabled' : '🔔 Enable notifications'));
+}
 
 function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
@@ -986,11 +1228,25 @@ function startFamilySubscriptions() {
     renderCurrentTab();
   }));
 
+  unsubscribers.push(onSnapshot(collection(db, `families/${familyId}/deductionsCatalog`), (snap) => {
+    state.deductionsCatalog = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderCurrentTab();
+  }));
+
   unsubscribers.push(onSnapshot(
     query(collection(db, `families/${familyId}/extraJobs`), orderBy('createdAt', 'desc')),
     (snap) => {
       state.extraJobs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       renderCurrentTab();
+    }
+  ));
+
+  unsubscribers.push(onSnapshot(
+    query(collection(db, `families/${familyId}/members/${state.user.uid}/notifications`), orderBy('createdAt', 'desc')),
+    (snap) => {
+      state.notifications = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderNotifBadge();
+      if (!document.getElementById('notifModal').hidden) renderNotifModalBody();
     }
   ));
 
@@ -1053,7 +1309,7 @@ document.addEventListener('touchend', (e) => {
 function renderCurrentTab() {
   if (screens.app.hidden) return;
   const renderers = {
-    dashboard: renderDashboard, extras: renderExtras,
+    dashboard: renderDashboard, chores: renderChores, extras: renderExtras,
     earnings: renderEarnings, more: renderMore,
     admindashboard: renderAdminDashboard, managechores: renderManageChores,
     allactivity: renderAllActivity, settings: renderSettings,
@@ -1089,14 +1345,135 @@ function choreLabel(chore) {
 }
 
 // ---------------------------------------------------------------------
-// Dashboard tab (child) -- read-only overview
+// Dashboard tab (child) -- read-only overview: balance projection, weekly
+// + today progress rings, a status-only list. All marking-done/swapping
+// happens on the Chores tab instead; tapping an item here deep-links there.
 // ---------------------------------------------------------------------
-let selectedDashboardDateId = null;
+function computePendingStreakBonusCents(memberUid) {
+  const today = new Date();
+  const todayDateId = getIsoDateId(today);
+  const weekDateIds = getIsoWeekDates(today).map(getIsoDateId);
+  const daySwaps = acceptedDaySwaps();
+  const pool0 = activeChildUids();
+  let total = 0;
+  state.chores.forEach((chore) => {
+    if (chore.active === false || chore.frequency !== 'daily') return;
+    const bonusPerDay = chore.dailyStreakBonusCentsPerDay;
+    if (!Number.isInteger(bonusPerDay) || bonusPerDay <= 0) return;
+    if (resolveAssignmentMode(chore) !== 'eachMember') return;
+    if (!resolvePool(chore, pool0).includes(memberUid)) return;
+    const streak = getDisplayStreak(chore, memberUid, weekDateIds, todayDateId, daySwaps);
+    total += streak * bonusPerDay;
+  });
+  return total;
+}
 
 function renderDashboard() {
   const container = document.getElementById('page-dashboard');
   container.innerHTML = '';
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+  const today = new Date();
+  const todayDateId = getIsoDateId(today);
+  const weekId = getIsoWeekId(today);
+
+  const thisWeekLedger = state.ledger.filter((tx) => tx.weekId === weekId);
+  const extrasCents = thisWeekLedger.filter((tx) => tx.type === 'extra_job_credit').reduce((s, tx) => s + tx.amountCents, 0);
+  const deductionsCents = thisWeekLedger.filter((tx) => tx.type === 'deduction').reduce((s, tx) => s + tx.amountCents, 0);
+  const alreadySettled = thisWeekLedger.some((tx) => tx.type === 'weekly_payout' || tx.type === 'chore_shortfall_pending_review');
+  const weekProgress = computeWeekProgressForMember(state.user.uid);
+  const onTrack = weekProgress.total === 0 || weekProgress.done === weekProgress.total;
+  const pendingAllowanceCents = alreadySettled ? 0 : (onTrack ? (state.member ? state.member.baseWeeklyAllowanceCents || 0 : 0) : 0);
+  const pendingStreakCents = computePendingStreakBonusCents(state.user.uid);
+
+  const balanceCard = el('div', { class: 'booking-card' }, [
+    el('div', { class: 'muted' }, 'My Balance'),
+    el('div', { style: 'font-size:1.8rem;font-weight:800;' }, formatCents(state.member ? state.member.balanceCents : 0, currency)),
+  ]);
+  const breakdown = [];
+  if (pendingAllowanceCents > 0) {
+    breakdown.push(`+${formatCents(pendingAllowanceCents, currency)} allowance (pending, released Friday)`);
+  } else if (!alreadySettled && !onTrack) {
+    breakdown.push('Allowance at risk -- not all chores done yet this week');
+  }
+  if (extrasCents > 0) breakdown.push(`+${formatCents(extrasCents, currency)} extra jobs this week`);
+  if (deductionsCents < 0) breakdown.push(`${formatCents(deductionsCents, currency)} deductions this week`);
+  if (pendingStreakCents > 0) breakdown.push(`+${formatCents(pendingStreakCents, currency)} streak bonus (pending, released Friday)`);
+  if (breakdown.length > 0) {
+    balanceCard.appendChild(el('div', { class: 'muted', style: 'margin-top:8px;line-height:1.6;' },
+      breakdown.map((line) => el('div', {}, line))));
+  }
+  container.appendChild(balanceCard);
+
+  const dayItems = getDayViewItems(todayDateId);
+  const dayDone = dayItems.filter((i) => i.status === 'approved' || i.status === 'done').length;
+  const dayPct = dayItems.length === 0 ? 100 : Math.round((dayDone / dayItems.length) * 100);
+  const weekPct = weekProgress.total === 0 ? 100 : Math.round((weekProgress.done / weekProgress.total) * 100);
+
+  container.appendChild(el('div', { class: 'stat-grid' }, [
+    el('div', { class: 'booking-card', style: 'text-align:center;' }, [
+      el('div', { class: 'progress-ring', style: `--pct:${dayPct};` }, [
+        el('div', { class: 'progress-ring-inner' }, [
+          el('div', { class: 'progress-ring-pct' }, `${dayPct}%`),
+          el('div', { class: 'progress-ring-label' }, 'today'),
+        ]),
+      ]),
+      el('div', { class: 'muted' }, `${dayDone}/${dayItems.length} today`),
+    ]),
+    el('div', { class: 'booking-card', style: 'text-align:center;' }, [
+      el('div', { class: 'progress-ring', style: `--pct:${weekPct};` }, [
+        el('div', { class: 'progress-ring-inner' }, [
+          el('div', { class: 'progress-ring-pct' }, `${weekPct}%`),
+          el('div', { class: 'progress-ring-label' }, 'this week'),
+        ]),
+      ]),
+      el('div', { class: 'muted' }, `${weekProgress.done}/${weekProgress.total} this week`),
+    ]),
+  ]));
+
+  ['dailyTask', 'chore'].forEach((cat) => {
+    const items = weekProgress.items.filter((i) => (i.chore.category || 'chore') === cat);
+    if (items.length === 0) return;
+    container.appendChild(el('h2', { style: 'margin-top:16px;' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
+    items.forEach((item) => {
+      container.appendChild(el('div', {
+        class: `booking-card ${item.satisfied ? 'done' : ''}`, style: 'cursor:pointer;',
+        onclick: () => switchTab('chores'),
+      }, [
+        el('div', { class: 'row' }, [
+          choreLabel(item.chore),
+          el('span', { class: `status-pill status-${item.satisfied ? 'approved' : 'pending'}` }, item.satisfied ? 'done' : 'to do'),
+        ]),
+      ]));
+    });
+  });
+
+  container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
+    el('h2', {}, 'Recent activity'),
+    el('button', { class: 'pill small', onclick: () => switchTab('earnings') }, 'View all'),
+  ]));
+  if (state.ledger.length === 0) {
+    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
+  } else {
+    state.ledger.slice(0, 3).forEach((tx) => {
+      const positive = tx.amountCents >= 0;
+      container.appendChild(el('div', { class: 'booking-card' }, [
+        el('div', { class: 'row' }, [
+          el('div', {}, tx.note || tx.type),
+          el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+        ]),
+      ]));
+    });
+  }
+}
+
+// ---------------------------------------------------------------------
+// Chores tab (child) -- day-by-day tick-off, mark done, photo proof, swaps
+// ---------------------------------------------------------------------
+let selectedDashboardDateId = null;
+
+function renderChores() {
+  const container = document.getElementById('page-chores');
+  container.innerHTML = '';
   const today = new Date();
   const todayDateId = getIsoDateId(today);
   const weekDates = getIsoWeekDates(today);
@@ -1105,21 +1482,18 @@ function renderDashboard() {
   }
   const selectedDateId = selectedDashboardDateId;
 
-  container.appendChild(el('div', { class: 'booking-card' }, [
-    el('div', { class: 'muted' }, 'My Balance'),
-    el('div', { style: 'font-size:1.8rem;font-weight:800;' }, formatCents(state.member ? state.member.balanceCents : 0, currency)),
-  ]));
-
-  // Swap requests/proposals are a week-wide arrangement, not tied to any one
-  // day, so they sit above the day tabs rather than inside a specific day.
+  // Swap requests/proposals are a week-wide (or day-wide, for a day-swap)
+  // arrangement, not tied to whichever day tab happens to be selected, so
+  // they sit above the day tabs rather than inside a specific day.
   const requestsForMe = state.choreSwaps.filter((s) => s.targetUid === state.user.uid && s.status === 'proposed');
   const myProposals = state.choreSwaps.filter((s) => s.proposedBy === state.user.uid && s.status === 'proposed');
   if (requestsForMe.length > 0) {
     container.appendChild(el('h2', {}, 'Swap requests for you'));
     requestsForMe.forEach((swap) => {
       const chore = state.chores.find((c) => c.id === swap.choreId);
+      const scope = swap.duration === 'day' ? "today's" : "this week's";
       container.appendChild(el('div', { class: 'booking-card warn' }, [
-        el('div', {}, `${memberLabel(swap.proposedBy)} wants to swap: ${chore ? chore.name : swap.choreId}`),
+        el('div', {}, `${memberLabel(swap.proposedBy)} wants to swap ${scope}: ${chore ? chore.name : swap.choreId}`),
         swap.note ? el('div', { class: 'muted' }, swap.note) : null,
         el('div', { style: 'margin-top:8px;display:flex;gap:8px;' }, [
           el('button', {
@@ -1138,8 +1512,9 @@ function renderDashboard() {
     container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Your pending swap proposals'));
     myProposals.forEach((swap) => {
       const chore = state.chores.find((c) => c.id === swap.choreId);
+      const scope = swap.duration === 'day' ? "today's" : "this week's";
       container.appendChild(el('div', { class: 'booking-card' }, [
-        el('div', {}, `${chore ? chore.name : swap.choreId} → ${memberLabel(swap.targetUid)}`),
+        el('div', {}, `${scope} ${chore ? chore.name : swap.choreId} → ${memberLabel(swap.targetUid)}`),
         el('button', {
           class: 'pill small', style: 'margin-top:8px;',
           onclick: async () => { try { await callCancelChoreSwap({ swapId: swap.id }); } catch (err) { alert(err.message); } },
@@ -1210,7 +1585,7 @@ function renderDashboard() {
     container.appendChild(el('h2', { style: 'margin-top:16px;' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
 
     catItems.forEach((item) => {
-      const { chore, mode, executingUid, isMyGate, iCanExecute, entry, status, isDaily, missed, notYetDue, actionable } = item;
+      const { chore, mode, executingUid, isMyGate, iCanExecute, entry, status, isDaily, missed, notYetDue, actionable, dayExecutingUid, swappedAwayToday } = item;
       const cardClass = missed ? 'missed'
         : (status === 'approved' || status === 'done') ? 'done'
         : (status === 'rejected') ? 'warn' : '';
@@ -1228,6 +1603,7 @@ function renderDashboard() {
           (mode === 'rotating') ? el('div', { class: 'muted' }, `Rotates — ${memberLabel(executingUid)}'s turn this week`) : null,
           (!isMyGate && iCanExecute) ? el('div', { class: 'muted' }, `Covering this for ${memberLabel(resolveBaseAssignee(chore))} (swap)`) : null,
           (isMyGate && !iCanExecute) ? el('div', { class: 'muted' }, `Swapped to ${memberLabel(executingUid)} this week`) : null,
+          (swappedAwayToday && selectedDateId === todayDateId) ? el('div', { class: 'muted' }, `Swapped to ${memberLabel(dayExecutingUid)} today`) : null,
           isDaily ? renderStreakBadge(chore, executingUid, weekDates, todayDateId) : null,
         ]),
         el('span', { class: `status-pill ${pillClass}` }, pillLabel),
@@ -1265,12 +1641,18 @@ function renderDashboard() {
         card.appendChild(slot);
       }
 
-      // Propose a swap -- only for fixed/rotating chores (matching
-      // proposeChoreSwap's server-side rule), only from today's tab (a
-      // swap is a "right now" action, same as marking done), and only
-      // while it's still my gate to hand off.
-      if ((mode === 'fixed' || mode === 'rotating') && isMyGate && iCanExecute
-          && selectedDateId === todayDateId && status !== 'approved' && status !== 'done') {
+      // Propose a swap -- only from today's tab (a swap is a "right now"
+      // action, same as marking done), and only while it's still mine to
+      // hand off. Fixed/rotating chores propose a week-swap (the original,
+      // unchanged mechanism); an eachMember daily task proposes a day-swap
+      // instead (handing off just today's instance -- there's no "week" of
+      // a shared gate to swap for a chore everyone already does
+      // independently).
+      const canProposeWeekSwap = (mode === 'fixed' || mode === 'rotating') && isMyGate && iCanExecute
+        && selectedDateId === todayDateId && status !== 'approved' && status !== 'done';
+      const canProposeDaySwap = isDaily && mode === 'eachMember' && !swappedAwayToday
+        && selectedDateId === todayDateId && status !== 'approved' && status !== 'done';
+      if (canProposeWeekSwap || canProposeDaySwap) {
         const otherKids = state.members.filter((m) => m.role === 'child' && m.active !== false && m.uid !== state.user.uid);
         if (otherKids.length > 0) {
           const targetSelect = el('select', { style: 'margin-top:8px;' });
@@ -1278,9 +1660,14 @@ function renderDashboard() {
           const swapBtn = el('button', {
             class: 'pill small',
             onclick: async () => {
-              try { await callProposeChoreSwap({ choreId: chore.id, targetUid: targetSelect.value }); } catch (err) { alert(err.message); }
+              try {
+                await callProposeChoreSwap({
+                  choreId: chore.id, targetUid: targetSelect.value,
+                  duration: canProposeDaySwap ? 'day' : 'week',
+                });
+              } catch (err) { alert(err.message); }
             },
-          }, 'Propose swap');
+          }, canProposeDaySwap ? "Trade today's task" : 'Propose swap');
           card.appendChild(targetSelect);
           card.appendChild(swapBtn);
         }
@@ -1289,24 +1676,6 @@ function renderDashboard() {
       container.appendChild(card);
     });
   });
-
-  container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
-    el('h2', {}, 'Recent activity'),
-    el('button', { class: 'pill small', onclick: () => switchTab('earnings') }, 'View all'),
-  ]));
-  if (state.ledger.length === 0) {
-    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
-  } else {
-    state.ledger.slice(0, 3).forEach((tx) => {
-      const positive = tx.amountCents >= 0;
-      container.appendChild(el('div', { class: 'booking-card' }, [
-        el('div', { class: 'row' }, [
-          el('div', {}, tx.note || tx.type),
-          el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
-        ]),
-      ]));
-    });
-  }
 }
 
 // ---------------------------------------------------------------------
@@ -1405,6 +1774,78 @@ function renderExtras() {
         ]));
       });
     }
+
+    // "Not to do" deduction catalog -- same preset-amount-quick-pick shape
+    // as the extra-jobs catalog above, just the negative counterpart.
+    const deductionCatalogForm = el('form', { class: 'booking-card' });
+    const dedIconInput = el('input', { type: 'text', placeholder: '👢', class: 'icon-input' });
+    const dedNameInput = el('input', { type: 'text', placeholder: 'e.g. Boots left in the hall', required: true });
+    const dedAmountInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Deduction amount (e.g. 1.00)', required: true });
+    deductionCatalogForm.appendChild(el('label', {}, 'Add a "not to do" (deduction)'));
+    deductionCatalogForm.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [dedIconInput, dedNameInput]));
+    deductionCatalogForm.appendChild(dedAmountInput);
+    deductionCatalogForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add to list'));
+    deductionCatalogForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await addDoc(fsCollection(db, `families/${state.familyId}/deductionsCatalog`), {
+        name: dedNameInput.value.trim(), icon: dedIconInput.value.trim() || null,
+        description: '', amountCents: centsFromMajorUnits(dedAmountInput.value),
+        active: true, createdBy: state.user.uid, createdAt: serverTimestamp(),
+      });
+      dedNameInput.value = ''; dedIconInput.value = ''; dedAmountInput.value = '';
+    });
+    container.appendChild(deductionCatalogForm);
+
+    if (state.deductionsCatalog.length > 0) {
+      container.appendChild(el('h2', {}, 'Deduction types'));
+      state.deductionsCatalog.forEach((item) => {
+        container.appendChild(el('div', { class: 'booking-card' }, [
+          el('div', { class: 'row' }, [
+            el('div', {}, [choreLabel(item), item.active === false ? ' (inactive)' : '', ` · -${formatCents(item.amountCents, currency)}`]),
+            el('button', {
+              class: 'pill small',
+              onclick: async () => {
+                const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+                await updateDoc(fsDoc(db, `families/${state.familyId}/deductionsCatalog/${item.id}`), { active: item.active === false });
+              },
+            }, item.active === false ? 'Reactivate' : 'Deactivate'),
+          ]),
+        ]));
+      });
+    }
+
+    // Log a deduction against a specific child -- quick-pick only, no
+    // custom-amount path (the catalog item is the single source of truth
+    // for how much a given infraction costs).
+    const activeDeductions = state.deductionsCatalog.filter((d) => d.active !== false);
+    if (activeDeductions.length > 0) {
+      const logForm = el('form', { class: 'booking-card' });
+      const childSelect = el('select', {});
+      state.members.filter((m) => m.role === 'child' && m.active !== false).forEach((m) => {
+        childSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email));
+      });
+      const itemSelect = el('select', {});
+      activeDeductions.forEach((d) => itemSelect.appendChild(el('option', { value: d.id }, `${d.name} (-${formatCents(d.amountCents, currency)})`)));
+      logForm.appendChild(el('label', {}, 'Log a deduction'));
+      logForm.appendChild(childSelect);
+      logForm.appendChild(itemSelect);
+      const logError = el('p', { class: 'error-text' });
+      logError.hidden = true;
+      logForm.appendChild(logError);
+      logForm.appendChild(el('button', { class: 'pill danger', type: 'submit' }, 'Log deduction'));
+      logForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        logError.hidden = true;
+        try {
+          await callLogDeduction({ memberUid: childSelect.value, catalogItemId: itemSelect.value });
+        } catch (err) {
+          logError.textContent = err.message;
+          logError.hidden = false;
+        }
+      });
+      container.appendChild(logForm);
+    }
   }
 
   container.appendChild(el('h2', { style: 'margin-top:16px;' }, state.role === 'admin' ? 'Pending approval' : 'Your jobs'));
@@ -1493,6 +1934,7 @@ function renderMore() {
     class: 'pill', style: 'width:100%;margin-bottom:8px;',
     onclick: () => showScreen('changePassword'),
   }, 'Change password'));
+  renderNotificationSettingsButton(container);
   container.appendChild(el('button', { class: 'pill', style: 'width:100%;', onclick: () => signOut(auth) }, 'Sign out'));
 }
 
@@ -1697,6 +2139,14 @@ function renderActiveChores(container) {
     el('option', { value: 'daily' }, 'Daily task (every day)'),
     el('option', { value: 'once' }, 'One-off task (this week only)'),
   ]);
+  // Only meaningful for a daily task everyone does independently (eachMember)
+  // -- a streak is inherently personal consistency, so it's hidden/ignored
+  // otherwise (see settlement.js's identical scoping).
+  const streakBonusInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Streak bonus per day, e.g. 0.15 (optional)', hidden: true });
+  function updateStreakBonusVisibility() {
+    streakBonusInput.hidden = !(frequencySelect.value === 'daily' && modeSelect.value === 'eachMember');
+  }
+  frequencySelect.addEventListener('change', updateStreakBonusVisibility);
 
   const poolWrap = el('div', {});
   function renderAssigneeControl() {
@@ -1714,8 +2164,9 @@ function renderActiveChores(container) {
       });
     }
   }
-  modeSelect.addEventListener('change', renderAssigneeControl);
+  modeSelect.addEventListener('change', () => { renderAssigneeControl(); updateStreakBonusVisibility(); });
   renderAssigneeControl();
+  updateStreakBonusVisibility();
 
   form.appendChild(el('label', {}, 'Add a chore'));
   if (state.choreTemplates.filter((t) => t.active !== false).length > 0) {
@@ -1743,6 +2194,7 @@ function renderActiveChores(container) {
   form.appendChild(poolWrap);
   form.appendChild(el('label', {}, 'Frequency'));
   form.appendChild(frequencySelect);
+  form.appendChild(streakBonusInput);
   form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add chore'));
 
   form.addEventListener('submit', async (event) => {
@@ -1773,12 +2225,16 @@ function renderActiveChores(container) {
       assignedTo,
       ...(rotation ? { rotation } : {}),
       frequency: frequencySelect.value,
+      ...(!streakBonusInput.hidden && streakBonusInput.value
+        ? { dailyStreakBonusCentsPerDay: centsFromMajorUnits(streakBonusInput.value) }
+        : {}),
       active: true,
       createdBy: state.user.uid,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-    nameInput.value = ''; iconInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly';
+    nameInput.value = ''; iconInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly'; streakBonusInput.value = '';
+    updateStreakBonusVisibility();
   });
   container.appendChild(form);
 
@@ -1980,6 +2436,8 @@ function renderSettings() {
     });
   });
   container.appendChild(settingsForm);
+
+  renderNotificationSettingsButton(container);
 
   container.appendChild(el('button', {
     class: 'pill', style: 'width:100%;margin-bottom:8px;',
