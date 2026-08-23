@@ -296,6 +296,8 @@
     text-transform: uppercase; letter-spacing: 0.04em; border-top: 1px solid var(--border);
     padding-top: 14px; margin-top: 8px;
   }
+  /* Inline icon glyph sized to sit next to a line of button/link text. */
+  .btn-icon { width: 16px; height: 16px; vertical-align: -3px; margin-right: 4px; flex-shrink: 0; }
 
   .amount-display {
     display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border);
@@ -371,8 +373,8 @@
     <p>Track chores, allowances, and extra jobs together.</p>
 
     <div class="mode-tabs" style="width:100%;max-width:280px;margin-bottom:0;">
-      <button type="button" class="mode-tab-btn active add" id="signInModeParentBtn">👤 Parent sign-in</button>
-      <button type="button" class="mode-tab-btn" id="signInModeKidBtn">👤 Kid sign-in</button>
+      <button type="button" class="mode-tab-btn active add" id="signInModeParentBtn"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Parent sign-in</button>
+      <button type="button" class="mode-tab-btn" id="signInModeKidBtn"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Kid sign-in</button>
     </div>
 
     <div id="parentSignIn" style="width:100%;max-width:280px;">
@@ -397,9 +399,9 @@
       <button class="pill primary" type="submit" style="width:100%;">Sign in</button>
     </form>
     <div id="kidSignInHelp" hidden style="width:100%;max-width:280px;">
-      <button type="button" class="pill" id="kidInviteHelpBtn" style="width:100%;">👥 Ask your parent to invite you</button>
+      <button type="button" class="pill" id="kidInviteHelpBtn" style="width:100%;"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="8" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg> Ask your parent to invite you</button>
       <p class="signin-trust-caption" style="justify-content:center;margin-top:12px;">
-        <button type="button" id="kidNeedHelpBtn" class="link-btn">❓ Need help signing in?</button>
+        <button type="button" id="kidNeedHelpBtn" class="link-btn"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.7 2.7 0 015.2.9c0 1.8-2.7 2.4-2.7 2.4"/><path d="M12 16.2h.01"/></svg> Need help signing in?</button>
       </p>
     </div>
 
@@ -773,6 +775,55 @@ function el(tag, attrs, children) {
     node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
   }
   return node;
+}
+
+// Line-icon system, matching the family's uploaded "Icon Set A" (rounded
+// outline, single stroke, currentColor) -- replaces ad hoc emoji, which
+// render as whatever multi-colored glyph the OS's own emoji font happens
+// to ship, never actually matching the app's own green outline style. Built
+// via innerHTML (not el(), which uses document.createElement and can't
+// produce real namespaced SVG/its children) -- assigning to innerHTML runs
+// the HTML parser's foreign-content rules, which correctly promotes <svg>
+// and its descendants into the SVG namespace.
+const ICONS = {
+  // Set A: "Parent" / "Child"
+  person: '<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  // Set A: "Add child" / "Invite family member"
+  personPlus: '<path d="M15 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="8" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/>',
+  // Set A: "Kids" (bottom nav) -- already hand-drawn elsewhere in this file;
+  // kept identical here so every usage of "two kids" is the same glyph.
+  people: '<circle cx="9" cy="7" r="3"/><circle cx="17" cy="8" r="2.3"/><path d="M3 21v-2a5 5 0 015-5h2a5 5 0 015 5v2"/><path d="M15.5 13.2A4.2 4.2 0 0121 17v1.5"/>',
+  // Set A: "Help/FAQ"
+  helpCircle: '<circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.7 2.7 0 015.2.9c0 1.8-2.7 2.4-2.7 2.4"/><path d="M12 16.2h.01"/>',
+  // Set A: "Dark mode"
+  moon: '<path d="M20 13.2A8 8 0 1110.8 4a6.3 6.3 0 009.2 9.2z"/><path d="M18.5 3.3l.4 1.1 1.1.4-1.1.4-.4 1.1-.4-1.1-1.1-.4 1.1-.4z"/>',
+  // Set A: "Camera/photo proof"
+  camera: '<path d="M22 18a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2h3.2L9 3.5h6L16.8 6H20a2 2 0 012 2z"/><circle cx="12" cy="13" r="3.6"/>',
+  // Set A: "Approve" -- circle drawn separately where a colored badge
+  // background already supplies it (e.g. .adjust-success-icon), so this
+  // entry is check-mark-only; checkCircleWithRing includes the ring too.
+  check: '<path d="M5 13l4.5 4.5L19 8"/>',
+  checkCircleWithRing: '<circle cx="12" cy="12" r="9"/><path d="M8.3 12.3l2.4 2.4 5-5.2"/>',
+  // A plain "+"/"-" -- used inside a badge circle a caller already supplies
+  // (see moneyLineIcon), matching Set A's Add money/Deduct money badges
+  // without redundantly nesting a second circle inside one.
+  plus: '<path d="M12 6v12M6 12h12"/>',
+  minus: '<path d="M6 12h12"/>',
+  // Set A: "Earnings" ($ in a circle, no badge)
+  dollarCircle: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v9"/><path d="M14.3 9.6c0-.9-1-1.6-2.3-1.6s-2.3.7-2.3 1.6.8 1.3 2.3 1.6c1.5.3 2.3.8 2.3 1.7s-1 1.6-2.3 1.6-2.3-.6-2.3-1.5"/>',
+};
+
+// Builds a real <svg> element from one of the ICONS path strings above --
+// use anywhere el()'s children accept a Node (icon circles, buttons, etc).
+// `color` sets the stroke via inline style rather than a class, since most
+// call sites want a color that isn't already themeable through a parent
+// class (e.g. a specific status color).
+function svgIcon(name, { size = 20, color } = {}) {
+  const span = document.createElement('span');
+  span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" `
+    + `stroke-linecap="round" stroke-linejoin="round" style="width:${size}px;height:${size}px;`
+    + `display:inline-block;vertical-align:-3px;flex-shrink:0;${color ? `color:${color};` : ''}">${ICONS[name] || ''}</svg>`;
+  return span.firstElementChild;
 }
 
 function memberLabel(uid) {
@@ -1292,7 +1343,7 @@ function isIOS() {
 function updateInstallUI() {
   if (isStandalone()) { installBtn.style.display = 'none'; return; } // already installed
   if (deferredInstallPrompt) {
-    installBtn.textContent = '📲 Install App';
+    installBtn.textContent = 'Install App';
     installBtn.style.display = 'inline-flex';
     installBtn.onclick = async () => {
       installBtn.style.display = 'none';
@@ -1301,7 +1352,7 @@ function updateInstallUI() {
       deferredInstallPrompt = null;
     };
   } else if (isIOS()) {
-    installBtn.textContent = '📲 Add to Home Screen';
+    installBtn.textContent = 'Add to Home Screen';
     installBtn.style.display = 'inline-flex';
     installBtn.onclick = () => {
       alert('On iPhone:\n\n1. Tap the Share icon (square with an arrow up) at the bottom of Safari\n2. Scroll down and tap "Add to Home Screen"\n3. Tap "Add"');
@@ -1745,12 +1796,12 @@ function relativeDateTimeLabel(date) {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function moneyLineIcon(emoji, positive) {
+function moneyLineIcon(positive) {
   return el('div', {
-    style: `width:32px;height:32px;border-radius:999px;flex-shrink:0;font-size:0.95rem;`
+    style: `width:32px;height:32px;border-radius:999px;flex-shrink:0;`
       + `background:${positive ? 'var(--panel2)' : 'var(--danger-tint)'};color:${positive ? 'var(--success)' : 'var(--danger)'};`
       + 'display:flex;align-items:center;justify-content:center;',
-  }, emoji);
+  }, svgIcon(positive ? 'plus' : 'minus', { size: 16 }));
 }
 
 function renderDashboard() {
@@ -1802,7 +1853,7 @@ function renderDashboard() {
   ]));
   balanceCard.appendChild(el('div', { class: 'muted', style: 'margin-top:10px;' }, "This week's money"));
   balanceCard.appendChild(el('div', { style: 'font-weight:800;font-size:2rem;color:var(--success);' },
-    `${formatCents(totalCents, currency)} ✨`));
+    formatCents(totalCents, currency)));
   if (!alreadySettled && !awaitingApproval) {
     balanceCard.appendChild(el('div', { class: 'muted', style: 'font-size:0.78rem;' }, 'Total can change during the week'));
   }
@@ -1882,7 +1933,7 @@ function renderDashboard() {
     calcLines.forEach((line) => {
       const positive = line.cents >= 0;
       calcBody.appendChild(el('div', { class: `payment-line ${line.pending ? 'pending' : ''}`, style: 'display:flex;align-items:center;gap:10px;' }, [
-        moneyLineIcon(positive ? '⭐' : '➖', positive),
+        moneyLineIcon(positive),
         el('div', { class: 'payment-line-label', style: 'flex:1;' }, [
           el('span', {}, line.label),
           line.pending ? el('span', { class: 'status-pill status-done' }, line.awaitingApproval ? 'awaiting approval' : 'pending') : null,
@@ -1938,7 +1989,7 @@ function renderDashboard() {
       const when = tx.createdAt && typeof tx.createdAt.toDate === 'function' ? relativeDateTimeLabel(tx.createdAt.toDate()) : '';
       container.appendChild(el('div', { class: 'booking-card' }, [
         el('div', { class: 'row', style: 'align-items:center;gap:10px;' }, [
-          moneyLineIcon(positive ? '⭐' : '➖', positive),
+          moneyLineIcon(positive),
           el('div', { style: 'flex:1;' }, [
             el('div', { style: 'font-weight:600;' }, tx.note || tx.type.replace(/_/g, ' ')),
             el('div', { class: 'muted' }, tx.type.replace(/_/g, ' ')),
@@ -2090,7 +2141,7 @@ function renderChores() {
         const attachBtn = el('button', {
           type: 'button', class: 'pill small', style: 'margin-top:8px;',
           onclick: () => fileInput.click(),
-        }, '📷 Add photo (optional)');
+        }, [svgIcon('camera', { size: 15 }), ' Add photo (optional)']);
         const markBtn = el('button', {
           class: 'pill primary small', style: 'margin-top:8px;margin-left:6px;',
           onclick: async () => {
@@ -2442,7 +2493,7 @@ function renderMore() {
   ]));
 
   const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
-  container.appendChild(renderMoreToggle('☾ Dark mode', currentTheme === 'dark', (checked) => {
+  container.appendChild(renderMoreToggle([svgIcon('moon', { size: 16 }), ' Dark mode'], currentTheme === 'dark', (checked) => {
     const next = checked ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', next);
     try { localStorage.setItem('choresAppTheme', next); } catch (e) {}
@@ -2651,7 +2702,7 @@ function renderKidDetailBody(container, uid) {
   container.appendChild(el('button', {
     type: 'button', class: 'entry-row', onclick: () => openAdjustMoneyModal(child),
   }, [
-    el('div', { class: 'entry-row-icon' }, '💰'),
+    el('div', { class: 'entry-row-icon' }, svgIcon('dollarCircle', { size: 20 })),
     el('div', {}, [
       el('div', { class: 'entry-row-title' }, 'Adjust money'),
       el('div', { class: 'entry-row-sub' }, 'Add money or deduct for a reason'),
@@ -2751,26 +2802,22 @@ function renderEditableAllowanceCard(child, currency) {
   ]);
 }
 
-const ADD_MONEY_REASON_PRESETS = [
-  { icon: '👍', label: 'Helpful' },
-  { icon: '⭐', label: 'Extra chore' },
-  { icon: '😊', label: 'Great attitude' },
-];
-const DEDUCT_MONEY_FALLBACK_PRESETS = [
-  { icon: '🎒', label: 'Bag in hall' },
-  { icon: '🛏️', label: 'Room not tidied' },
-  { icon: '⏰', label: 'Late for school' },
-];
+// Plain text, deliberately no per-chip icon -- there's no icon in the
+// family's Set A for "thumbs up"/"backpack"/"clock" etc., and guessing at
+// one per reason (an open-ended, admin-editable list) is exactly the kind
+// of ad hoc icon this app is moving away from.
+const ADD_MONEY_REASON_PRESETS = ['Helpful', 'Extra chore', 'Great attitude'];
+const DEDUCT_MONEY_FALLBACK_PRESETS = ['Bag in hall', 'Room not tidied', 'Late for school'];
 // Reuses the admin-curated deductionsCatalog (Extras tab) as quick-pick
-// reason chips when the family has set one up -- only the NAME is reused
-// here, not the catalog's locked amountCents, since this flow always lets
-// the admin pick the amount themselves via the quick-amount chips/typed
-// value. Falls back to a small generic set so the row isn't just empty for
-// a family that hasn't configured a catalog yet.
+// reason chips when the family has set one up -- since this flow always
+// lets the admin pick the amount themselves via the quick-amount
+// chips/typed value, only the catalog item's NAME is reused, not its
+// locked amountCents. Falls back to a small generic set so the row isn't
+// just empty for a family that hasn't configured a catalog yet.
 function getDeductMoneyReasonPresets() {
   const active = state.deductionsCatalog.filter((d) => d.active !== false);
   if (active.length === 0) return DEDUCT_MONEY_FALLBACK_PRESETS;
-  return active.slice(0, 6).map((d) => ({ icon: '💸', label: d.name }));
+  return active.slice(0, 6).map((d) => d.name);
 }
 
 // A single Add/Deduct flow for one child's balance -- replaces what used to
@@ -2897,18 +2944,18 @@ function openAdjustMoneyModal(child) {
 
     const reasonChipRow = el('div', { class: 'chip-row' });
     const reasonPresets = mode === 'add' ? ADD_MONEY_REASON_PRESETS : getDeductMoneyReasonPresets();
-    reasonPresets.forEach((preset) => {
+    reasonPresets.forEach((presetLabel) => {
       reasonChipRow.appendChild(el('button', {
-        type: 'button', class: `quick-chip reason-chip ${selectedReasonLabel === preset.label ? `selected ${mode}` : ''}`,
-        onclick: () => { selectedReasonLabel = preset.label; reasonText = preset.label; render(); },
-      }, `${preset.icon} ${preset.label}`));
+        type: 'button', class: `quick-chip reason-chip ${selectedReasonLabel === presetLabel ? `selected ${mode}` : ''}`,
+        onclick: () => { selectedReasonLabel = presetLabel; reasonText = presetLabel; render(); },
+      }, presetLabel));
     });
     body.appendChild(reasonChipRow);
 
     const applyAllInput = el('input', { type: 'checkbox', ...(applyToAll ? { checked: 'checked' } : {}) });
     applyAllInput.addEventListener('change', () => { applyToAll = applyAllInput.checked; });
     body.appendChild(el('label', { class: 'toggle-row' }, [
-      el('span', { class: 'toggle-row-label' }, '👥 Apply to every child'),
+      el('span', { class: 'toggle-row-label' }, [svgIcon('people', { size: 16 }), ' Apply to every child']),
       el('span', { class: 'theme-switch' }, [applyAllInput, el('span', { class: 'theme-switch-slider' })]),
     ]));
 
@@ -2926,7 +2973,7 @@ function openAdjustMoneyModal(child) {
       onclick: submit,
     }, busy ? 'Saving…' : `${verb} ${formatCents(previewCents, currency)} ${prep} ${child.displayName || 'child'}`));
     body.appendChild(el('div', { class: 'muted', style: 'text-align:center;margin-top:8px;font-size:0.75rem;' },
-      '✓ Adjustments are recorded in activity'));
+      [svgIcon('check', { size: 12 }), ' Adjustments are recorded in activity']));
 
     wrap.appendChild(body);
     return wrap;
@@ -2974,7 +3021,7 @@ function openAdjustMoneyModal(child) {
     ]));
 
     const body = el('div', { class: 'adjust-modal-body', style: 'text-align:center;' });
-    body.appendChild(el('div', { class: 'adjust-success-icon' }, el('span', { style: 'font-size:2rem;font-weight:800;' }, '✓')));
+    body.appendChild(el('div', { class: 'adjust-success-icon' }, svgIcon('checkCircleWithRing', { size: 40 })));
     body.appendChild(el('div', { style: 'font-weight:800;font-size:1.1rem;' }, 'Great! Adjustment saved'));
     body.appendChild(el('div', { class: 'muted', style: 'margin-bottom:14px;' },
       `${child.displayName || 'Their'}'s balance has been updated`));
@@ -3572,7 +3619,7 @@ function renderSettings() {
   container.innerHTML = '';
 
   const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
-  container.appendChild(renderMoreToggle('☾ Dark mode', currentTheme === 'dark', (checked) => {
+  container.appendChild(renderMoreToggle([svgIcon('moon', { size: 16 }), ' Dark mode'], currentTheme === 'dark', (checked) => {
     const next = checked ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', next);
     try { localStorage.setItem('choresAppTheme', next); } catch (e) {}
