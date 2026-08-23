@@ -31,12 +31,14 @@
     --muted: #334155; --accent: #22b573; --accent2: #1b7a43;
     --border: #e6edf5; --warn: #ea580c; --warn-tint-rgb: 234, 88, 12;
     --success: #15803d; --danger: #b91c1c; --accent2-fill: #1b7a43;
+    --danger-tint: #fdecec;
   }
   :root[data-theme="dark"] {
     --bg: #0f172a; --panel: #1e293b; --panel2: #223a2c; --text: #f1f5f9;
     --muted: #a8b7c9; --accent: #4ade80; --accent2: #34c759;
     --border: #33445c; --warn: #fb923c; --warn-tint-rgb: 251, 146, 60;
     --success: #6ee7a0; --danger: #fca5a5; --accent2-fill: #34c759;
+    --danger-tint: #3a2020;
   }
   * { box-sizing: border-box; }
   body {
@@ -235,6 +237,85 @@
     max-width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
   }
 
+  /* Kids tab -- "Adjust money" entry row + its dedicated Add/Deduct modal. */
+  .entry-row {
+    display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+    background: var(--panel); border: none; border-radius: 12px; padding: 14px 16px;
+    margin-bottom: 8px; cursor: pointer; color: var(--text);
+  }
+  .entry-row-icon {
+    width: 36px; height: 36px; border-radius: 999px; background: var(--panel2); color: var(--accent2);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .entry-row-icon svg { width: 18px; height: 18px; }
+  .entry-row-title { font-weight: 700; }
+  .entry-row-sub { font-size: 0.8rem; color: var(--muted); }
+  .entry-row-chevron { margin-left: auto; color: var(--muted); flex-shrink: 0; }
+
+  .adjust-modal-card {
+    background: var(--bg); width: 100%; max-width: 420px; max-height: 92vh;
+    border-radius: 16px; display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+  }
+  .adjust-modal-header {
+    display: flex; align-items: center; gap: 10px; padding: 16px 18px;
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .adjust-modal-back {
+    width: 32px; height: 32px; border-radius: 999px; border: none; background: var(--panel2);
+    color: var(--text); display: flex; align-items: center; justify-content: center;
+    cursor: pointer; flex-shrink: 0; font-size: 1.1rem; line-height: 1;
+  }
+  .adjust-modal-title { font-weight: 800; font-size: 1.05rem; }
+  .adjust-modal-body { padding: 16px 18px; overflow-y: auto; flex: 1; }
+
+  .mode-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .mode-tab-btn {
+    flex: 1; padding: 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel);
+    color: var(--muted); font-weight: 700; font-size: 0.9rem; cursor: pointer;
+  }
+  .mode-tab-btn.active.add { background: var(--accent2-fill); color: #fff; border-color: var(--accent2-fill); }
+  .mode-tab-btn.active.deduct { background: var(--danger); color: #fff; border-color: var(--danger); }
+
+  .amount-display {
+    display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 16px; margin-bottom: 12px;
+  }
+  .amount-display .currency-sign { font-size: 1.3rem; font-weight: 700; color: var(--muted); }
+  .amount-display input {
+    border: none; background: none; font-size: 1.6rem; font-weight: 800; flex: 1;
+    padding: 0; margin: 0; color: var(--text); min-width: 0;
+  }
+  .amount-display .clear-amount-btn {
+    width: 28px; height: 28px; border-radius: 999px; border: none; background: var(--panel2);
+    color: var(--muted); display: flex; align-items: center; justify-content: center;
+    cursor: pointer; flex-shrink: 0; font-size: 0.9rem;
+  }
+
+  .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .quick-chip {
+    padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel);
+    color: var(--text); font-weight: 700; font-size: 0.85rem; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .quick-chip.selected.add { background: var(--panel2); border-color: var(--accent2-fill); color: var(--accent2); }
+  .quick-chip.selected.deduct { background: var(--danger-tint); border-color: var(--danger); color: var(--danger); }
+  .reason-chip { font-weight: 600; }
+
+  .toggle-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 0; cursor: pointer;
+  }
+  .toggle-row-label { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 600; font-size: 0.9rem; }
+
+  .adjust-success-icon {
+    width: 72px; height: 72px; border-radius: 999px; background: var(--panel2); color: var(--accent2);
+    display: flex; align-items: center; justify-content: center; margin: 8px auto 14px;
+  }
+  .adjust-success-icon svg { width: 36px; height: 36px; }
+  .progress-bar-track { background: var(--panel2); border-radius: 999px; height: 8px; overflow: hidden; margin-top: 8px; }
+  .progress-bar-fill { background: var(--accent2-fill); height: 100%; border-radius: 999px; }
+
   .bell-btn {
     position: relative; display: inline-flex; align-items: center; justify-content: center;
     width: 38px; height: 38px; border-radius: 999px; border: none; background: var(--panel2);
@@ -355,7 +436,7 @@
   <div id="app" hidden>
     <div class="app-header">
       <div>
-        <div class="brand">Family Chores</div>
+        <div class="brand" id="brandName">Family Chores</div>
         <h1 id="pageTitle">Dashboard</h1>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
@@ -595,6 +676,19 @@ function formatCents(cents, currency) {
     return new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'EUR' }).format(value);
   } catch (e) {
     return `${value.toFixed(2)}`;
+  }
+}
+
+// The bare currency symbol alone (e.g. '€'), for UI that shows it as its
+// own element next to a plain typed number rather than via formatCents'
+// combined "€5.00" string.
+function currencySymbol(currency) {
+  try {
+    const parts = new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'EUR' }).formatToParts(0);
+    const part = parts.find((p) => p.type === 'currency');
+    return part ? part.value : (currency || 'EUR');
+  } catch (e) {
+    return currency || 'EUR';
   }
 }
 
@@ -1190,6 +1284,8 @@ onAuthStateChanged(auth, async (user) => {
   clearSubscriptions();
   state.user = user;
   if (!user) {
+    state.member = null;
+    updateBrandName();
     showScreen('signIn');
     return;
   }
@@ -1204,6 +1300,19 @@ onAuthStateChanged(auth, async (user) => {
     showScreen('signIn');
   }
 });
+
+// The header's eyebrow line reads "Family Chores" only until we know who's
+// signed in -- once state.member/state.user resolve, it names the actual
+// person on every screen (not just Dashboard) so a shared device makes it
+// obvious whose view is showing, especially with kids swapping in and out.
+function updateBrandName() {
+  const brandEl = document.getElementById('brandName');
+  if (!brandEl) return;
+  const name = (state.member && state.member.displayName)
+    || (state.user && (state.user.displayName || state.user.email))
+    || 'Family Chores';
+  brandEl.textContent = name;
+}
 
 function updateNavForRole(role) {
   document.getElementById('childNav').hidden = role !== 'child';
@@ -1228,6 +1337,7 @@ async function resolveMembership() {
 
   const memberSnap = await getDoc(doc(db, `families/${familyId}/members/${state.user.uid}`));
   state.member = memberSnap.exists() ? memberSnap.data() : null;
+  updateBrandName();
 
   startFamilySubscriptions();
   updateNavForRole(role);
@@ -1267,6 +1377,7 @@ function startFamilySubscriptions() {
     state.members = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
     const me = state.members.find((m) => m.uid === state.user.uid);
     if (me) state.member = me;
+    updateBrandName();
     renderCurrentTab();
   }));
 
@@ -1564,6 +1675,28 @@ function computePendingPaymentLines(memberUid, member) {
   return { lines, baseLine, extraLines, thisWeekLedger, alreadySettled, awaitingApproval, weekProgress };
 }
 
+// A small colored-circle emoji badge, used to give each money-activity line
+// (in "How this is calculated" and "This week's activity") an at-a-glance
+// positive/negative read before the text is even parsed.
+function relativeDateTimeLabel(date) {
+  if (!date) return '';
+  const now = new Date();
+  const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (date.toDateString() === now.toDateString()) return `Today, ${time}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return `Yesterday, ${time}`;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function moneyLineIcon(emoji, positive) {
+  return el('div', {
+    style: `width:32px;height:32px;border-radius:999px;flex-shrink:0;font-size:0.95rem;`
+      + `background:${positive ? 'var(--panel2)' : 'var(--danger-tint)'};color:${positive ? 'var(--success)' : 'var(--danger)'};`
+      + 'display:flex;align-items:center;justify-content:center;',
+  }, emoji);
+}
+
 function renderDashboard() {
   const container = document.getElementById('page-dashboard');
   container.innerHTML = '';
@@ -1590,47 +1723,56 @@ function renderDashboard() {
   // Base = this week's allowance, whether it's already an actual ledger
   // row (paid) or still a line item (awaiting approval / a live
   // projection) -- exactly one of those is ever nonzero at a time, so
-  // adding them together just picks whichever applies right now. Same
-  // idea for Extras (everything that isn't the base allowance itself:
-  // deductions, extra jobs, streak bonuses, manual adjustments). Extras --
-  // any deduction or bonus an admin logs -- are always real, immediate
-  // ledger rows the moment they're logged (never "pending"), unlike Base's
-  // still-projected portion.
+  // adding them together just picks whichever applies right now. Extras
+  // and Deductions are split into two separate figures (rather than one
+  // net "Extras") so a glance shows both what was earned AND what was
+  // lost, not just the difference -- both are always real, immediate
+  // ledger rows the moment an admin logs them (never "pending"), unlike
+  // Base's still-projected portion.
   const settledBaseCents = thisWeekLedger.filter((tx) => tx.type === 'weekly_payout').reduce((s, tx) => s + tx.amountCents, 0);
   const baseAmountCents = settledBaseCents + (baseLine ? baseLine.cents : 0);
-  const settledExtrasCents = thisWeekLedger.filter((tx) => tx.type !== 'weekly_payout').reduce((s, tx) => s + tx.amountCents, 0);
-  const pendingExtrasCents = extraLines.reduce((s, l) => s + l.cents, 0);
-  const extrasAmountCents = settledExtrasCents + pendingExtrasCents;
-  const totalCents = baseAmountCents + extrasAmountCents;
-  const deductionCount = thisWeekLedger.filter((tx) => tx.type === 'deduction').length;
+  const nonBaseLedger = thisWeekLedger.filter((tx) => tx.type !== 'weekly_payout');
+  const extrasAmountCents = nonBaseLedger.filter((tx) => tx.amountCents > 0).reduce((s, tx) => s + tx.amountCents, 0)
+    + extraLines.reduce((s, l) => s + l.cents, 0);
+  const deductionsAmountCents = nonBaseLedger.filter((tx) => tx.amountCents < 0).reduce((s, tx) => s + tx.amountCents, 0);
+  const totalCents = baseAmountCents + extrasAmountCents + deductionsAmountCents;
+
+  const runningTotalStatus = awaitingApproval ? 'Awaiting approval' : alreadySettled ? 'Settled' : 'Pending';
 
   const balanceCard = el('div', { class: 'booking-card' });
-  balanceCard.appendChild(el('div', { class: 'row' }, [
-    el('div', { class: 'muted' }, 'My Balance'),
-    el('div', { style: 'font-weight:800;' }, formatCents(state.member ? state.member.balanceCents : 0, currency)),
+  balanceCard.appendChild(el('div', { class: 'row', style: 'align-items:center;' }, [
+    el('div', { class: 'muted', style: 'font-weight:700;' }, 'Running total'),
+    el('span', { class: 'status-pill status-done' }, runningTotalStatus),
   ]));
-  balanceCard.appendChild(el('div', { class: 'stat-grid', style: 'margin-top:10px;margin-bottom:0;' }, [
+  balanceCard.appendChild(el('div', { class: 'muted', style: 'margin-top:10px;' }, "This week's money"));
+  balanceCard.appendChild(el('div', { style: 'font-weight:800;font-size:2rem;color:var(--success);' },
+    `${formatCents(totalCents, currency)} ✨`));
+  if (!alreadySettled && !awaitingApproval) {
+    balanceCard.appendChild(el('div', { class: 'muted', style: 'font-size:0.78rem;' }, 'Total can change during the week'));
+  }
+  balanceCard.appendChild(el('div', { class: 'stat-grid', style: 'margin-top:12px;margin-bottom:0;grid-template-columns:repeat(3,1fr);' }, [
     el('div', { class: 'stat-tile' }, [
-      el('div', { class: 'stat-value' }, formatCents(baseAmountCents, currency)),
-      el('div', { class: 'stat-label' }, 'Base'),
-      (!alreadySettled && !awaitingApproval && hasAnyAssignment)
-        ? el('div', { class: 'muted', style: 'font-size:0.7rem;margin-top:2px;' }, `${weekProgress.done}/${weekProgress.total} chores`)
-        : null,
+      el('div', { class: 'stat-value', style: 'font-size:1rem;' }, formatCents(fullBaseCents, currency)),
+      el('div', { class: 'stat-label' }, 'Base allowance'),
     ]),
     el('div', { class: 'stat-tile' }, [
-      el('div', { class: 'stat-value', style: `color:${extrasAmountCents < 0 ? 'var(--danger)' : 'var(--success)'};` },
-        `${extrasAmountCents >= 0 ? '+' : ''}${formatCents(extrasAmountCents, currency)}`),
+      el('div', { class: 'stat-value', style: 'font-size:1rem;color:var(--success);' }, `+${formatCents(extrasAmountCents, currency)}`),
       el('div', { class: 'stat-label' }, 'Extras'),
     ]),
+    el('div', { class: 'stat-tile' }, [
+      el('div', { class: 'stat-value', style: 'font-size:1rem;color:var(--danger);' }, formatCents(deductionsAmountCents, currency)),
+      el('div', { class: 'stat-label' }, 'Deductions'),
+    ]),
   ]));
-  balanceCard.appendChild(el('div', { class: 'muted', style: 'text-align:center;margin-top:6px;' },
-    `This week's total (${formatCents(totalCents, currency)})`));
-  if (awaitingApproval) {
-    balanceCard.appendChild(el('div', { class: 'muted', style: 'text-align:center;margin-top:4px;' },
-      el('span', { class: 'status-pill status-done' }, 'awaiting admin approval')));
-  } else if (stillAchievableCents > 0) {
-    balanceCard.appendChild(el('div', { style: 'text-align:center;margin-top:4px;color:var(--warn);font-weight:600;' },
-      `+${formatCents(stillAchievableCents, currency)} still possible -- ${remainingChoreCount} chore${remainingChoreCount === 1 ? '' : 's'} left this week`));
+  if (stillAchievableCents > 0) {
+    balanceCard.appendChild(el('div', {
+      style: 'display:flex;align-items:center;gap:10px;margin-top:14px;padding:10px 12px;'
+        + 'background:var(--panel2);border-radius:10px;',
+    }, [
+      el('span', { style: 'font-size:1.3rem;' }, '🏆'),
+      el('div', { style: 'font-size:0.85rem;font-weight:600;' },
+        `Keep going -- finish your last ${remainingChoreCount === 1 ? 'chore' : `${remainingChoreCount} chores`} to improve this week's total!`),
+    ]));
   }
   container.appendChild(balanceCard);
 
@@ -1661,25 +1803,23 @@ function renderDashboard() {
     ]),
   ]));
 
-  // Itemized payment list, right below the rings -- every settled entry
-  // this week (from the ledger) plus every still-projected one (pending
-  // allowance, each active streak), so the delta badge above is never an
-  // opaque number: every line here sums to exactly it.
-  const paymentLines = [
+  // Itemized breakdown, right below the rings -- every settled entry this
+  // week (from the ledger) plus every still-projected one (pending
+  // allowance, each active streak), so the running total above is never an
+  // opaque number: every line here sums to exactly it. Collapsed by
+  // default ("How this is calculated") since most days a child just wants
+  // the headline total, not the arithmetic behind it.
+  const calcLines = [
     ...thisWeekLedger.map((tx) => ({ label: tx.note || tx.type.replace(/_/g, ' '), cents: tx.amountCents, pending: false })),
     ...pendingLines,
   ];
-
-  if (paymentLines.length > 0 || stillAchievableCents > 0) {
-    container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:baseline;' }, [
-      el('h2', {}, "This week's payments"),
-      deductionCount > 0 ? el('div', { class: 'muted' }, `${deductionCount} deduction${deductionCount === 1 ? '' : 's'}`) : null,
-    ]));
-    const listCard = el('div', { class: 'booking-card' });
-    paymentLines.forEach((line) => {
+  if (calcLines.length > 0 || stillAchievableCents > 0) {
+    const calcBody = el('div', {});
+    calcLines.forEach((line) => {
       const positive = line.cents >= 0;
-      listCard.appendChild(el('div', { class: `payment-line ${line.pending ? 'pending' : ''}` }, [
-        el('div', { class: 'payment-line-label' }, [
+      calcBody.appendChild(el('div', { class: `payment-line ${line.pending ? 'pending' : ''}`, style: 'display:flex;align-items:center;gap:10px;' }, [
+        moneyLineIcon(positive ? '⭐' : '➖', positive),
+        el('div', { class: 'payment-line-label', style: 'flex:1;' }, [
           el('span', {}, line.label),
           line.pending ? el('span', { class: 'status-pill status-done' }, line.awaitingApproval ? 'awaiting approval' : 'pending') : null,
         ]),
@@ -1687,12 +1827,18 @@ function renderDashboard() {
       ]));
     });
     if (stillAchievableCents > 0) {
-      listCard.appendChild(el('div', { class: 'payment-line' }, [
+      calcBody.appendChild(el('div', { class: 'payment-line' }, [
         el('div', { class: 'muted', style: 'color:var(--warn);' },
           `+${formatCents(stillAchievableCents, currency)} still possible -- ${remainingChoreCount} chore${remainingChoreCount === 1 ? '' : 's'} left`),
       ]));
     }
-    container.appendChild(listCard);
+    calcBody.appendChild(el('div', {
+      class: 'payment-line', style: 'background:var(--panel2);border-radius:8px;padding:8px 10px;font-weight:700;margin-top:6px;',
+    }, [
+      el('div', {}, alreadySettled ? "This week's total" : 'Projected payout if settled now'),
+      el('div', {}, formatCents(totalCents, currency)),
+    ]));
+    container.appendChild(makeExpandable('How this is calculated', calcBody));
   }
 
   ['dailyTask', 'chore'].forEach((cat) => {
@@ -1717,18 +1863,26 @@ function renderDashboard() {
   });
 
   container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
-    el('h2', {}, 'Recent activity'),
-    el('button', { class: 'pill small', onclick: () => switchTab('earnings') }, 'View all'),
+    el('h2', {}, "This week's activity"),
+    el('button', { class: 'pill small', onclick: () => switchTab('earnings') }, 'See all'),
   ]));
   if (state.ledger.length === 0) {
     container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
   } else {
     state.ledger.slice(0, 3).forEach((tx) => {
       const positive = tx.amountCents >= 0;
+      const when = tx.createdAt && typeof tx.createdAt.toDate === 'function' ? relativeDateTimeLabel(tx.createdAt.toDate()) : '';
       container.appendChild(el('div', { class: 'booking-card' }, [
-        el('div', { class: 'row' }, [
-          el('div', {}, tx.note || tx.type),
-          el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+        el('div', { class: 'row', style: 'align-items:center;gap:10px;' }, [
+          moneyLineIcon(positive ? '⭐' : '➖', positive),
+          el('div', { style: 'flex:1;' }, [
+            el('div', { style: 'font-weight:600;' }, tx.note || tx.type.replace(/_/g, ' ')),
+            el('div', { class: 'muted' }, tx.type.replace(/_/g, ' ')),
+          ]),
+          el('div', { style: 'text-align:right;' }, [
+            el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+            when ? el('div', { class: 'muted', style: 'font-size:0.72rem;' }, when) : null,
+          ]),
         ]),
       ]));
     });
@@ -2432,42 +2586,16 @@ function renderKidDetailBody(container, uid) {
     suggestedJobs.forEach((job) => container.appendChild(renderExtraJobCard(job, currency)));
   }
 
-  container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Log a deduction'));
-  const activeDeductions = state.deductionsCatalog.filter((d) => d.active !== false);
-  if (activeDeductions.length === 0) {
-    container.appendChild(el('div', { class: 'empty-state' }, 'No deduction types set up yet -- add some in the Extras tab.'));
-  } else {
-    const dedForm = el('form', { class: 'booking-card' });
-    const itemSelect = el('select', {});
-    activeDeductions.forEach((d) => itemSelect.appendChild(el('option', { value: d.id }, `${d.name} (-${formatCents(d.amountCents, currency)})`)));
-    dedForm.appendChild(itemSelect);
-    const dedApplyAllCb = el('input', { type: 'checkbox' });
-    dedForm.appendChild(el('label', { style: 'display:flex;align-items:center;gap:6px;margin:6px 0;cursor:pointer;' }, [
-      dedApplyAllCb, el('span', {}, 'Apply to every kid'),
-    ]));
-    const dedError = el('p', { class: 'error-text' });
-    dedError.hidden = true;
-    dedForm.appendChild(dedError);
-    dedForm.appendChild(el('button', { class: 'pill danger', type: 'submit' }, 'Log deduction'));
-    dedForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      dedError.hidden = true;
-      const targets = dedApplyAllCb.checked ? activeChildUids() : [uid];
-      const results = await Promise.allSettled(
-        targets.map((t) => callLogDeduction({ memberUid: t, catalogItemId: itemSelect.value }))
-      );
-      const failed = results.filter((r) => r.status === 'rejected');
-      if (failed.length > 0) {
-        dedError.textContent = targets.length === 1
-          ? failed[0].reason.message
-          : `Applied to ${targets.length - failed.length}/${targets.length} kids -- ${failed[0].reason.message}`;
-        dedError.hidden = false;
-      }
-    });
-    container.appendChild(dedForm);
-  }
-
-  container.appendChild(makeExpandable('Add a bonus or custom adjustment', renderAdjustBalanceForm(uid)));
+  container.appendChild(el('button', {
+    type: 'button', class: 'entry-row', onclick: () => openAdjustMoneyModal(child),
+  }, [
+    el('div', { class: 'entry-row-icon' }, '💰'),
+    el('div', {}, [
+      el('div', { class: 'entry-row-title' }, 'Adjust money'),
+      el('div', { class: 'entry-row-sub' }, 'Add money or deduct for a reason'),
+    ]),
+    el('span', { class: 'entry-row-chevron' }, '›'),
+  ]));
 
   container.appendChild(el('h2', { style: 'margin-top:16px;' }, "This week's payout"));
   const payout = state.payouts.find((p) => p.memberUid === uid);
@@ -2559,6 +2687,299 @@ function renderEditableAllowanceCard(child, currency) {
     el('div', { style: 'display:flex;gap:8px;align-items:center;' }, [input, saveBtn]),
     errorEl,
   ]);
+}
+
+const ADD_MONEY_REASON_PRESETS = [
+  { icon: '👍', label: 'Helpful' },
+  { icon: '⭐', label: 'Extra chore' },
+  { icon: '😊', label: 'Great attitude' },
+];
+const DEDUCT_MONEY_FALLBACK_PRESETS = [
+  { icon: '🎒', label: 'Bag in hall' },
+  { icon: '🛏️', label: 'Room not tidied' },
+  { icon: '⏰', label: 'Late for school' },
+];
+// Reuses the admin-curated deductionsCatalog (Extras tab) as quick-pick
+// reason chips when the family has set one up -- only the NAME is reused
+// here, not the catalog's locked amountCents, since this flow always lets
+// the admin pick the amount themselves via the quick-amount chips/typed
+// value. Falls back to a small generic set so the row isn't just empty for
+// a family that hasn't configured a catalog yet.
+function getDeductMoneyReasonPresets() {
+  const active = state.deductionsCatalog.filter((d) => d.active !== false);
+  if (active.length === 0) return DEDUCT_MONEY_FALLBACK_PRESETS;
+  return active.slice(0, 6).map((d) => ({ icon: '💸', label: d.name }));
+}
+
+// A single Add/Deduct flow for one child's balance -- replaces what used to
+// be two separate forms (a catalog-amount-locked "Log a deduction" and a
+// free-amount "Add a bonus or custom adjustment") with one modal that
+// covers both directions through the same existing adjustBalance callable
+// (positive amountCents to add, negative to deduct -- it was already
+// direction-agnostic, so no backend change was needed here). Built as a
+// self-contained overlay appended straight to document.body rather than a
+// tab-page, since it's a transient multi-step flow, not app navigation.
+function openAdjustMoneyModal(child) {
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+  const overlay = el('div', { class: 'modal-overlay' });
+  const cardWrap = el('div', { class: 'adjust-modal-card' });
+  overlay.appendChild(cardWrap);
+  document.body.appendChild(overlay);
+
+  const closeModal = () => overlay.remove();
+  overlay.addEventListener('click', (event) => { if (event.target === overlay) closeModal(); });
+
+  let step = 'form'; // 'form' | 'success'
+  let mode = 'add'; // 'add' | 'deduct'
+  let amountMajor = '';
+  let selectedAmountPreset = null; // one of [1,2,5,10], 'other', or null
+  let reasonText = '';
+  let selectedReasonLabel = null;
+  let applyToAll = false;
+  let busy = false;
+  let errorMsg = '';
+  let lastResult = null;
+  let amountInputRef = null;
+
+  const currentMember = () => state.members.find((m) => m.uid === child.uid) || child;
+
+  function render() {
+    cardWrap.innerHTML = '';
+    cardWrap.appendChild(step === 'success' ? renderSuccessStep() : renderFormStep());
+  }
+
+  function resetForNewAdjustment() {
+    step = 'form'; amountMajor = ''; selectedAmountPreset = null;
+    reasonText = ''; selectedReasonLabel = null; errorMsg = '';
+  }
+
+  function renderFormStep() {
+    const member = currentMember();
+    const wrap = el('div', { style: 'display:flex;flex-direction:column;min-height:0;flex:1;' });
+    wrap.appendChild(el('div', { class: 'adjust-modal-header' }, [
+      el('button', { type: 'button', class: 'adjust-modal-back', onclick: closeModal }, '‹'),
+      el('div', { class: 'adjust-modal-title' }, `Adjust money for ${child.displayName || child.email}`),
+    ]));
+
+    const body = el('div', { class: 'adjust-modal-body' });
+
+    body.appendChild(el('div', { class: 'booking-card' }, [
+      el('div', { class: 'row' }, [
+        el('div', { style: 'display:flex;align-items:center;gap:10px;' }, [
+          el('div', {
+            style: 'width:40px;height:40px;border-radius:999px;background:var(--panel2);color:var(--accent2);'
+              + 'display:flex;align-items:center;justify-content:center;font-weight:800;flex-shrink:0;',
+          }, (child.displayName || child.email || '?').charAt(0).toUpperCase()),
+          el('div', {}, [
+            el('div', { style: 'font-weight:700;' }, child.displayName || child.email),
+            el('div', { class: 'muted' }, `Weekly allowance ${formatCents(member.baseWeeklyAllowanceCents || 0, currency)}`),
+          ]),
+        ]),
+        el('div', { style: 'text-align:right;' }, [
+          el('div', { style: 'font-weight:800;' }, formatCents(member.balanceCents || 0, currency)),
+          el('div', { class: 'muted' }, 'Balance'),
+        ]),
+      ]),
+    ]));
+
+    body.appendChild(el('div', { class: 'mode-tabs' }, [
+      el('button', {
+        type: 'button', class: `mode-tab-btn ${mode === 'add' ? 'active add' : ''}`,
+        onclick: () => { mode = 'add'; selectedAmountPreset = null; amountMajor = ''; selectedReasonLabel = null; reasonText = ''; render(); },
+      }, 'Add Money'),
+      el('button', {
+        type: 'button', class: `mode-tab-btn ${mode === 'deduct' ? 'active deduct' : ''}`,
+        onclick: () => { mode = 'deduct'; selectedAmountPreset = null; amountMajor = ''; selectedReasonLabel = null; reasonText = ''; render(); },
+      }, 'Deduct Money'),
+    ]));
+
+    body.appendChild(el('label', {}, 'Amount'));
+    const amountInput = el('input', { type: 'text', inputmode: 'decimal', placeholder: '0.00', value: amountMajor });
+    amountInputRef = amountInput;
+    // Deliberately no render() call on every keystroke here -- a full
+    // re-render (cardWrap.innerHTML = '') would rebuild this very input and
+    // drop focus after every character typed. Only discrete taps (a chip,
+    // a tab, the toggle) trigger render(); typing just updates the closure
+    // variable that the NEXT render reads from.
+    amountInput.addEventListener('input', () => { amountMajor = amountInput.value; selectedAmountPreset = null; });
+    body.appendChild(el('div', { class: 'amount-display' }, [
+      el('span', { class: 'currency-sign' }, currencySymbol(currency)),
+      amountInput,
+      el('button', {
+        type: 'button', class: 'clear-amount-btn', 'aria-label': 'Clear amount',
+        onclick: () => { amountMajor = ''; selectedAmountPreset = null; render(); },
+      }, '✕'),
+    ]));
+
+    const amountChipRow = el('div', { class: 'chip-row' });
+    [1, 2, 5, 10].forEach((v) => {
+      amountChipRow.appendChild(el('button', {
+        type: 'button', class: `quick-chip ${selectedAmountPreset === v ? `selected ${mode}` : ''}`,
+        onclick: () => { selectedAmountPreset = v; amountMajor = String(v); render(); },
+      }, `${mode === 'add' ? '+' : '-'}${currencySymbol(currency)}${v}`));
+    });
+    amountChipRow.appendChild(el('button', {
+      type: 'button', class: `quick-chip ${selectedAmountPreset === 'other' ? `selected ${mode}` : ''}`,
+      onclick: () => { selectedAmountPreset = 'other'; amountMajor = ''; render(); if (amountInputRef) amountInputRef.focus(); },
+    }, 'Other'));
+    body.appendChild(amountChipRow);
+
+    body.appendChild(el('label', {}, mode === 'deduct' ? 'Reason (required)' : 'Reason (optional)'));
+    const reasonInput = el('input', {
+      type: 'text', value: reasonText,
+      placeholder: mode === 'deduct' ? 'e.g. Bag in hall' : 'e.g. Great attitude today!',
+      style: mode === 'deduct' ? 'border-color:var(--danger);' : '',
+    });
+    reasonInput.addEventListener('input', () => { reasonText = reasonInput.value; selectedReasonLabel = null; });
+    body.appendChild(reasonInput);
+
+    const reasonChipRow = el('div', { class: 'chip-row' });
+    const reasonPresets = mode === 'add' ? ADD_MONEY_REASON_PRESETS : getDeductMoneyReasonPresets();
+    reasonPresets.forEach((preset) => {
+      reasonChipRow.appendChild(el('button', {
+        type: 'button', class: `quick-chip reason-chip ${selectedReasonLabel === preset.label ? `selected ${mode}` : ''}`,
+        onclick: () => { selectedReasonLabel = preset.label; reasonText = preset.label; render(); },
+      }, `${preset.icon} ${preset.label}`));
+    });
+    body.appendChild(reasonChipRow);
+
+    const applyAllInput = el('input', { type: 'checkbox', ...(applyToAll ? { checked: 'checked' } : {}) });
+    applyAllInput.addEventListener('change', () => { applyToAll = applyAllInput.checked; });
+    body.appendChild(el('label', { class: 'toggle-row' }, [
+      el('span', { class: 'toggle-row-label' }, '👥 Apply to every child'),
+      el('span', { class: 'theme-switch' }, [applyAllInput, el('span', { class: 'theme-switch-slider' })]),
+    ]));
+
+    if (errorMsg) {
+      const errEl = el('p', { class: 'error-text' }, errorMsg);
+      body.appendChild(errEl);
+    }
+
+    const previewCents = centsFromMajorUnits(amountMajor || '0');
+    const verb = mode === 'add' ? 'Add' : 'Deduct';
+    const prep = mode === 'add' ? 'to' : 'from';
+    body.appendChild(el('button', {
+      type: 'button', class: 'pill primary', disabled: busy ? 'disabled' : null,
+      style: `width:100%;background:${mode === 'add' ? 'var(--accent2-fill)' : 'var(--danger)'};`,
+      onclick: submit,
+    }, busy ? 'Saving…' : `${verb} ${formatCents(previewCents, currency)} ${prep} ${child.displayName || 'child'}`));
+    body.appendChild(el('div', { class: 'muted', style: 'text-align:center;margin-top:8px;font-size:0.75rem;' },
+      '✓ Adjustments are recorded in activity'));
+
+    wrap.appendChild(body);
+    return wrap;
+  }
+
+  async function submit() {
+    if (busy) return;
+    errorMsg = '';
+    const amountCentsAbs = centsFromMajorUnits(amountMajor || '0');
+    if (amountCentsAbs <= 0) {
+      errorMsg = 'Enter an amount greater than zero.';
+      render();
+      return;
+    }
+    const trimmedReason = reasonText.trim();
+    if (mode === 'deduct' && !trimmedReason) {
+      errorMsg = 'A reason is required for a deduction.';
+      render();
+      return;
+    }
+    busy = true;
+    render();
+    const amountCents = mode === 'add' ? amountCentsAbs : -amountCentsAbs;
+    const note = trimmedReason || 'Bonus';
+    const targets = applyToAll ? activeChildUids() : [child.uid];
+    const results = await Promise.allSettled(targets.map((t) => callAdjustBalance({ memberUid: t, amountCents, note })));
+    const failed = results.filter((r) => r.status === 'rejected');
+    busy = false;
+    if (failed.length === targets.length) {
+      errorMsg = failed[0].reason.message;
+      render();
+      return;
+    }
+    lastResult = { amountCentsAbs, mode, note, targets, failedCount: failed.length };
+    step = 'success';
+    render();
+  }
+
+  function renderSuccessStep() {
+    const member = currentMember();
+    const wrap = el('div', { style: 'display:flex;flex-direction:column;min-height:0;flex:1;' });
+    wrap.appendChild(el('div', { class: 'adjust-modal-header' }, [
+      el('button', { type: 'button', class: 'adjust-modal-back', onclick: closeModal }, '‹'),
+      el('div', { class: 'adjust-modal-title' }, 'Adjustment recorded'),
+    ]));
+
+    const body = el('div', { class: 'adjust-modal-body', style: 'text-align:center;' });
+    body.appendChild(el('div', { class: 'adjust-success-icon' }, el('span', { style: 'font-size:2rem;font-weight:800;' }, '✓')));
+    body.appendChild(el('div', { style: 'font-weight:800;font-size:1.1rem;' }, 'Great! Adjustment saved'));
+    body.appendChild(el('div', { class: 'muted', style: 'margin-bottom:14px;' },
+      `${child.displayName || 'Their'}'s balance has been updated`));
+
+    const weekProgress = computeWeekProgressForMember(child.uid);
+    const weekPct = weekProgress.total === 0 ? 100 : Math.round((weekProgress.done / weekProgress.total) * 100);
+    body.appendChild(el('div', { class: 'booking-card', style: 'text-align:left;' }, [
+      el('div', { class: 'row' }, [
+        el('div', { style: 'font-weight:700;' }, child.displayName || child.email),
+        el('div', { style: 'text-align:right;' }, [
+          el('div', { style: 'font-weight:800;' }, formatCents(member.balanceCents || 0, currency)),
+          el('div', { class: 'muted' }, 'New balance'),
+        ]),
+      ]),
+      el('div', { class: 'muted', style: 'margin-top:6px;' }, `Weekly allowance ${formatCents(member.baseWeeklyAllowanceCents || 0, currency)}`),
+      el('div', { class: 'progress-bar-track' }, el('div', { class: 'progress-bar-fill', style: `width:${weekPct}%;` })),
+    ]));
+
+    if (lastResult) {
+      const positive = lastResult.mode === 'add';
+      const label = lastResult.targets.length > 1
+        ? `${positive ? 'Added' : 'Deducted'} ${formatCents(lastResult.amountCentsAbs, currency)} to every child`
+        : `${positive ? 'Added' : 'Deducted'} ${formatCents(lastResult.amountCentsAbs, currency)}`;
+      body.appendChild(el('div', { class: 'booking-card', style: `text-align:left;border-left-color:${positive ? 'var(--success)' : 'var(--danger)'};` }, [
+        el('div', { class: 'row' }, [
+          el('div', {}, [
+            el('div', { style: 'font-weight:700;' }, label),
+            el('div', { class: 'muted' }, lastResult.note),
+          ]),
+          el('div', { class: 'muted' }, `Today, ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`),
+        ]),
+      ]));
+    }
+
+    body.appendChild(el('button', {
+      type: 'button', class: 'pill', style: 'width:100%;margin-top:6px;',
+      onclick: () => { resetForNewAdjustment(); render(); },
+    }, 'Add another adjustment'));
+
+    const recentAdjustments = state.ledger.filter((tx) => tx.type === 'manual_adjustment').slice(0, 3);
+    if (recentAdjustments.length > 0) {
+      body.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
+        el('h2', { style: 'text-align:left;' }, 'Recent adjustments'),
+        el('button', { type: 'button', class: 'pill small', onclick: closeModal }, 'View all'),
+      ]));
+      recentAdjustments.forEach((tx) => {
+        const positive = tx.amountCents >= 0;
+        const when = tx.createdAt && tx.createdAt.toDate ? tx.createdAt.toDate().toLocaleDateString() : '';
+        body.appendChild(el('div', { class: 'booking-card', style: 'text-align:left;' }, [
+          el('div', { class: 'row' }, [
+            el('div', {}, [
+              el('div', { style: 'font-weight:600;' }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+              el('div', { class: 'muted' }, tx.note || 'Adjustment'),
+            ]),
+            el('div', { class: 'muted' }, when),
+          ]),
+        ]));
+      });
+    }
+
+    body.appendChild(el('button', { type: 'button', class: 'pill primary', style: 'width:100%;margin-top:10px;', onclick: closeModal }, 'Done'));
+
+    wrap.appendChild(body);
+    return wrap;
+  }
+
+  render();
 }
 
 // A plain action row (no disclosure body) in the pitchschedule-style More
@@ -2661,56 +3082,6 @@ function renderAddMemberForm() {
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.hidden = false;
-    }
-  });
-  return form;
-}
-
-// presetMemberUid: when given (Child Detail's bonus/custom-deduction
-// shortcuts), the member picker is skipped and every adjustment applies to
-// that one child -- otherwise (Admin Dashboard's general-purpose version)
-// the admin picks from every family member.
-function renderAdjustBalanceForm(presetMemberUid = null) {
-  const form = el('form', {});
-  const memberSelect = el('select', {});
-  state.members.forEach((m) => memberSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email)));
-  if (presetMemberUid) memberSelect.hidden = true;
-  const amountInput = el('input', { type: 'number', step: '0.01', placeholder: 'Amount, e.g. 5 (negative to deduct, e.g. -5)', required: true });
-  const noteInput = el('input', { type: 'text', placeholder: 'Reason', required: true });
-  form.appendChild(memberSelect);
-  form.appendChild(amountInput);
-  form.appendChild(noteInput);
-  // Only meaningful when scoped to one preset child to begin with -- the
-  // general-purpose (member-picker) mode already lets the admin pick
-  // "everyone" implicitly by not existing anymore as a separate flow.
-  let applyAllCb = null;
-  if (presetMemberUid) {
-    applyAllCb = el('input', { type: 'checkbox' });
-    form.appendChild(el('label', { style: 'display:flex;align-items:center;gap:6px;margin:6px 0;cursor:pointer;' }, [
-      applyAllCb, el('span', {}, 'Apply to every kid'),
-    ]));
-  }
-  const adjustError = el('p', { class: 'error-text' });
-  adjustError.hidden = true;
-  form.appendChild(adjustError);
-  form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Apply adjustment'));
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    adjustError.hidden = true;
-    const targets = (applyAllCb && applyAllCb.checked)
-      ? activeChildUids()
-      : [presetMemberUid || memberSelect.value];
-    const amountCents = centsFromMajorUnits(amountInput.value);
-    const note = noteInput.value.trim();
-    const results = await Promise.allSettled(targets.map((t) => callAdjustBalance({ memberUid: t, amountCents, note })));
-    const failed = results.filter((r) => r.status === 'rejected');
-    if (failed.length > 0) {
-      adjustError.textContent = targets.length === 1
-        ? failed[0].reason.message
-        : `Applied to ${targets.length - failed.length}/${targets.length} kids -- ${failed[0].reason.message}`;
-      adjustError.hidden = false;
-    } else {
-      amountInput.value = ''; noteInput.value = '';
     }
   });
   return form;
