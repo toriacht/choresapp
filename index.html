@@ -823,6 +823,26 @@ const ICONS = {
   star: '<path d="M12 4l2.2 5.3 5.5.5-4.3 3.6 1.4 5.4L12 15.9l-4.8 2.9 1.4-5.4-4.3-3.6 5.5-.5z"/><path d="M12 1v1.3M12 21.7V23M3 12h1.3M19.7 12H21M5.5 5.5l1 1M17.5 17.5l1 1M18.5 5.5l-1 1M6.5 17.5l-1 1"/>',
   // extra-icons.png: "flame"
   flame: '<path d="M12 2c1.6 2.4-.6 3.4-.6 5.7a2.6 2.6 0 005.2 0c0-.8-.4-1.4-.4-1.4 1.7 1.1 2.8 3 2.8 5.2a6.5 6.5 0 01-13 0c0-3.8 2.6-6 4.3-8.2z"/>',
+  // The onboarding wizard's built-in starter chores ship with these 5
+  // emoji as their default `icon` field -- hand-traced outline versions so
+  // the app's own suggested content matches this style guide too (a family
+  // typing their own emoji into an icon-input is a separate, deliberately
+  // untouched case -- see EMOJI_ICON_MAP below).
+  bed: '<path d="M3 18v-5a2 2 0 012-2h14a2 2 0 012 2v5"/><path d="M3 18h18M3 18v2M21 18v2"/><rect x="5" y="9.5" width="6" height="3.5" rx="1.3"/><path d="M13 9.5h6a2 2 0 012 2v1.5h-8v-3.5z"/>',
+  broom: '<path d="M18.5 3l-7 7"/><path d="M9 12l-4.3 4.3a2 2 0 000 2.9 2 2 0 002.9 0L12 15"/><path d="M5.5 19.5L9 16M8 21l3-3"/>',
+  dishwasher: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 8h16"/><circle cx="7.5" cy="5.5" r="0.6"/><circle cx="16" cy="14" r="3"/>',
+  trash: '<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12"/><path d="M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/>',
+  vacuum: '<path d="M12 3v9"/><rect x="8" y="12" width="8" height="7" rx="1.5"/><circle cx="10" cy="21" r="1.3"/><circle cx="14" cy="21" r="1.3"/><path d="M4 11.5l4 1.2"/>',
+};
+
+// Chore/deduction `icon` fields are free-typed emoji a family picks
+// themselves (see icon-input) -- deliberately left alone. The one
+// exception: the onboarding wizard's own 5 starter-chore defaults, which
+// are app content, not family content, so they're worth matching to the
+// style guide. choreLabel() swaps these specific emoji for the outline
+// glyph above; anything else a family typed renders as-is.
+const EMOJI_ICON_MAP = {
+  '🛏️': 'bed', '🧹': 'broom', '🍽️': 'dishwasher', '🗑️': 'trash', '🧼': 'vacuum',
 };
 
 // Builds a real <svg> element from one of the ICONS path strings above --
@@ -1699,7 +1719,12 @@ async function viewProof(path, imgSlot) {
 }
 
 function choreLabel(chore) {
-  return chore.icon ? el('span', {}, [el('span', { class: 'icon-prefix' }, chore.icon), chore.name]) : el('span', {}, chore.name);
+  if (!chore.icon) return el('span', {}, chore.name);
+  const mappedIconKey = EMOJI_ICON_MAP[chore.icon];
+  const iconNode = mappedIconKey
+    ? svgIcon(mappedIconKey, { size: 17, color: 'var(--accent2)' })
+    : chore.icon;
+  return el('span', {}, [el('span', { class: 'icon-prefix' }, iconNode), chore.name]);
 }
 
 // ---------------------------------------------------------------------
