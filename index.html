@@ -1527,7 +1527,6 @@ function computePendingPaymentLines(memberUid, member) {
   const weekId = getIsoWeekId(new Date());
   const thisWeekLedger = state.ledger.filter((tx) => tx.weekId === weekId && tx.memberUid === memberUid);
   const weekProgress = computeWeekProgressForMember(memberUid);
-  const onTrack = weekProgress.total === 0 || weekProgress.done === weekProgress.total;
   const payout = state.payouts.find((p) => p.memberUid === memberUid);
 
   let baseLine = null;
@@ -1547,14 +1546,22 @@ function computePendingPaymentLines(memberUid, member) {
     alreadySettled = true;
   } else {
     // Settlement hasn't run for this week yet -- a live, still-changing
-    // projection of what it WOULD compute right now.
-    const pendingAllowanceCents = onTrack ? (member ? member.baseWeeklyAllowanceCents || 0 : 0) : 0;
-    if (pendingAllowanceCents > 0) baseLine = { label: 'Base allowance', cents: pendingAllowanceCents, pending: true };
+    // projection of what it WOULD compute right now. Prorated by chores
+    // actually done (base * done/total), mirroring settlement.js's own
+    // formula exactly (see ADR-0024) -- not all-or-nothing. A member with
+    // literally nothing assigned this week (total === 0) projects nothing,
+    // matching settlement's own "no assignment, no action" behavior.
+    const pendingAllowanceCents = weekProgress.total > 0
+      ? Math.round((member ? member.baseWeeklyAllowanceCents || 0 : 0) * weekProgress.done / weekProgress.total)
+      : 0;
+    if (pendingAllowanceCents > 0) {
+      baseLine = { label: `Base allowance (${weekProgress.done}/${weekProgress.total} done)`, cents: pendingAllowanceCents, pending: true };
+    }
     extraLines = computePendingStreakBonusLines(memberUid).map((l) => ({ label: l.label, cents: l.cents, pending: true }));
   }
 
   const lines = [...(baseLine ? [baseLine] : []), ...extraLines];
-  return { lines, baseLine, extraLines, thisWeekLedger, onTrack, alreadySettled, awaitingApproval, weekProgress };
+  return { lines, baseLine, extraLines, thisWeekLedger, alreadySettled, awaitingApproval, weekProgress };
 }
 
 function renderDashboard() {
@@ -1564,21 +1571,38 @@ function renderDashboard() {
   const today = new Date();
   const todayDateId = getIsoDateId(today);
 
-  const { lines: pendingLines, baseLine, extraLines, thisWeekLedger, onTrack, alreadySettled, awaitingApproval, weekProgress } =
+  const { lines: pendingLines, baseLine, extraLines, thisWeekLedger, alreadySettled, awaitingApproval, weekProgress } =
     computePendingPaymentLines(state.user.uid, state.member);
+
+  // hasAnyAssignment/fullyDone mirror settlement.js's own gate (ADR-0024):
+  // the base allowance is prorated by done/total, not all-or-nothing, so
+  // "not fully done yet" is no longer a failure state -- it's just a
+  // number that's still growing, plus a visible ceiling for what's still
+  // achievable this week.
+  const hasAnyAssignment = weekProgress.total > 0;
+  const fullyDone = hasAnyAssignment && weekProgress.done === weekProgress.total;
+  const fullBaseCents = state.member ? state.member.baseWeeklyAllowanceCents || 0 : 0;
+  const stillAchievableCents = (!alreadySettled && !awaitingApproval && hasAnyAssignment && !fullyDone)
+    ? Math.max(0, fullBaseCents - (baseLine ? baseLine.cents : 0))
+    : 0;
+  const remainingChoreCount = weekProgress.total - weekProgress.done;
 
   // Base = this week's allowance, whether it's already an actual ledger
   // row (paid) or still a line item (awaiting approval / a live
   // projection) -- exactly one of those is ever nonzero at a time, so
   // adding them together just picks whichever applies right now. Same
   // idea for Extras (everything that isn't the base allowance itself:
-  // deductions, extra jobs, streak bonuses, manual adjustments).
+  // deductions, extra jobs, streak bonuses, manual adjustments). Extras --
+  // any deduction or bonus an admin logs -- are always real, immediate
+  // ledger rows the moment they're logged (never "pending"), unlike Base's
+  // still-projected portion.
   const settledBaseCents = thisWeekLedger.filter((tx) => tx.type === 'weekly_payout').reduce((s, tx) => s + tx.amountCents, 0);
   const baseAmountCents = settledBaseCents + (baseLine ? baseLine.cents : 0);
   const settledExtrasCents = thisWeekLedger.filter((tx) => tx.type !== 'weekly_payout').reduce((s, tx) => s + tx.amountCents, 0);
   const pendingExtrasCents = extraLines.reduce((s, l) => s + l.cents, 0);
   const extrasAmountCents = settledExtrasCents + pendingExtrasCents;
   const totalCents = baseAmountCents + extrasAmountCents;
+  const deductionCount = thisWeekLedger.filter((tx) => tx.type === 'deduction').length;
 
   const balanceCard = el('div', { class: 'booking-card' });
   balanceCard.appendChild(el('div', { class: 'row' }, [
@@ -1589,6 +1613,9 @@ function renderDashboard() {
     el('div', { class: 'stat-tile' }, [
       el('div', { class: 'stat-value' }, formatCents(baseAmountCents, currency)),
       el('div', { class: 'stat-label' }, 'Base'),
+      (!alreadySettled && !awaitingApproval && hasAnyAssignment)
+        ? el('div', { class: 'muted', style: 'font-size:0.7rem;margin-top:2px;' }, `${weekProgress.done}/${weekProgress.total} chores`)
+        : null,
     ]),
     el('div', { class: 'stat-tile' }, [
       el('div', { class: 'stat-value', style: `color:${extrasAmountCents < 0 ? 'var(--danger)' : 'var(--success)'};` },
@@ -1601,9 +1628,9 @@ function renderDashboard() {
   if (awaitingApproval) {
     balanceCard.appendChild(el('div', { class: 'muted', style: 'text-align:center;margin-top:4px;' },
       el('span', { class: 'status-pill status-done' }, 'awaiting admin approval')));
-  } else if (!alreadySettled && !onTrack) {
-    balanceCard.appendChild(el('div', { class: 'muted', style: 'text-align:center;margin-top:4px;' },
-      'Base at risk -- not all chores done yet this week'));
+  } else if (stillAchievableCents > 0) {
+    balanceCard.appendChild(el('div', { style: 'text-align:center;margin-top:4px;color:var(--warn);font-weight:600;' },
+      `+${formatCents(stillAchievableCents, currency)} still possible -- ${remainingChoreCount} chore${remainingChoreCount === 1 ? '' : 's'} left this week`));
   }
   container.appendChild(balanceCard);
 
@@ -1643,8 +1670,11 @@ function renderDashboard() {
     ...pendingLines,
   ];
 
-  if (paymentLines.length > 0 || (!alreadySettled && !awaitingApproval && !onTrack)) {
-    container.appendChild(el('h2', { style: 'margin-top:16px;' }, "This week's payments"));
+  if (paymentLines.length > 0 || stillAchievableCents > 0) {
+    container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:baseline;' }, [
+      el('h2', {}, "This week's payments"),
+      deductionCount > 0 ? el('div', { class: 'muted' }, `${deductionCount} deduction${deductionCount === 1 ? '' : 's'}`) : null,
+    ]));
     const listCard = el('div', { class: 'booking-card' });
     paymentLines.forEach((line) => {
       const positive = line.cents >= 0;
@@ -1656,9 +1686,10 @@ function renderDashboard() {
         el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(line.cents, currency)}`),
       ]));
     });
-    if (!alreadySettled && !awaitingApproval && !onTrack) {
+    if (stillAchievableCents > 0) {
       listCard.appendChild(el('div', { class: 'payment-line' }, [
-        el('div', { class: 'muted' }, 'Base at risk -- not all chores done yet this week'),
+        el('div', { class: 'muted', style: 'color:var(--warn);' },
+          `+${formatCents(stillAchievableCents, currency)} still possible -- ${remainingChoreCount} chore${remainingChoreCount === 1 ? '' : 's'} left`),
       ]));
     }
     container.appendChild(listCard);
@@ -2362,6 +2393,10 @@ function renderKidDetailBody(container, uid) {
   ]));
 
   container.appendChild(renderEditableAllowanceCard(child, currency));
+  container.appendChild(makeExpandable(
+    `+ Add a chore or daily task for ${child.displayName || child.email}`,
+    renderChoreForm({ presetChildUid: uid })
+  ));
 
   const needsReview = state.choreLog.filter((e) => e.status === 'done' && e.memberUid === uid);
   if (needsReview.length > 0) {
@@ -2406,6 +2441,10 @@ function renderKidDetailBody(container, uid) {
     const itemSelect = el('select', {});
     activeDeductions.forEach((d) => itemSelect.appendChild(el('option', { value: d.id }, `${d.name} (-${formatCents(d.amountCents, currency)})`)));
     dedForm.appendChild(itemSelect);
+    const dedApplyAllCb = el('input', { type: 'checkbox' });
+    dedForm.appendChild(el('label', { style: 'display:flex;align-items:center;gap:6px;margin:6px 0;cursor:pointer;' }, [
+      dedApplyAllCb, el('span', {}, 'Apply to every kid'),
+    ]));
     const dedError = el('p', { class: 'error-text' });
     dedError.hidden = true;
     dedForm.appendChild(dedError);
@@ -2413,10 +2452,15 @@ function renderKidDetailBody(container, uid) {
     dedForm.addEventListener('submit', async (event) => {
       event.preventDefault();
       dedError.hidden = true;
-      try {
-        await callLogDeduction({ memberUid: uid, catalogItemId: itemSelect.value });
-      } catch (err) {
-        dedError.textContent = err.message;
+      const targets = dedApplyAllCb.checked ? activeChildUids() : [uid];
+      const results = await Promise.allSettled(
+        targets.map((t) => callLogDeduction({ memberUid: t, catalogItemId: itemSelect.value }))
+      );
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length > 0) {
+        dedError.textContent = targets.length === 1
+          ? failed[0].reason.message
+          : `Applied to ${targets.length - failed.length}/${targets.length} kids -- ${failed[0].reason.message}`;
         dedError.hidden = false;
       }
     });
@@ -2636,17 +2680,38 @@ function renderAdjustBalanceForm(presetMemberUid = null) {
   form.appendChild(memberSelect);
   form.appendChild(amountInput);
   form.appendChild(noteInput);
+  // Only meaningful when scoped to one preset child to begin with -- the
+  // general-purpose (member-picker) mode already lets the admin pick
+  // "everyone" implicitly by not existing anymore as a separate flow.
+  let applyAllCb = null;
+  if (presetMemberUid) {
+    applyAllCb = el('input', { type: 'checkbox' });
+    form.appendChild(el('label', { style: 'display:flex;align-items:center;gap:6px;margin:6px 0;cursor:pointer;' }, [
+      applyAllCb, el('span', {}, 'Apply to every kid'),
+    ]));
+  }
+  const adjustError = el('p', { class: 'error-text' });
+  adjustError.hidden = true;
+  form.appendChild(adjustError);
   form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Apply adjustment'));
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    try {
-      await callAdjustBalance({
-        memberUid: presetMemberUid || memberSelect.value,
-        amountCents: centsFromMajorUnits(amountInput.value),
-        note: noteInput.value.trim(),
-      });
+    adjustError.hidden = true;
+    const targets = (applyAllCb && applyAllCb.checked)
+      ? activeChildUids()
+      : [presetMemberUid || memberSelect.value];
+    const amountCents = centsFromMajorUnits(amountInput.value);
+    const note = noteInput.value.trim();
+    const results = await Promise.allSettled(targets.map((t) => callAdjustBalance({ memberUid: t, amountCents, note })));
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length > 0) {
+      adjustError.textContent = targets.length === 1
+        ? failed[0].reason.message
+        : `Applied to ${targets.length - failed.length}/${targets.length} kids -- ${failed[0].reason.message}`;
+      adjustError.hidden = false;
+    } else {
       amountInput.value = ''; noteInput.value = '';
-    } catch (err) { alert(err.message); }
+    }
   });
   return form;
 }
@@ -2740,7 +2805,12 @@ function renderManageChores() {
   renderActiveChores(container);
 }
 
-function renderActiveChores(container) {
+// Builds the "Add a chore" form -- shared by Manage Chores (no args, pool
+// defaults to every child) and the Kids tab (presetChildUid: defaults the
+// pool to just that one child, with an explicit "apply to every kid too"
+// override, since a chore added from a specific child's panel usually means
+// "for them" but should still be one tap away from "for everyone").
+function renderChoreForm({ presetChildUid = null } = {}) {
   const form = el('form', { class: 'booking-card' });
   const nameInput = el('input', { type: 'text', placeholder: 'Chore name', required: true });
   const iconInput = el('input', { type: 'text', placeholder: '🧹', class: 'icon-input' });
@@ -2760,6 +2830,14 @@ function renderActiveChores(container) {
     el('option', { value: 'daily' }, 'Daily task (every day)'),
     el('option', { value: 'once' }, 'One-off task (this week only)'),
   ]);
+  // One-tap default-setter for the common case (category/frequency/mode are
+  // otherwise three separate abstract choices a parent has to correctly
+  // combine to get a working daily requirement, e.g. "make your bed"). Left
+  // unhidden underneath so an admin who wants something unusual can still
+  // override any one select -- this is a convenience, not a parallel code
+  // path or a new field.
+  const dailyRequirementCb = el('input', { type: 'checkbox' });
+
   // Only meaningful for a daily task everyone does independently (eachMember)
   // -- a streak is inherently personal consistency, so it's hidden/ignored
   // otherwise (see settlement.js's identical scoping).
@@ -2770,22 +2848,43 @@ function renderActiveChores(container) {
   frequencySelect.addEventListener('change', updateStreakBonusVisibility);
 
   const poolWrap = el('div', {});
+  let applyToAllCb = null;
   function renderAssigneeControl() {
     poolWrap.innerHTML = '';
     const children = state.members.filter((m) => m.role === 'child');
     if (modeSelect.value === 'fixed') {
       const select = el('select', { id: 'assigneeSingle' });
-      children.forEach((m) => select.appendChild(el('option', { value: m.uid }, m.displayName || m.email)));
+      children.forEach((m) => select.appendChild(
+        el('option', { value: m.uid, ...(presetChildUid === m.uid ? { selected: 'selected' } : {}) }, m.displayName || m.email)
+      ));
       poolWrap.appendChild(select);
     } else {
       poolWrap.appendChild(el('label', {}, 'Who\'s included'));
+      const applyToAll = !presetChildUid || (applyToAllCb && applyToAllCb.checked);
       children.forEach((m) => {
-        const cb = el('input', { type: 'checkbox', value: m.uid, checked: 'checked', style: 'width:auto;display:inline-block;margin-right:6px;' });
+        const shouldCheck = applyToAll || m.uid === presetChildUid;
+        const cb = el('input', { type: 'checkbox', value: m.uid, ...(shouldCheck ? { checked: 'checked' } : {}), style: 'width:auto;display:inline-block;margin-right:6px;' });
         poolWrap.appendChild(el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:4px;' }, [cb, m.displayName || m.email]));
       });
     }
   }
   modeSelect.addEventListener('change', () => { renderAssigneeControl(); updateStreakBonusVisibility(); });
+
+  dailyRequirementCb.addEventListener('change', () => {
+    if (dailyRequirementCb.checked) {
+      categorySelect.value = 'dailyTask';
+      frequencySelect.value = 'daily';
+      modeSelect.value = 'eachMember';
+    }
+    renderAssigneeControl();
+    updateStreakBonusVisibility();
+  });
+
+  if (presetChildUid) {
+    applyToAllCb = el('input', { type: 'checkbox' });
+    applyToAllCb.addEventListener('change', renderAssigneeControl);
+  }
+
   renderAssigneeControl();
   updateStreakBonusVisibility();
 
@@ -2808,11 +2907,20 @@ function renderActiveChores(container) {
   }
   form.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:flex-start;' }, [iconInput, nameInput]));
   form.appendChild(descInput);
+  const dailyRequirementRow = el('label', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:10px;cursor:pointer;' }, [
+    dailyRequirementCb, el('span', {}, 'This is a daily requirement (e.g. make your bed)'),
+  ]);
+  form.appendChild(dailyRequirementRow);
   form.appendChild(el('label', {}, 'Category'));
   form.appendChild(categorySelect);
   form.appendChild(el('label', {}, 'Who does it'));
   form.appendChild(modeSelect);
   form.appendChild(poolWrap);
+  if (applyToAllCb) {
+    form.appendChild(el('label', { style: 'display:flex;align-items:center;gap:6px;margin:-2px 0 10px;cursor:pointer;' }, [
+      applyToAllCb, el('span', {}, 'Apply to every kid too'),
+    ]));
+  }
   form.appendChild(el('label', {}, 'Frequency'));
   form.appendChild(frequencySelect);
   form.appendChild(streakBonusInput);
@@ -2855,9 +2963,16 @@ function renderActiveChores(container) {
       updatedAt: serverTimestamp(),
     });
     nameInput.value = ''; iconInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly'; streakBonusInput.value = '';
+    categorySelect.value = 'chore'; modeSelect.value = 'fixed'; dailyRequirementCb.checked = false;
+    if (applyToAllCb) applyToAllCb.checked = false;
+    renderAssigneeControl();
     updateStreakBonusVisibility();
   });
-  container.appendChild(form);
+  return form;
+}
+
+function renderActiveChores(container) {
+  container.appendChild(renderChoreForm());
 
   const needsReview = state.choreLog.filter((e) => e.status === 'done');
   if (needsReview.length > 0) {
