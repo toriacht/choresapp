@@ -253,6 +253,22 @@
   .entry-row-sub { font-size: 0.8rem; color: var(--muted); }
   .entry-row-chevron { margin-left: auto; color: var(--muted); flex-shrink: 0; }
 
+  /* Admin Dashboard -- 2-column icon quick-action grid. */
+  .quick-action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+  .quick-action-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 8px;
+    background: var(--panel); border: none; border-radius: 12px; cursor: pointer; color: var(--text);
+    font-weight: 700; font-size: 0.85rem;
+  }
+  .quick-action-icon {
+    width: 38px; height: 38px; border-radius: 999px; background: var(--panel2); color: var(--accent2);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .avatar-circle {
+    width: 40px; height: 40px; border-radius: 999px; background: var(--panel2); color: var(--accent2);
+    display: flex; align-items: center; justify-content: center; font-weight: 800; flex-shrink: 0;
+  }
+
   .adjust-modal-card {
     background: var(--bg); width: 100%; max-width: 420px; max-height: 92vh;
     border-radius: 16px; display: flex; flex-direction: column; overflow: hidden;
@@ -515,7 +531,7 @@
         <span>Dashboard</span>
       </button>
       <button type="button" class="nav-btn" data-tab="chores">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1h11"/></svg>
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.5 3l-7 7"/><path d="M9 12l-4.3 4.3a2 2 0 000 2.9 2 2 0 002.9 0L12 15"/><path d="M5.5 19.5L9 16M8 21l3-3"/></svg>
         <span>Chores</span>
       </button>
       <button type="button" class="nav-btn" data-tab="extras">
@@ -542,7 +558,7 @@
         <span>Kids</span>
       </button>
       <button type="button" class="nav-btn" data-tab="managechores">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1h11"/></svg>
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.5 3l-7 7"/><path d="M9 12l-4.3 4.3a2 2 0 000 2.9 2 2 0 002.9 0L12 15"/><path d="M5.5 19.5L9 16M8 21l3-3"/></svg>
         <span>Chores</span>
       </button>
       <button type="button" class="nav-btn" data-tab="allactivity">
@@ -2586,9 +2602,14 @@ function renderAdminDashboard() {
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
 
   container.appendChild(el('div', { class: 'booking-card' }, [
-    el('div', { class: 'muted' }, 'Family overview'),
-    el('div', { style: 'font-weight:700;' }, (state.family && state.family.name) || 'Your family'),
-    el('div', { class: 'muted' }, `${state.members.length} members`),
+    el('div', { class: 'row', style: 'align-items:center;' }, [
+      el('div', {}, [
+        el('div', { class: 'muted' }, 'Family overview'),
+        el('div', { style: 'font-weight:700;' }, (state.family && state.family.name) || 'Your family'),
+        el('div', { class: 'muted' }, `${state.members.length} members`),
+      ]),
+      el('div', { class: 'entry-row-icon' }, svgIcon('people', { size: 20 })),
+    ]),
   ]));
 
   const totalInCirculation = state.members.reduce((sum, m) => sum + (m.balanceCents || 0), 0);
@@ -2638,10 +2659,13 @@ function renderAdminDashboard() {
     const attentionCount = computeChildAttentionCount(child.uid);
     container.appendChild(el('div', { class: 'booking-card', style: 'cursor:pointer;', onclick: () => openKid(child.uid) }, [
       el('div', { class: 'row' }, [
-        el('div', {}, [
-          el('div', { style: 'font-weight:700;' }, child.displayName || child.email),
-          el('div', { class: 'muted' }, `${formatCents(child.balanceCents || 0, currency)} · ${progress.done}/${progress.total} done this week`),
-          attentionCount > 0 ? el('span', { class: 'status-pill status-done', style: 'margin-top:6px;display:inline-block;' }, `${attentionCount} to review`) : null,
+        el('div', { style: 'display:flex;align-items:center;gap:10px;' }, [
+          el('div', { class: 'avatar-circle' }, (child.displayName || child.email || '?').charAt(0).toUpperCase()),
+          el('div', {}, [
+            el('div', { style: 'font-weight:700;' }, child.displayName || child.email),
+            el('div', { class: 'muted' }, `${formatCents(child.balanceCents || 0, currency)} · ${progress.done}/${progress.total} done this week`),
+            attentionCount > 0 ? el('span', { class: 'status-pill status-done', style: 'margin-top:6px;display:inline-block;' }, `${attentionCount} to review`) : null,
+          ]),
         ]),
         renderProgressRing({
           approvedCount: progress.done, pendingCount: progress.pendingCount, total: progress.total,
@@ -2653,9 +2677,18 @@ function renderAdminDashboard() {
 
   container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Quick actions'));
 
-  container.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-bottom:8px;', onclick: () => switchTab('kids') }, 'Manage kids'));
-  container.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-bottom:8px;', onclick: () => switchTab('managechores') }, 'Manage chores'));
-  container.appendChild(el('button', { class: 'pill', style: 'width:100%;', onclick: () => switchTab('allactivity') }, 'View all activity'));
+  function quickActionBtn(iconKey, label, onclick) {
+    return el('button', { type: 'button', class: 'quick-action-btn', onclick }, [
+      el('div', { class: 'quick-action-icon' }, iconKey ? svgIcon(iconKey, { size: 18 }) : ''),
+      el('span', {}, label),
+    ]);
+  }
+  container.appendChild(el('div', { class: 'quick-action-grid' }, [
+    quickActionBtn('people', 'Manage kids', () => switchTab('kids')),
+    quickActionBtn('broom', 'Manage chores', () => switchTab('managechores')),
+    quickActionBtn(null, 'View activity', () => switchTab('allactivity')),
+    quickActionBtn('dollarCircle', 'Adjust money', () => switchTab('kids')),
+  ]));
 }
 
 // Sum of things awaiting an admin's action for one child: chores marked
@@ -3671,13 +3704,18 @@ function renderAllActivity() {
 
   state.ledger.forEach((tx) => {
     const positive = tx.amountCents >= 0;
+    const when = tx.createdAt && typeof tx.createdAt.toDate === 'function' ? relativeDateTimeLabel(tx.createdAt.toDate()) : '';
     container.appendChild(el('div', { class: 'booking-card' }, [
-      el('div', { class: 'row' }, [
-        el('div', {}, [
-          el('div', {}, tx.note || tx.type),
+      el('div', { class: 'row', style: 'align-items:center;gap:10px;' }, [
+        moneyLineIcon(positive),
+        el('div', { style: 'flex:1;' }, [
+          el('div', { style: 'font-weight:600;' }, tx.note || tx.type.replace(/_/g, ' ')),
           el('div', { class: 'muted' }, tx.type.replace(/_/g, ' ')),
         ]),
-        el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+        el('div', { style: 'text-align:right;' }, [
+          el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+          when ? el('div', { class: 'muted', style: 'font-size:0.72rem;' }, when) : null,
+        ]),
       ]),
     ]));
   });
@@ -3719,6 +3757,7 @@ function renderSettings() {
   container.appendChild(settingsForm);
 
   renderNotificationSettingsButton(container);
+  container.appendChild(makeExpandable('Invite family member', renderAddMemberForm()));
   container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; renderWizardStep(); }));
 
   container.appendChild(el('button', { class: 'signout-row', onclick: () => signOut(auth) }, 'Sign out'));
