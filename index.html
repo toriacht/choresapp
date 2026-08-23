@@ -93,7 +93,7 @@
     width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--panel); color: var(--text); font-size: 0.9rem; margin-bottom: 8px;
   }
-  input.icon-input { width: 64px; text-align: center; flex: none; }
+  select.icon-input { width: 112px; flex: none; }
   label { font-size: 0.78rem; font-weight: 600; color: var(--muted); display: block; margin-bottom: 4px; }
   .field { margin-bottom: 10px; }
   form .pill.primary { margin-top: 4px; }
@@ -835,15 +835,45 @@ const ICONS = {
   vacuum: '<path d="M12 3v9"/><rect x="8" y="12" width="8" height="7" rx="1.5"/><circle cx="10" cy="21" r="1.3"/><circle cx="14" cy="21" r="1.3"/><path d="M4 11.5l4 1.2"/>',
 };
 
-// Chore/deduction `icon` fields are free-typed emoji a family picks
-// themselves (see icon-input) -- deliberately left alone. The one
-// exception: the onboarding wizard's own 5 starter-chore defaults, which
-// are app content, not family content, so they're worth matching to the
-// style guide. choreLabel() swaps these specific emoji for the outline
-// glyph above; anything else a family typed renders as-is.
+// Read-only translation for pre-ADR-0025 data: the onboarding wizard's 5
+// legacy emoji defaults (and any family data written before icon-input was
+// removed) still render as their outline equivalent via choreLabel(), but
+// nothing is ever WRITTEN as a raw emoji anymore -- see renderIconPicker.
 const EMOJI_ICON_MAP = {
   '🛏️': 'bed', '🧹': 'broom', '🍽️': 'dishwasher', '🗑️': 'trash', '🧼': 'vacuum',
 };
+
+// ADR-0025: no free-text/emoji icon entry anywhere in the app -- every
+// icon field is set by picking from this closed list (the current ICONS
+// set), never typed. "No icon" is always a valid, first-listed choice.
+// When a chore concept has no matching glyph yet, that's a request for a
+// new icon from the app owner, not a prompt for the user to supply one.
+const CHORE_ICON_CHOICES = [
+  { key: '', label: 'No icon' },
+  { key: 'bed', label: 'Bed' },
+  { key: 'broom', label: 'Broom' },
+  { key: 'dishwasher', label: 'Dishwasher' },
+  { key: 'trash', label: 'Trash' },
+  { key: 'vacuum', label: 'Vacuum' },
+];
+function renderIconPicker(currentValue = '') {
+  const select = el('select', { class: 'icon-input' });
+  CHORE_ICON_CHOICES.forEach((c) => {
+    select.appendChild(el('option', { value: c.key, ...(currentValue === c.key ? { selected: 'selected' } : {}) }, c.label));
+  });
+  return select;
+}
+
+// Coerces whatever a chore/template's stored `icon` field actually holds
+// (a valid picker key going forward; a legacy emoji from before ADR-0025
+// for older data) into a value renderIconPicker's <select> can actually
+// select -- unrecognized values (a family's old free-typed emoji) fall
+// back to "No icon" rather than leaving the picker on a phantom option.
+function resolveIconPickerValue(rawIcon) {
+  if (!rawIcon) return '';
+  if (CHORE_ICON_CHOICES.some((c) => c.key === rawIcon)) return rawIcon;
+  return EMOJI_ICON_MAP[rawIcon] || '';
+}
 
 // Builds a real <svg> element from one of the ICONS path strings above --
 // use anywhere el()'s children accept a Node (icon circles, buttons, etc).
@@ -1720,10 +1750,12 @@ async function viewProof(path, imgSlot) {
 
 function choreLabel(chore) {
   if (!chore.icon) return el('span', {}, chore.name);
-  const mappedIconKey = EMOJI_ICON_MAP[chore.icon];
-  const iconNode = mappedIconKey
-    ? svgIcon(mappedIconKey, { size: 17, color: 'var(--accent2)' })
-    : chore.icon;
+  // Post-ADR-0025 data stores a real ICONS key (e.g. 'bed') directly;
+  // pre-ADR-0025 data may still hold one of the wizard's 5 legacy emoji
+  // defaults (EMOJI_ICON_MAP) or, rarer, a family's old free-typed emoji,
+  // which has no icon-system equivalent and just renders as-is.
+  const iconKey = ICONS[chore.icon] ? chore.icon : EMOJI_ICON_MAP[chore.icon];
+  const iconNode = iconKey ? svgIcon(iconKey, { size: 17, color: 'var(--accent2)' }) : chore.icon;
   return el('span', {}, [el('span', { class: 'icon-prefix' }, iconNode), chore.name]);
 }
 
@@ -2303,7 +2335,7 @@ function renderExtras() {
 
   if (state.role === 'admin') {
     const catalogForm = el('form', { class: 'booking-card' });
-    const catIconInput = el('input', { type: 'text', placeholder: '🚗', class: 'icon-input' });
+    const catIconInput = renderIconPicker();
     const catNameInput = el('input', { type: 'text', placeholder: 'Job name', required: true });
     const catDescInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
     const catAmountInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Amount (e.g. 5.00)', required: true });
@@ -2345,7 +2377,7 @@ function renderExtras() {
     // "Not to do" deduction catalog -- same preset-amount-quick-pick shape
     // as the extra-jobs catalog above, just the negative counterpart.
     const deductionCatalogForm = el('form', { class: 'booking-card' });
-    const dedIconInput = el('input', { type: 'text', placeholder: '👢', class: 'icon-input' });
+    const dedIconInput = renderIconPicker();
     const dedNameInput = el('input', { type: 'text', placeholder: 'e.g. Boots left in the hall', required: true });
     const dedAmountInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Deduction amount (e.g. 1.00)', required: true });
     deductionCatalogForm.appendChild(el('label', {}, 'Add a "not to do" (deduction)'));
@@ -3333,7 +3365,7 @@ function renderManageChores() {
 function renderChoreForm({ presetChildUid = null } = {}) {
   const form = el('form', { class: 'booking-card' });
   const nameInput = el('input', { type: 'text', placeholder: 'Chore name', required: true });
-  const iconInput = el('input', { type: 'text', placeholder: '🧹', class: 'icon-input' });
+  const iconInput = renderIconPicker();
   const descInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
   const categorySelect = el('select', {}, [
     el('option', { value: 'chore' }, 'Chore'),
@@ -3420,7 +3452,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       if (t) {
         nameInput.value = t.name;
         descInput.value = t.description || '';
-        iconInput.value = t.icon || '';
+        iconInput.value = resolveIconPickerValue(t.icon);
       }
     });
     form.appendChild(templateSelect);
@@ -3580,7 +3612,7 @@ function renderActiveChores(container) {
 
 function renderChoreLibrary(container) {
   const form = el('form', { class: 'booking-card' });
-  const iconInput = el('input', { type: 'text', placeholder: '🧹', class: 'icon-input' });
+  const iconInput = renderIconPicker();
   const nameInput = el('input', { type: 'text', placeholder: 'Template name (e.g. "Clean your room")', required: true });
   const descInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
   form.appendChild(el('label', {}, 'Add a quick-pick template'));
@@ -3696,11 +3728,11 @@ function renderSettings() {
 // Onboarding wizard (admin, first-run or re-entered from Settings)
 // ---------------------------------------------------------------------
 const STARTER_TEMPLATES = [
-  { name: 'Make your bed', icon: '🛏️', description: '', category: 'dailyTask', assignmentMode: 'eachMember', frequency: 'daily', checked: true },
-  { name: 'Tidy your room', icon: '🧹', description: '', category: 'dailyTask', assignmentMode: 'eachMember', frequency: 'daily', checked: true },
-  { name: 'Empty/fill the dishwasher', icon: '🍽️', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true },
-  { name: 'Take out the trash', icon: '🗑️', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true },
-  { name: 'Vacuum the living room', icon: '🧼', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true },
+  { name: 'Make your bed', icon: 'bed', description: '', category: 'dailyTask', assignmentMode: 'eachMember', frequency: 'daily', checked: true },
+  { name: 'Tidy your room', icon: 'broom', description: '', category: 'dailyTask', assignmentMode: 'eachMember', frequency: 'daily', checked: true },
+  { name: 'Empty/fill the dishwasher', icon: 'dishwasher', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true },
+  { name: 'Take out the trash', icon: 'trash', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true },
+  { name: 'Vacuum the living room', icon: 'vacuum', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true },
 ];
 let wizardStep = 0;
 let wizardItems = STARTER_TEMPLATES.map((t) => ({ ...t }));
@@ -3806,9 +3838,9 @@ function renderWizardStep() {
       const row = el('div', { style: 'display:flex;gap:6px;align-items:center;margin-bottom:6px;' });
       const cb = el('input', { type: 'checkbox', style: 'width:auto;', ...(item.checked ? { checked: 'checked' } : {}) });
       cb.addEventListener('change', () => { item.checked = cb.checked; });
-      const iconInput = el('input', { type: 'text', class: 'icon-input', style: 'margin-bottom:0;' });
-      iconInput.value = item.icon;
-      iconInput.addEventListener('input', () => { item.icon = iconInput.value; });
+      const iconInput = renderIconPicker(resolveIconPickerValue(item.icon));
+      iconInput.style.marginBottom = '0';
+      iconInput.addEventListener('change', () => { item.icon = iconInput.value; });
       const nameInput = el('input', { type: 'text', style: 'margin-bottom:0;' });
       nameInput.value = item.name;
       nameInput.addEventListener('input', () => { item.name = nameInput.value; });
