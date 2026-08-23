@@ -157,6 +157,7 @@
   .center-screen button.pill { font-size: 1rem; padding: 15px 20px; }
   .center-screen button.pill.small { font-size: 0.85rem; padding: 8px 14px; }
   .center-screen .sub-tab-btn { font-size: 0.95rem; padding: 12px 8px; }
+  .center-screen .mode-tab-btn { font-size: 0.82rem; padding: 12px 4px; white-space: nowrap; }
   .error-text { color: var(--danger); font-size: 0.9rem; margin-top: 6px; }
   [hidden] { display: none !important; }
 
@@ -277,6 +278,25 @@
   .mode-tab-btn.active.add { background: var(--accent2-fill); color: #fff; border-color: var(--accent2-fill); }
   .mode-tab-btn.active.deduct { background: var(--danger); color: #fff; border-color: var(--danger); }
 
+  /* Sign-in screen */
+  .wordmark { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.01em; color: var(--text); }
+  .wordmark-accent { color: var(--accent2); }
+  .google-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; }
+  .google-g-badge {
+    width: 22px; height: 22px; border-radius: 999px; background: #fff; color: #4285F4;
+    display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 0.85rem; flex-shrink: 0;
+  }
+  .signin-trust-caption {
+    display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.82rem;
+    max-width: 280px; text-align: left; margin: 10px 0 0;
+  }
+  .link-btn { background: none; border: none; color: var(--accent2); font-weight: 700; cursor: pointer; padding: 0; font-size: inherit; }
+  .trust-divider {
+    width: 100%; max-width: 280px; text-align: center; color: var(--muted); font-size: 0.72rem;
+    text-transform: uppercase; letter-spacing: 0.04em; border-top: 1px solid var(--border);
+    padding-top: 14px; margin-top: 8px;
+  }
+
   .amount-display {
     display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border);
     border-radius: 12px; padding: 12px 16px; margin-bottom: 12px;
@@ -345,17 +365,21 @@
   </div>
 
   <div id="signInScreen" class="center-screen" hidden>
-    <img src="icon-512.png" alt="" width="72" height="72" style="border-radius:16px;" />
-    <h1>Family Chores</h1>
+    <img src="icon-512.png" alt="" width="88" height="88" style="border-radius:20px;" />
+    <div class="wordmark">Chores<span class="wordmark-accent">App</span></div>
+    <h1 style="margin:0;">Family Chores</h1>
     <p>Track chores, allowances, and extra jobs together.</p>
 
-    <div class="sub-tabs" style="width:100%;max-width:280px;">
-      <button type="button" class="sub-tab-btn active" id="signInModeParentBtn">Parent sign-in</button>
-      <button type="button" class="sub-tab-btn" id="signInModeKidBtn">Kid sign-in</button>
+    <div class="mode-tabs" style="width:100%;max-width:280px;margin-bottom:0;">
+      <button type="button" class="mode-tab-btn active add" id="signInModeParentBtn">👤 Parent sign-in</button>
+      <button type="button" class="mode-tab-btn" id="signInModeKidBtn">👤 Kid sign-in</button>
     </div>
 
-    <div id="parentSignIn">
-      <button class="pill primary" id="signInBtn">Sign in with Google</button>
+    <div id="parentSignIn" style="width:100%;max-width:280px;">
+      <button class="pill primary google-btn" id="signInBtn">
+        <span class="google-g-badge">G</span> Sign in with Google
+      </button>
+      <p class="signin-trust-caption">🛡️ Parents manage chores, allowances and approvals.</p>
     </div>
 
     <form id="kidSignInForm" hidden style="width:100%;max-width:280px;text-align:left;">
@@ -372,8 +396,32 @@
       </div>
       <button class="pill primary" type="submit" style="width:100%;">Sign in</button>
     </form>
+    <div id="kidSignInHelp" hidden style="width:100%;max-width:280px;">
+      <button type="button" class="pill" id="kidInviteHelpBtn" style="width:100%;">👥 Ask your parent to invite you</button>
+      <p class="signin-trust-caption" style="justify-content:center;margin-top:12px;">
+        <button type="button" id="kidNeedHelpBtn" class="link-btn">❓ Need help signing in?</button>
+      </p>
+    </div>
 
     <p class="error-text" id="signInError" hidden></p>
+
+    <div class="trust-divider">Why families trust ChoresApp</div>
+    <div class="entry-row" style="max-width:280px;cursor:default;">
+      <div class="entry-row-icon">🔒</div>
+      <div>
+        <div class="entry-row-title">Private family data</div>
+        <div class="entry-row-sub">Your data stays within your family.</div>
+      </div>
+      <span class="entry-row-chevron">›</span>
+    </div>
+    <div class="entry-row" style="max-width:280px;cursor:default;">
+      <div class="entry-row-icon">📱</div>
+      <div>
+        <div class="entry-row-title">Works on phone or desktop</div>
+        <div class="entry-row-sub">Use ChoresApp anywhere, anytime.</div>
+      </div>
+      <span class="entry-row-chevron">›</span>
+    </div>
   </div>
 
   <div id="setupScreen" class="center-screen" hidden>
@@ -990,16 +1038,24 @@ function showScreen(name) {
 }
 
 document.getElementById('signInModeParentBtn').addEventListener('click', () => {
-  document.getElementById('signInModeParentBtn').classList.add('active');
-  document.getElementById('signInModeKidBtn').classList.remove('active');
+  document.getElementById('signInModeParentBtn').classList.add('active', 'add');
+  document.getElementById('signInModeKidBtn').classList.remove('active', 'add');
   document.getElementById('parentSignIn').hidden = false;
   document.getElementById('kidSignInForm').hidden = true;
+  document.getElementById('kidSignInHelp').hidden = true;
 });
 document.getElementById('signInModeKidBtn').addEventListener('click', () => {
-  document.getElementById('signInModeKidBtn').classList.add('active');
-  document.getElementById('signInModeParentBtn').classList.remove('active');
+  document.getElementById('signInModeKidBtn').classList.add('active', 'add');
+  document.getElementById('signInModeParentBtn').classList.remove('active', 'add');
   document.getElementById('parentSignIn').hidden = true;
   document.getElementById('kidSignInForm').hidden = false;
+  document.getElementById('kidSignInHelp').hidden = false;
+});
+document.getElementById('kidInviteHelpBtn').addEventListener('click', () => {
+  alert("Kid accounts are set up by a parent, not self-signup -- ask a parent to add you from their Kids tab (Admin Dashboard → Kids → + Add another child).");
+});
+document.getElementById('kidNeedHelpBtn').addEventListener('click', () => {
+  alert("Ask your parent for the username and password they set up for you. They can also change your password for you from their Kids tab if you've forgotten it.");
 });
 
 document.getElementById('toggleKidPasswordBtn').addEventListener('click', () => {
