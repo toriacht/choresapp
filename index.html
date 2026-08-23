@@ -381,7 +381,7 @@
       <button class="pill primary google-btn" id="signInBtn">
         <span class="google-g-badge">G</span> Sign in with Google
       </button>
-      <p class="signin-trust-caption">🛡️ Parents manage chores, allowances and approvals.</p>
+      <p class="signin-trust-caption"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 2.6v5.4c0 4.4-3 7.7-7 9-4-1.3-7-4.6-7-9V5.6z"/><path d="M8.7 12l2.1 2.1L15.3 10"/></svg> Parents manage chores, allowances and approvals.</p>
     </div>
 
     <form id="kidSignInForm" hidden style="width:100%;max-width:280px;text-align:left;">
@@ -409,7 +409,7 @@
 
     <div class="trust-divider">Why families trust ChoresApp</div>
     <div class="entry-row" style="max-width:280px;cursor:default;">
-      <div class="entry-row-icon">🔒</div>
+      <div class="entry-row-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;"><path d="M12 3l7 2.6v5.4c0 4.4-3 7.7-7 9-4-1.3-7-4.6-7-9V5.6z"/><path d="M8.7 12l2.1 2.1L15.3 10"/></svg></div>
       <div>
         <div class="entry-row-title">Private family data</div>
         <div class="entry-row-sub">Your data stays within your family.</div>
@@ -417,7 +417,7 @@
       <span class="entry-row-chevron">›</span>
     </div>
     <div class="entry-row" style="max-width:280px;cursor:default;">
-      <div class="entry-row-icon">📱</div>
+      <div class="entry-row-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;"><rect x="6.5" y="2.5" width="11" height="19" rx="2"/><path d="M11 18h2"/></svg></div>
       <div>
         <div class="entry-row-title">Works on phone or desktop</div>
         <div class="entry-row-sub">Use ChoresApp anywhere, anytime.</div>
@@ -811,6 +811,18 @@ const ICONS = {
   minus: '<path d="M6 12h12"/>',
   // Set A: "Earnings" ($ in a circle, no badge)
   dollarCircle: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v9"/><path d="M14.3 9.6c0-.9-1-1.6-2.3-1.6s-2.3.7-2.3 1.6.8 1.3 2.3 1.6c1.5.3 2.3.8 2.3 1.7s-1 1.6-2.3 1.6-2.3-.6-2.3-1.5"/>',
+  // extra-icons.png: "shield" -- redrawn as outline-only (the reference is
+  // filled/duotone) to match this set's single-stroke convention.
+  shield: '<path d="M12 3l7 2.6v5.4c0 4.4-3 7.7-7 9-4-1.3-7-4.6-7-9V5.6z"/><path d="M8.7 12l2.1 2.1L15.3 10"/>',
+  // extra-icons.png: "smartphone"
+  smartphone: '<rect x="6.5" y="2.5" width="11" height="19" rx="2"/><path d="M11 18h2"/>',
+  // extra-icons.png: "award" -- ribbon medal with a star at its center.
+  award: '<circle cx="12" cy="8.5" r="5.2"/><path d="M9 13l-1.3 7.5L12 18l4.3 2.5L15 13"/><path d="M12 6.2l.8 1.7 1.9.2-1.4 1.3.4 1.9-1.7-1-1.7 1 .4-1.9-1.4-1.3 1.9-.2z"/>',
+  // extra-icons.png: "star" -- a filled/glowing sparkle in the reference;
+  // redrawn as an outline star with short radiating tick marks.
+  star: '<path d="M12 4l2.2 5.3 5.5.5-4.3 3.6 1.4 5.4L12 15.9l-4.8 2.9 1.4-5.4-4.3-3.6 5.5-.5z"/><path d="M12 1v1.3M12 21.7V23M3 12h1.3M19.7 12H21M5.5 5.5l1 1M17.5 17.5l1 1M18.5 5.5l-1 1M6.5 17.5l-1 1"/>',
+  // extra-icons.png: "flame"
+  flame: '<path d="M12 2c1.6 2.4-.6 3.4-.6 5.7a2.6 2.6 0 005.2 0c0-.8-.4-1.4-.4-1.4 1.7 1.1 2.8 3 2.8 5.2a6.5 6.5 0 01-13 0c0-3.8 2.6-6 4.3-8.2z"/>',
 };
 
 // Builds a real <svg> element from one of the ICONS path strings above --
@@ -1069,7 +1081,10 @@ function renderStreakBadge(chore, executingUid, weekDates, todayDateId) {
     const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
     bonusText = ` · ${formatCents(streak * bonusPerDay, currency)} pending`;
   }
-  return el('div', { class: 'streak-badge' }, (perfect ? '⭐ Perfect week' : `🔥 ${streak}-day streak`) + bonusText);
+  return el('div', { class: 'streak-badge' }, [
+    svgIcon(perfect ? 'star' : 'flame', { size: 12 }),
+    ` ${perfect ? 'Perfect week' : `${streak}-day streak`}${bonusText}`,
+  ]);
 }
 
 // ---------------------------------------------------------------------
@@ -1884,7 +1899,7 @@ function renderDashboard() {
       style: 'display:flex;align-items:center;gap:10px;margin-top:14px;padding:10px 12px;'
         + 'background:var(--panel2);border-radius:10px;',
     }, [
-      el('span', { style: 'font-size:1.3rem;' }, '🏆'),
+      svgIcon('award', { size: 22, color: 'var(--accent2)' }),
       el('div', { style: 'font-size:0.85rem;font-weight:600;' },
         `Keep going -- finish your last ${remainingChoreCount === 1 ? 'chore' : `${remainingChoreCount} chores`} to improve this week's total!`),
     ]));
