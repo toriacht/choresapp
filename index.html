@@ -322,11 +322,11 @@
   .quick-action-btn {
     display: flex; flex-direction: row; align-items: center; gap: 12px; width: 100%;
     padding: 14px 16px; text-align: left; touch-action: manipulation;
-    background: var(--panel); border: none; border-radius: 12px; cursor: pointer; color: var(--text);
+    background: var(--panel2); border: none; border-radius: 12px; cursor: pointer; color: var(--text);
     font-weight: 700; font-size: 0.9rem;
   }
   .quick-action-icon {
-    width: 38px; height: 38px; border-radius: 999px; background: var(--panel2); color: var(--accent2);
+    width: 38px; height: 38px; border-radius: 999px; background: var(--panel); color: var(--accent2);
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
   .avatar-circle {
@@ -4922,25 +4922,23 @@ function renderRunWizardStep() {
     options.forEach(([value, title, subtitle]) => {
       optionsWrap.appendChild(renderWizardOptionCard({
         title, subtitle, selected: runWizard.type === value,
-        onclick: () => { runWizard.type = value; renderRunWizardStep(); },
-      }));
-    });
-    card.appendChild(optionsWrap);
-    card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
-      el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: closeAdminWizard }, 'Cancel'),
-      el('button', {
-        class: 'pill primary', style: 'flex:1;', type: 'button',
+        // Tapping an option advances immediately (no separate "Next" tap) --
+        // a single-choice step re-rendering itself in place to show a
+        // selection, then requiring a second tap on a below-the-fold "Next"
+        // button, read as broken/unresponsive. See ADR-0030 amendment.
         onclick: () => {
-          if (!runWizard.type) { alert('Pick what you\'d like to configure first.'); return; }
+          runWizard.type = value;
           // Single-child families have nothing meaningful to "scope" --
-          // skip straight past the scope step (see ADR-0030). Same skip
-          // when a scope was already preset (opened from a child's own
-          // admin page) -- it's already answered.
+          // skip straight past the scope step. Same skip when a scope was
+          // already preset (opened from a child's own admin page) -- it's
+          // already answered.
           goTo(runWizard.scopeUid !== 'family' || runWizardActiveChildren().length <= 1
             ? RUN_WIZARD_STEP.INFO : RUN_WIZARD_STEP.SCOPE);
         },
-      }, 'Next'),
-    ]));
+      }));
+    });
+    card.appendChild(optionsWrap);
+    card.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-top:6px;', type: 'button', onclick: closeAdminWizard }, 'Cancel'));
     content.appendChild(card);
     return;
   }
@@ -4953,19 +4951,16 @@ function renderRunWizardStep() {
     const optionsWrap = el('div', {});
     optionsWrap.appendChild(renderWizardOptionCard({
       title: 'Whole family', subtitle: 'All children', selected: runWizard.scopeUid === 'family',
-      onclick: () => { runWizard.scopeUid = 'family'; renderRunWizardStep(); },
+      onclick: () => { runWizard.scopeUid = 'family'; goTo(RUN_WIZARD_STEP.INFO); },
     }));
     children.forEach((child) => {
       optionsWrap.appendChild(renderWizardOptionCard({
         title: child.displayName || child.email, selected: runWizard.scopeUid === child.uid,
-        onclick: () => { runWizard.scopeUid = child.uid; renderRunWizardStep(); },
+        onclick: () => { runWizard.scopeUid = child.uid; goTo(RUN_WIZARD_STEP.INFO); },
       }));
     });
     card.appendChild(optionsWrap);
-    card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
-      el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.TYPE) }, 'Back'),
-      el('button', { class: 'pill primary', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.INFO) }, 'Next'),
-    ]));
+    card.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-top:6px;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.TYPE) }, 'Back'));
     content.appendChild(card);
     card.appendChild(el('div', {
       style: 'display:flex;gap:8px;align-items:flex-start;margin-top:14px;padding:10px 12px;background:var(--panel2);border-radius:10px;font-size:0.82rem;',
