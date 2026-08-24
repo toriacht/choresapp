@@ -2009,6 +2009,149 @@ function moneyLineIcon(positive) {
   }, svgIcon(positive ? 'plus' : 'minus', { size: 16 }));
 }
 
+// ---------------------------------------------------------------------
+// "Earn it back" (mockups/earn-it-back-mock.png) -- a child can offer to
+// do an extra task to offset a deduction, right from the activity line it
+// hit them on. Eligible deductions are manual ones only: type:'deduction'
+// (the admin's "not to do" catalog) and negative manual_adjustment debits.
+// missed_chore_deduction is NOT offered here -- it already has its own
+// automatic reversal via late chore completion (ADR-0026), no separate
+// request/approval round-trip needed.
+//
+// Deliberately reuses the exact same extraJobs collection/lifecycle as
+// every other extra job -- an admin approving one pays immediately (see
+// functions/lib/extraJobs.js:approveExtraJob), same as today. This is just
+// a pre-contextualized entry point into that same flow (tagged with
+// relatedDeductionLedgerId so the original deduction's own activity line
+// can show its current earn-it-back status), not a new payment mechanism
+// or a second "mark done" step.
+let expandedEarnItBackTxId = null;
+
+function isEarnBackEligible(tx) {
+  return tx.type === 'deduction' || (tx.type === 'manual_adjustment' && tx.amountCents < 0);
+}
+
+function renderEarnItBackBlock(tx, currency) {
+  if (state.role !== 'child' || !isEarnBackEligible(tx)) return null;
+  const related = state.extraJobs.filter((j) => j.relatedDeductionLedgerId === tx.id);
+  const paid = related.find((j) => j.status === 'paid');
+  const pending = related.find((j) => j.status === 'proposed');
+
+  if (paid) {
+    return el('div', {
+      style: 'margin-top:8px;padding:8px 12px;background:var(--panel2);border-radius:8px;'
+        + 'font-size:0.82rem;color:var(--success);font-weight:600;',
+    }, `✓ Earned back: ${paid.description}`);
+  }
+  if (pending) {
+    return el('div', { style: 'margin-top:8px;padding:8px 12px;background:var(--panel2);border-radius:8px;font-size:0.82rem;' }, [
+      el('span', { style: 'font-weight:600;' }, 'Earn-it-back request sent'),
+      el('span', { class: 'muted' }, ` — ${pending.description}, awaiting approval`),
+    ]);
+  }
+
+  const isOpen = expandedEarnItBackTxId === tx.id;
+  const wrap = el('div', {}, [
+    el('div', {
+      style: 'margin-top:8px;padding:8px 12px;background:var(--danger-tint);border-radius:8px;'
+        + 'display:flex;align-items:center;justify-content:space-between;gap:10px;',
+    }, [
+      el('span', { style: 'font-size:0.82rem;color:var(--danger);font-weight:600;' }, 'You can earn this back'),
+      el('button', {
+        type: 'button', class: 'pill small primary',
+        onclick: () => { expandedEarnItBackTxId = isOpen ? null : tx.id; renderCurrentTab(); },
+      }, isOpen ? 'Cancel' : 'Earn it back'),
+    ]),
+  ]);
+  if (isOpen) wrap.appendChild(renderEarnItBackForm(tx, currency));
+  return wrap;
+}
+
+// Mirrors the Extras tab's existing "claim a listed job" / "propose your
+// own" choice, just scoped to one radio-style pick instead of two separate
+// always-visible sections, and tagged with which deduction it's meant to
+// offset. Per the app owner: the earned amount is whatever the chosen
+// job/proposal is actually worth -- NOT forced to exactly match the
+// deduction's own magnitude.
+function renderEarnItBackForm(tx, currency) {
+  const card = el('div', { class: 'booking-card', style: 'margin-top:8px;' });
+  card.appendChild(el('div', { style: 'font-weight:700;margin-bottom:8px;' }, 'Choose a way to earn it back'));
+
+  const radioName = `earnback-${tx.id}`;
+  const options = state.catalog.filter((c) => c.active !== false);
+  let selectedCatalogId = null;
+  const proposeDesc = el('input', { type: 'text', placeholder: 'Describe the task', hidden: true, style: 'margin-top:8px;' });
+  const proposeAmount = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Amount you\'re asking for (e.g. 5.00)', hidden: true });
+  const errorEl = el('p', { class: 'error-text' });
+  errorEl.hidden = true;
+  const submitBtn = el('button', { type: 'button', class: 'pill primary' }, 'Request approval');
+  submitBtn.disabled = true;
+
+  function updateSubmitEnabled() {
+    submitBtn.disabled = proposeDesc.hidden
+      ? !selectedCatalogId
+      : !(proposeDesc.value.trim() && Number(proposeAmount.value) > 0);
+  }
+  proposeDesc.addEventListener('input', updateSubmitEnabled);
+  proposeAmount.addEventListener('input', updateSubmitEnabled);
+
+  options.forEach((job) => {
+    const radio = el('input', { type: 'radio', name: radioName, style: 'width:auto;margin-right:8px;flex-shrink:0;' });
+    radio.addEventListener('change', () => {
+      selectedCatalogId = job.id;
+      proposeDesc.hidden = true; proposeAmount.hidden = true;
+      updateSubmitEnabled();
+    });
+    card.appendChild(el('label', {
+      style: 'display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;',
+    }, [
+      el('span', { style: 'display:flex;align-items:center;' }, [radio, choreLabel(job)]),
+      el('span', { class: 'amount positive' }, `+${formatCents(job.amountCents, currency)}`),
+    ]));
+  });
+
+  const proposeRadio = el('input', { type: 'radio', name: radioName, style: 'width:auto;margin-right:8px;flex-shrink:0;' });
+  proposeRadio.addEventListener('change', () => {
+    selectedCatalogId = null;
+    proposeDesc.hidden = false; proposeAmount.hidden = false;
+    updateSubmitEnabled();
+  });
+  card.appendChild(el('label', { style: 'display:flex;align-items:center;padding:8px 0;cursor:pointer;' }, [
+    proposeRadio, el('span', {}, 'Propose your own'),
+  ]));
+  card.appendChild(proposeDesc);
+  card.appendChild(proposeAmount);
+  card.appendChild(errorEl);
+  card.appendChild(submitBtn);
+
+  submitBtn.addEventListener('click', async () => {
+    errorEl.hidden = true;
+    submitBtn.disabled = true;
+    try {
+      const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      const chosen = selectedCatalogId ? options.find((o) => o.id === selectedCatalogId) : null;
+      await addDoc(fsCollection(db, `families/${state.familyId}/extraJobs`), {
+        description: chosen ? chosen.name : proposeDesc.value.trim(),
+        proposedBy: state.user.uid,
+        amountCents: chosen ? chosen.amountCents : centsFromMajorUnits(proposeAmount.value),
+        catalogJobId: chosen ? chosen.id : null,
+        status: 'proposed',
+        createdAt: serverTimestamp(),
+        relatedDeductionLedgerId: tx.id,
+        relatedDeductionNote: tx.note || tx.type.replace(/_/g, ' '),
+        relatedDeductionAmountCents: Math.abs(tx.amountCents),
+      });
+      expandedEarnItBackTxId = null;
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+      submitBtn.disabled = false;
+    }
+  });
+
+  return card;
+}
+
 function renderDashboard() {
   const container = document.getElementById('page-dashboard');
   container.innerHTML = '';
@@ -2230,7 +2373,7 @@ function renderDashboard() {
     state.ledger.slice(0, 3).forEach((tx) => {
       const positive = tx.amountCents >= 0;
       const when = tx.createdAt && typeof tx.createdAt.toDate === 'function' ? relativeDateTimeLabel(tx.createdAt.toDate()) : '';
-      container.appendChild(el('div', { class: 'booking-card' }, [
+      const card = el('div', { class: 'booking-card' }, [
         el('div', { class: 'row', style: 'align-items:center;gap:10px;' }, [
           moneyLineIcon(positive),
           el('div', { style: 'flex:1;' }, [
@@ -2242,7 +2385,10 @@ function renderDashboard() {
             when ? el('div', { class: 'muted', style: 'font-size:0.72rem;' }, when) : null,
           ]),
         ]),
-      ]));
+      ]);
+      const earnItBack = renderEarnItBackBlock(tx, currency);
+      if (earnItBack) card.appendChild(earnItBack);
+      container.appendChild(card);
     });
   }
 }
@@ -2640,6 +2786,11 @@ function renderExtraJobCard(job, currency) {
       el('div', {}, [
         el('div', { style: 'font-weight:600;' }, job.description),
         el('div', { class: 'muted' }, `${memberLabel(job.proposedBy)} · ${formatCents(job.amountCents, currency)}`),
+        // "Earn it back" context (mockups/earn-it-back-mock.png) -- lets an
+        // admin see, right on the approval card, which deduction this is
+        // meant to offset, without a separate ledger lookup.
+        job.relatedDeductionLedgerId ? el('div', { class: 'muted', style: 'font-size:0.78rem;color:var(--danger);' },
+          `To earn back: ${job.relatedDeductionNote || 'a deduction'} (-${formatCents(job.relatedDeductionAmountCents || 0, currency)})`) : null,
       ]),
       el('span', { class: `status-pill status-${job.status}` }, job.status),
     ]),
@@ -2711,7 +2862,7 @@ function renderEarnings() {
     }
     const positive = tx.amountCents >= 0;
     const dateLabel = d ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-    container.appendChild(el('div', { class: 'booking-card' }, [
+    const card = el('div', { class: 'booking-card' }, [
       el('div', { class: 'row' }, [
         el('div', {}, [
           el('div', {}, tx.note || tx.type),
@@ -2719,7 +2870,10 @@ function renderEarnings() {
         ]),
         el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
       ]),
-    ]));
+    ]);
+    const earnItBack = renderEarnItBackBlock(tx, currency);
+    if (earnItBack) card.appendChild(earnItBack);
+    container.appendChild(card);
   });
 }
 
