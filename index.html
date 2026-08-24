@@ -742,6 +742,16 @@ function resolveEffectiveAssignee(chore, acceptedSwapsThisWeek) {
   const swap = (acceptedSwapsThisWeek || []).find((s) => s.choreId === chore.id && s.proposedBy === base);
   return swap ? swap.targetUid : base;
 }
+// See ADR-0029. Same infer-don't-migrate pattern as resolveAssignmentMode
+// above -- a chore with no (or an unrecognized) difficulty reads as medium.
+const DIFFICULTY_WEIGHTS = { easy: 1, medium: 2, hard: 3 };
+function resolveDifficulty(chore) {
+  return DIFFICULTY_WEIGHTS[chore.difficulty] ? chore.difficulty : 'medium';
+}
+function resolveDifficultyWeight(chore) {
+  return DIFFICULTY_WEIGHTS[resolveDifficulty(chore)];
+}
+const DIFFICULTY_LABELS = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
 // Day-swap counterpart, for an eachMember daily chore (no single base
 // assignee -- every pool member owns their own instance per date).
 function resolveEffectiveAssigneeForDate(choreId, ownerUid, dateId, acceptedDaySwaps) {
@@ -3725,6 +3735,40 @@ function renderManageChores() {
   renderActiveChores(container);
 }
 
+// Shared by renderChoreForm (creation) and renderActiveChores' post-
+// creation edit block (ADR-0029) -- renders into `wrap` (cleared first)
+// based on `mode`: a single <select> for 'fixed', preset via
+// `checkedUids`'s one member; checkboxes for everyone else, defaulting to
+// checked for whoever's in `checkedUids`. Deliberately scoped by `wrap`
+// rather than a shared DOM id (`getElementById('assigneeSingle')` used to
+// be the read path here, but that only ever finds the FIRST match once
+// renderActiveChores can render one of these per chore card) -- see
+// readPoolControl below for the matching scoped read.
+function renderPoolControl(wrap, mode, checkedUids) {
+  wrap.innerHTML = '';
+  const children = state.members.filter((m) => m.role === 'child');
+  if (mode === 'fixed') {
+    const select = el('select', {});
+    children.forEach((m) => select.appendChild(
+      el('option', { value: m.uid, ...(checkedUids.has(m.uid) ? { selected: 'selected' } : {}) }, m.displayName || m.email)
+    ));
+    wrap.appendChild(select);
+  } else {
+    wrap.appendChild(el('label', {}, 'Who\'s included'));
+    children.forEach((m) => {
+      const cb = el('input', { type: 'checkbox', value: m.uid, ...(checkedUids.has(m.uid) ? { checked: 'checked' } : {}), style: 'width:auto;display:inline-block;margin-right:6px;' });
+      wrap.appendChild(el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:4px;' }, [cb, m.displayName || m.email]));
+    });
+  }
+}
+function readPoolControl(wrap, mode) {
+  if (mode === 'fixed') {
+    const select = wrap.querySelector('select');
+    return select ? [select.value] : [];
+  }
+  return Array.from(wrap.querySelectorAll('input[type=checkbox]:checked')).map((cb) => cb.value);
+}
+
 // Builds the "Add a chore" form -- shared by Manage Chores (no args, pool
 // defaults to every child) and the Kids tab (presetChildUid: defaults the
 // pool to just that one child, with an explicit "apply to every kid too"
@@ -3746,10 +3790,18 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     el('option', { value: 'eachMember' }, 'Everyone does their own'),
   ]);
   const frequencySelect = el('select', {}, [
-    el('option', { value: 'weekly' }, 'Standing weekly chore'),
-    el('option', { value: 'daily' }, 'Daily task (every day)'),
-    el('option', { value: 'custom' }, 'Specific days (e.g. Mon/Wed/Fri)'),
-    el('option', { value: 'once' }, 'One-off task (this week only)'),
+    el('option', { value: 'weekly' }, 'Recurring -- once a week'),
+    el('option', { value: 'daily' }, 'Recurring -- every day'),
+    el('option', { value: 'custom' }, 'Recurring -- specific days (e.g. Mon/Wed/Fri)'),
+    el('option', { value: 'once' }, 'One-off -- this week only, then done'),
+  ]);
+  // Every chore recurs indefinitely by default (weekly/daily/custom) --
+  // 'once' is the only way to opt OUT of recurring. See ADR-0029; no
+  // separate "recurring" field needed, this select already decides it.
+  const difficultySelect = el('select', {}, [
+    el('option', { value: 'easy' }, 'Easy'),
+    el('option', { value: 'medium', selected: 'selected' }, 'Medium'),
+    el('option', { value: 'hard' }, 'Hard'),
   ]);
 
   // Only shown for frequency:'custom' -- see ADR-0026. ISO weekday numbers
@@ -3777,23 +3829,15 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   const poolWrap = el('div', {});
   let applyToAllCb = null;
   function renderAssigneeControl() {
-    poolWrap.innerHTML = '';
     const children = state.members.filter((m) => m.role === 'child');
+    let checkedUids;
     if (modeSelect.value === 'fixed') {
-      const select = el('select', { id: 'assigneeSingle' });
-      children.forEach((m) => select.appendChild(
-        el('option', { value: m.uid, ...(presetChildUid === m.uid ? { selected: 'selected' } : {}) }, m.displayName || m.email)
-      ));
-      poolWrap.appendChild(select);
+      checkedUids = new Set([presetChildUid || (children[0] && children[0].uid)]);
     } else {
-      poolWrap.appendChild(el('label', {}, 'Who\'s included'));
       const applyToAll = !presetChildUid || (applyToAllCb && applyToAllCb.checked);
-      children.forEach((m) => {
-        const shouldCheck = applyToAll || m.uid === presetChildUid;
-        const cb = el('input', { type: 'checkbox', value: m.uid, ...(shouldCheck ? { checked: 'checked' } : {}), style: 'width:auto;display:inline-block;margin-right:6px;' });
-        poolWrap.appendChild(el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:4px;' }, [cb, m.displayName || m.email]));
-      });
+      checkedUids = new Set(applyToAll ? children.map((m) => m.uid) : [presetChildUid]);
     }
+    renderPoolControl(poolWrap, modeSelect.value, checkedUids);
   }
   modeSelect.addEventListener('change', () => { renderAssigneeControl(); });
 
@@ -3848,9 +3892,13 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       applyToAllCb, el('span', {}, 'Apply to every kid too'),
     ]));
   }
-  form.appendChild(el('label', {}, 'Frequency'));
+  form.appendChild(el('label', {}, 'Recurs?'));
   form.appendChild(frequencySelect);
   form.appendChild(scheduledDaysWrap);
+  form.appendChild(el('label', {}, 'Difficulty'));
+  form.appendChild(difficultySelect);
+  form.appendChild(el('div', { class: 'muted', style: 'margin:-4px 0 10px;font-size:0.78rem;' },
+    'Harder chores count for more when we balance whose turn it is.'));
   form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add chore'));
 
   form.addEventListener('submit', async (event) => {
@@ -3863,9 +3911,9 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     const mode = modeSelect.value;
     let assignedTo, rotation;
     if (mode === 'fixed') {
-      assignedTo = [document.getElementById('assigneeSingle').value];
+      assignedTo = readPoolControl(poolWrap, mode);
     } else {
-      const checked = Array.from(poolWrap.querySelectorAll('input[type=checkbox]:checked')).map((cb) => cb.value);
+      const checked = readPoolControl(poolWrap, mode);
       assignedTo = checked;
       if (mode === 'rotating') {
         const weekId = getIsoWeekId(new Date());
@@ -3887,6 +3935,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       ...(rotation ? { rotation } : {}),
       frequency: frequencySelect.value,
       ...(frequencySelect.value === 'custom' ? { scheduledDays } : {}),
+      difficulty: difficultySelect.value,
       active: true,
       createdBy: state.user.uid,
       createdAt: serverTimestamp(),
@@ -3894,12 +3943,129 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     });
     nameInput.value = ''; iconInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly';
     categorySelect.value = 'chore'; modeSelect.value = 'fixed'; dailyRequirementCb.checked = false;
+    difficultySelect.value = 'medium';
     dayButtons.forEach((b) => b.classList.remove('primary'));
     if (applyToAllCb) applyToAllCb.checked = false;
     renderAssigneeControl();
     updateScheduledDaysVisibility();
   });
   return form;
+}
+
+// Post-creation edit UI (ADR-0029) -- difficulty is a simple direct write;
+// assignment mode/pool changes follow the transition rules below, mirroring
+// the creation form's own rotation-seeding logic (renderChoreForm) so a
+// chore edited into 'rotating' behaves identically to one created that way.
+// Deliberately a direct client updateDoc, not a callable -- this is
+// CRUD-style admin config, not money or cross-document consistency work
+// (firestore.rules already lets an admin write any chore field).
+function renderEditAssignmentBody(chore) {
+  const wrap = el('div', {});
+
+  const difficultySelect = el('select', {}, [
+    el('option', { value: 'easy' }, 'Easy'),
+    el('option', { value: 'medium' }, 'Medium'),
+    el('option', { value: 'hard' }, 'Hard'),
+  ]);
+  difficultySelect.value = resolveDifficulty(chore);
+  const saveDifficultyBtn = el('button', { type: 'button', class: 'pill small' }, 'Save');
+  saveDifficultyBtn.addEventListener('click', async () => {
+    saveDifficultyBtn.disabled = true;
+    try {
+      const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { difficulty: difficultySelect.value });
+    } catch (err) { alert(err.message); } finally { saveDifficultyBtn.disabled = false; }
+  });
+  wrap.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-bottom:14px;' }, [
+    el('label', { style: 'margin:0;' }, 'Difficulty'), difficultySelect, saveDifficultyBtn,
+  ]));
+
+  const modeSelect = el('select', {}, [
+    el('option', { value: 'fixed' }, 'One specific person'),
+    el('option', { value: 'rotating' }, 'Rotates fairly among a group'),
+    el('option', { value: 'sharedAny' }, 'Shared -- any one of a group'),
+    el('option', { value: 'eachMember' }, 'Everyone does their own'),
+  ]);
+  const currentMode = resolveAssignmentMode(chore);
+  modeSelect.value = currentMode;
+  const poolWrap = el('div', {});
+  function refreshPool() {
+    // Keep the chore's actual current pool checked while the mode select
+    // still matches what's stored; if the admin picks a DIFFERENT mode,
+    // default to everyone active (same convention as the creation form)
+    // since the old pool may not make sense under the new mode.
+    const checkedUids = modeSelect.value === currentMode
+      ? new Set(resolvePool(chore, activeChildUids()))
+      : new Set(activeChildUids());
+    renderPoolControl(poolWrap, modeSelect.value, checkedUids);
+  }
+  modeSelect.addEventListener('change', refreshPool);
+  refreshPool();
+
+  const saveAssignmentBtn = el('button', { type: 'button', class: 'pill small', style: 'margin-top:10px;' }, 'Save assignment');
+  const errorEl = el('p', { class: 'error-text' });
+  errorEl.hidden = true;
+  saveAssignmentBtn.addEventListener('click', async () => {
+    errorEl.hidden = true;
+    saveAssignmentBtn.disabled = true;
+    try {
+      const { updateDoc, doc: fsDoc, deleteField } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      const newMode = modeSelect.value;
+      const newAssignedTo = readPoolControl(poolWrap, newMode);
+      const wasRotating = currentMode === 'rotating';
+      const payload = { assignmentMode: newMode, assignedTo: newAssignedTo };
+
+      if (newMode === 'rotating') {
+        if (wasRotating) {
+          // Already rotating, pool edited -- preserve history for members
+          // who stayed, seed new members at 0 (self-heals via the existing
+          // "no history = pick me first" rule), drop removed members'
+          // history entirely. If the current turn's owner was removed,
+          // null out currentAssigneeUid -- corrects itself next Monday.
+          const oldHistory = (chore.rotation && chore.rotation.history) || {};
+          const history = {};
+          newAssignedTo.forEach((uid) => {
+            history[uid] = oldHistory[uid] || { timesAssigned: 0, lastAssignedWeekId: null };
+          });
+          const keepCurrent = chore.rotation && newAssignedTo.includes(chore.rotation.currentAssigneeUid);
+          payload.rotation = {
+            pool: newAssignedTo,
+            history,
+            currentAssigneeUid: keepCurrent ? chore.rotation.currentAssigneeUid : null,
+            currentAssigneeWeekId: keepCurrent ? chore.rotation.currentAssigneeWeekId : null,
+          };
+        } else {
+          // Switching INTO rotating -- seed fresh, exactly like creation.
+          const weekId = getIsoWeekId(new Date());
+          const first = newAssignedTo[0];
+          const history = {};
+          newAssignedTo.forEach((uid) => {
+            history[uid] = { timesAssigned: uid === first ? 1 : 0, lastAssignedWeekId: uid === first ? weekId : null };
+          });
+          payload.rotation = { pool: newAssignedTo, history, currentAssigneeUid: first || null, currentAssigneeWeekId: first ? weekId : null };
+        }
+      } else if (wasRotating) {
+        // Switching OUT of rotating -- rotation no longer applies.
+        payload.rotation = deleteField();
+      }
+
+      await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), payload);
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    } finally {
+      saveAssignmentBtn.disabled = false;
+    }
+  });
+
+  wrap.appendChild(el('label', { style: 'margin:0;' }, 'Who does it'));
+  wrap.appendChild(modeSelect);
+  wrap.appendChild(poolWrap);
+  wrap.appendChild(el('div', { class: 'muted', style: 'font-size:0.75rem;margin-top:2px;' },
+    'Changes to a rotation\'s lineup take effect from next Monday.'));
+  wrap.appendChild(errorEl);
+  wrap.appendChild(saveAssignmentBtn);
+  return wrap;
 }
 
 function renderActiveChores(container) {
@@ -3946,6 +4112,7 @@ function renderActiveChores(container) {
         const days = (chore.scheduledDays || []).slice().sort().map((d) => dayNames[d]).join('/');
         assignedLabel += ` — ${days || 'no days picked'}`;
       }
+      if (mode === 'rotating') assignedLabel += ` · ${DIFFICULTY_LABELS[resolveDifficulty(chore)]}`;
       const card = el('div', { class: 'booking-card' }, [
         el('div', { class: 'row' }, [
           el('div', {}, [
@@ -3990,6 +4157,10 @@ function renderActiveChores(container) {
           el('label', { style: 'margin:0;' }, 'Days'), ...editDayButtons, saveDaysBtn,
         ]));
       }
+      // Post-creation editing (ADR-0029) -- difficulty, assignment mode,
+      // and the pool used to only be creation-time-only; collapsed by
+      // default (makeExpandable) since most chore cards never need this.
+      card.appendChild(makeExpandable('Edit assignment', renderEditAssignmentBody(chore)));
       container.appendChild(card);
     });
   });
