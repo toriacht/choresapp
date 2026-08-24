@@ -982,6 +982,7 @@ const state = {
   payouts: [],
   ledger: [],
   ledgerViewUid: null,
+  hotStreakSettingsChildUid: null,
   currentTab: localStorage.getItem('choresAppTab') || 'dashboard',
 };
 let unsubscribers = [];
@@ -1174,27 +1175,20 @@ function getDisplayStreak(chore, executingUid, weekDateIds, todayDateId, daySwap
 }
 
 // Streak badge for a 'daily' chore -- see getDisplayStreak for why "today"
-// doesn't zero the badge out before the day is even over. If the chore has
-// a dailyStreakBonusCentsPerDay configured, shows the accruing "pending,
-// paid Friday if it holds" amount too -- the same figure settlement.js
-// will actually pay if the streak survives to Friday (using the exact,
-// non-display computeCurrentStreak there). Purely a display extra
-// otherwise; no new Firestore fields, no payout effect on its own.
+// doesn't zero the badge out before the day is even over. Purely a display
+// extra (consecutive-days count for THIS one task) -- the money question
+// (is this task part of a Hot Streak Bonus, and is that bonus on track) is
+// a separate, per-child, multi-task concept shown on the Dashboard's Hot
+// Streak card instead (see computeHotStreakSummary, ADR-0027).
 function renderStreakBadge(chore, executingUid, weekDates, todayDateId) {
   const weekDateIds = weekDates.map(getIsoDateId);
   const streak = getDisplayStreak(chore, executingUid, weekDateIds, todayDateId, acceptedDaySwaps());
   if (streak === 0) return null;
   const daysSoFar = weekDateIds.filter((d) => d <= todayDateId).length;
   const perfect = streak === daysSoFar;
-  const bonusPerDay = chore.dailyStreakBonusCentsPerDay;
-  let bonusText = '';
-  if (Number.isInteger(bonusPerDay) && bonusPerDay > 0) {
-    const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
-    bonusText = ` · ${formatCents(streak * bonusPerDay, currency)} pending`;
-  }
   return el('div', { class: 'streak-badge' }, [
     svgIcon(perfect ? 'star' : 'flame', { size: 12 }),
-    ` ${perfect ? 'Perfect week' : `${streak}-day streak`}${bonusText}`,
+    ` ${perfect ? 'Perfect week' : `${streak}-day streak`}`,
   ]);
 }
 
@@ -1862,28 +1856,22 @@ function choreLabel(chore) {
 // + today progress rings, a status-only list. All marking-done/swapping
 // happens on the Chores tab instead; tapping an item here deep-links there.
 // ---------------------------------------------------------------------
-// One line per daily chore with an active (nonzero) streak this member is
-// on track for -- e.g. "5-day streak: Make your bed" -- rather than a
-// single opaque total, so the itemized payment list below the rings can
-// name exactly which streak is paying what (matches the payout ledger's
-// own per-action note once it's actually settled Friday).
+// One line for whether this member is on track for the week's Hot Streak
+// Bonus (ADR-0027) -- one all-or-nothing
+// line, not per-chore, since the bonus itself is a single per-child flat
+// amount covering every selected task. Only shown while the week is still
+// perfect so far (every elapsed day fully done) -- once a day's broken it
+// stops being a safe "pending" projection (it CAN still be won back by a
+// late approval, but that's no longer guaranteed, so it's not listed as
+// pending money until it's re-earned).
 function computePendingStreakBonusLines(memberUid) {
-  const today = new Date();
-  const todayDateId = getIsoDateId(today);
-  const weekDateIds = getIsoWeekDates(today).map(getIsoDateId);
-  const daySwaps = acceptedDaySwaps();
-  const pool0 = activeChildUids();
-  const lines = [];
-  state.chores.forEach((chore) => {
-    if (chore.active === false || chore.frequency !== 'daily') return;
-    const bonusPerDay = chore.dailyStreakBonusCentsPerDay;
-    if (!Number.isInteger(bonusPerDay) || bonusPerDay <= 0) return;
-    if (resolveAssignmentMode(chore) !== 'eachMember') return;
-    if (!resolvePool(chore, pool0).includes(memberUid)) return;
-    const streak = getDisplayStreak(chore, memberUid, weekDateIds, todayDateId, daySwaps);
-    if (streak > 0) lines.push({ label: `${streak}-day streak: ${chore.name}`, cents: streak * bonusPerDay });
-  });
-  return lines;
+  const summary = computeHotStreakSummary(memberUid);
+  if (!summary || summary.amountCents <= 0) return [];
+  const todayIdx = summary.weekDateIds.indexOf(summary.todayDateId);
+  const elapsed = summary.weekDateIds.slice(0, todayIdx + 1);
+  const onTrack = elapsed.length > 0 && elapsed.every((dateId) => summary.hitDateIds.has(dateId));
+  if (!onTrack) return [];
+  return [{ label: 'Hot streak bonus (on track)', cents: summary.amountCents }];
 }
 
 function pctLabel(approved, total) {
@@ -1949,40 +1937,54 @@ function computePendingPaymentLines(memberUid, member) {
   return { lines, baseLine, extraLines, thisWeekLedger, alreadySettled, awaitingApproval, weekProgress };
 }
 
-// The single "Hot Streak" chore this member's progress card/tile highlights
-// -- the active-or-best daily streak among their eachMember daily chores
-// with a configured bonus (see computePendingStreakBonusLines for the
-// itemized multi-chore list this simplifies down from). hitDateIds is every
-// dateId this week (up to today) with an approved entry -- shown as the
-// M-T-W-T-F-S-S dot row, independent of the contiguous-streak reset logic
-// (a dot just means "done that day"), per mockups/child dashboard.png.
+// Client-side mirror of functions/lib/hotStreakBonus.js's
+// computeHotStreakWeekQualifies, but returning the per-day breakdown (not
+// just a single pass/fail) since display needs the day-by-day dot row too
+// -- pure, display-only, matches the server's exact logic (see ADR-0027) so
+// nothing shown here ever disagrees with what the real weekly evaluation
+// will find.
+function computeHotStreakDayStatus(taskChoreIds, weekDateIds, memberUid, daySwaps) {
+  return weekDateIds.map((dateId) => {
+    const allDone = taskChoreIds.length > 0 && taskChoreIds.every((choreId) => {
+      const executingUid = resolveEffectiveAssigneeForDate(choreId, memberUid, dateId, daySwaps);
+      return state.choreLog.some(
+        (e) => e.choreId === choreId && e.memberUid === executingUid && e.dateId === dateId && e.status === 'approved'
+      );
+    });
+    return { dateId, allDone };
+  });
+}
+
+// This member's Hot Streak Bonus program (ADR-0027, members/{uid}.hotStreakBonus)
+// -- a single per-child, all-or-nothing weekly bonus covering every task in
+// taskChoreIds, not a per-chore concept anymore. hitDateIds is every dateId
+// this week (up to today) where ALL selected tasks were approved -- shown
+// as the M-T-W-T-F-S-S dot row, per mockups/child dashboard.png and
+// mockups/hot-streak-bonus-mock.png. streak is the consecutive-clean-days
+// count ending today (or yesterday if today's not decided yet -- same
+// "don't zero out before the day is over" grace as getDisplayStreak).
 function computeHotStreakSummary(memberUid) {
+  const member = state.members.find((m) => m.uid === memberUid);
+  const cfg = member && member.hotStreakBonus;
+  if (!cfg || !cfg.enabled) return null;
+  const taskChoreIds = cfg.taskChoreIds || [];
+  if (taskChoreIds.length === 0) return null;
+
   const today = new Date();
   const todayDateId = getIsoDateId(today);
   const weekDateIds = getIsoWeekDates(today).map(getIsoDateId);
-  const daySwaps = acceptedDaySwaps();
-  const pool0 = activeChildUids();
-  let best = null;
-  state.chores.forEach((chore) => {
-    if (chore.active === false || chore.frequency !== 'daily') return;
-    const bonusPerDay = chore.dailyStreakBonusCentsPerDay;
-    if (!Number.isInteger(bonusPerDay) || bonusPerDay <= 0) return;
-    if (resolveAssignmentMode(chore) !== 'eachMember') return;
-    if (!resolvePool(chore, pool0).includes(memberUid)) return;
-    const streak = getDisplayStreak(chore, memberUid, weekDateIds, todayDateId, daySwaps);
-    if (!best || streak > best.streak) best = { chore, streak, bonusPerDay };
-  });
-  if (!best) return null;
-  const hitDateIds = new Set();
-  weekDateIds.forEach((dateId) => {
-    if (dateId > todayDateId) return;
-    const executingUid = resolveEffectiveAssigneeForDate(best.chore.id, memberUid, dateId, daySwaps);
-    const approved = state.choreLog.some(
-      (e) => e.choreId === best.chore.id && e.memberUid === executingUid && e.dateId === dateId && e.status === 'approved'
-    );
-    if (approved) hitDateIds.add(dateId);
-  });
-  return { ...best, weekDateIds, todayDateId, hitDateIds };
+  const dayStatus = computeHotStreakDayStatus(taskChoreIds, weekDateIds, memberUid, acceptedDaySwaps());
+  const hitDateIds = new Set(dayStatus.filter((d) => d.allDone).map((d) => d.dateId));
+
+  const todayIdx = weekDateIds.indexOf(todayDateId);
+  const evalDateId = hitDateIds.has(todayDateId) || todayIdx <= 0 ? todayDateId : weekDateIds[todayIdx - 1];
+  let streak = 0;
+  for (const dateId of weekDateIds) {
+    if (dateId > evalDateId) break;
+    streak = hitDateIds.has(dateId) ? streak + 1 : 0;
+  }
+
+  return { amountCents: cfg.amountCents || 0, taskChoreIds, weekDateIds, todayDateId, hitDateIds, streak };
 }
 
 // A small colored-circle emoji badge, used to give each money-activity line
@@ -2085,12 +2087,12 @@ function renderDashboard() {
     el('div', { class: 'balance-tile' }, [
       el('div', { class: 'balance-tile-head' }, [
         el('div', { class: 'balance-tile-icon' }, svgIcon('flame', { size: 20 })),
-        infoBtn('Extra money for keeping a daily task streak going -- a missed day breaks it, and it restarts the next day you do the task.'),
+        infoBtn('A flat bonus for completing every included daily task, every day of the week -- one missed task on one day loses the whole week\'s bonus, but a late approval can still win it back.'),
       ]),
       el('div', { class: 'balance-tile-label' }, 'Hot streak bonus'),
       el('div', { class: 'balance-tile-value' }, `+${formatCents(hotStreakCents, currency)}`),
       el('div', { class: 'balance-tile-caption' }, hotStreak && hotStreak.streak > 0
-        ? [svgIcon('flame', { size: 12, color: 'var(--accent2)' }), ` ${hotStreak.streak} day streak · +${formatCents(hotStreak.bonusPerDay, currency)}/day`]
+        ? [svgIcon('flame', { size: 12, color: 'var(--accent2)' }), ` ${hotStreak.streak} day streak · +${formatCents(hotStreak.amountCents, currency)} this week`]
         : 'No active streak yet'),
     ]),
     el('div', { class: 'balance-tile' }, [
@@ -2160,7 +2162,7 @@ function renderDashboard() {
           class: `streak-day-dot ${hotStreak.hitDateIds.has(dateId) ? 'hit' : ''}`,
         }, dayLetters[i]))),
         el('div', { class: 'muted', style: 'font-size:0.68rem;margin-top:6px;' },
-          `+${formatCents(hotStreak.bonusPerDay, currency)}/day if it continues`),
+          `+${formatCents(hotStreak.amountCents, currency)} this week if it continues`),
       ]) : el('div', { class: 'muted', style: 'padding:24px 0;' }, 'No streak task yet'),
     ]),
   ]));
@@ -2791,6 +2793,32 @@ function renderAdminDashboard() {
     el('div', { class: 'stat-tile' }, [
       el('div', { class: 'stat-value' }, String(state.chores.filter((c) => c.active !== false).length)),
       el('div', { class: 'stat-label' }, 'Active chores'),
+    ]),
+  ]));
+
+  // Hot Streak Bonus summary (mockups/hot-streak-bonus-mock.png, ADR-0027)
+  // -- shows whichever child currently has one enabled (preferring the
+  // child last edited in Settings, so it stays consistent with where "Edit
+  // settings" lands); a one-tap entry point, the actual config lives
+  // entirely in Settings > Hot streak bonus.
+  const hotStreakChildren = state.members.filter((m) => m.role === 'child' && m.active !== false && m.hotStreakBonus && m.hotStreakBonus.enabled);
+  const hotStreakChild = hotStreakChildren.find((c) => c.uid === state.hotStreakSettingsChildUid) || hotStreakChildren[0] || null;
+  container.appendChild(el('div', { class: 'booking-card', style: 'cursor:pointer;margin-top:10px;', onclick: () => switchTab('settings') }, [
+    el('div', { class: 'row', style: 'align-items:center;' }, [
+      el('div', { style: 'display:flex;align-items:center;gap:12px;' }, [
+        el('div', { class: 'balance-tile-icon' }, svgIcon('flame', { size: 20 })),
+        hotStreakChild
+          ? el('div', {}, [
+              el('div', { style: 'font-weight:700;' }, 'Hot streak bonus'),
+              el('div', { class: 'muted' }, `${formatCents(hotStreakChild.hotStreakBonus.amountCents, currency)} weekly bonus`),
+              el('div', { class: 'muted' }, `${(hotStreakChild.hotStreakBonus.taskChoreIds || []).length} daily task${(hotStreakChild.hotStreakBonus.taskChoreIds || []).length === 1 ? '' : 's'} included`),
+            ])
+          : el('div', {}, [
+              el('div', { style: 'font-weight:700;' }, 'Hot streak bonus'),
+              el('div', { class: 'muted' }, 'Not set up yet'),
+            ]),
+      ]),
+      el('span', { class: 'muted', style: 'font-size:0.82rem;flex-shrink:0;' }, 'Edit settings ›'),
     ]),
   ]));
 
@@ -3592,15 +3620,6 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   // path or a new field.
   const dailyRequirementCb = el('input', { type: 'checkbox' });
 
-  // Only meaningful for a daily task everyone does independently (eachMember)
-  // -- a streak is inherently personal consistency, so it's hidden/ignored
-  // otherwise (see settlement.js's identical scoping).
-  const streakBonusInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Streak bonus per day, e.g. 0.15 (optional)', hidden: true });
-  function updateStreakBonusVisibility() {
-    streakBonusInput.hidden = !(frequencySelect.value === 'daily' && modeSelect.value === 'eachMember');
-  }
-  frequencySelect.addEventListener('change', updateStreakBonusVisibility);
-
   const poolWrap = el('div', {});
   let applyToAllCb = null;
   function renderAssigneeControl() {
@@ -3622,7 +3641,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       });
     }
   }
-  modeSelect.addEventListener('change', () => { renderAssigneeControl(); updateStreakBonusVisibility(); });
+  modeSelect.addEventListener('change', () => { renderAssigneeControl(); });
 
   dailyRequirementCb.addEventListener('change', () => {
     if (dailyRequirementCb.checked) {
@@ -3631,7 +3650,6 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       modeSelect.value = 'eachMember';
     }
     renderAssigneeControl();
-    updateStreakBonusVisibility();
     updateScheduledDaysVisibility();
   });
 
@@ -3641,7 +3659,6 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   }
 
   renderAssigneeControl();
-  updateStreakBonusVisibility();
   updateScheduledDaysVisibility();
 
   form.appendChild(el('label', {}, 'Add a chore'));
@@ -3680,7 +3697,6 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   form.appendChild(el('label', {}, 'Frequency'));
   form.appendChild(frequencySelect);
   form.appendChild(scheduledDaysWrap);
-  form.appendChild(streakBonusInput);
   form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add chore'));
 
   form.addEventListener('submit', async (event) => {
@@ -3717,20 +3733,16 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       ...(rotation ? { rotation } : {}),
       frequency: frequencySelect.value,
       ...(frequencySelect.value === 'custom' ? { scheduledDays } : {}),
-      ...(!streakBonusInput.hidden && streakBonusInput.value
-        ? { dailyStreakBonusCentsPerDay: centsFromMajorUnits(streakBonusInput.value) }
-        : {}),
       active: true,
       createdBy: state.user.uid,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-    nameInput.value = ''; iconInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly'; streakBonusInput.value = '';
+    nameInput.value = ''; iconInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly';
     categorySelect.value = 'chore'; modeSelect.value = 'fixed'; dailyRequirementCb.checked = false;
     dayButtons.forEach((b) => b.classList.remove('primary'));
     if (applyToAllCb) applyToAllCb.checked = false;
     renderAssigneeControl();
-    updateStreakBonusVisibility();
     updateScheduledDaysVisibility();
   });
   return form;
@@ -3795,34 +3807,8 @@ function renderActiveChores(container) {
           }, chore.active === false ? 'Reactivate' : 'Deactivate'),
         ]),
       ]);
-      // Streak bonus only ever applies to a daily chore everyone does
-      // individually (see settlement.js's streak-bonus pass, and the
-      // matching visibility gate on the create form's streakBonusInput) --
-      // any other mode has no per-day streak to bonus at all.
-      if (mode === 'eachMember' && chore.frequency === 'daily') {
-        card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:10px;' }, [
-          el('label', { style: 'margin:0;' }, 'Streak bonus/day'),
-          (() => {
-            const input = el('input', {
-              type: 'number', min: '0', step: '0.01', style: 'max-width:100px;',
-              value: ((chore.dailyStreakBonusCentsPerDay || 0) / 100).toFixed(2),
-            });
-            const saveBtn = el('button', {
-              type: 'button', class: 'pill small',
-              onclick: async () => {
-                saveBtn.disabled = true;
-                try {
-                  const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-                  await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), {
-                    dailyStreakBonusCentsPerDay: centsFromMajorUnits(input.value),
-                  });
-                } catch (err) { alert(err.message); } finally { saveBtn.disabled = false; }
-              },
-            }, 'Save');
-            return el('div', { style: 'display:flex;gap:8px;' }, [input, saveBtn]);
-          })(),
-        ]));
-      }
+      // Per-chore streak bonus retired (ADR-0027) -- see Settings > Hot
+      // Streak Bonus for the unified per-child program that replaced it.
       // Which days a frequency:'custom' chore is due -- see ADR-0026's
       // scheduledDays field. Edit-in-place, same pattern as streak bonus above.
       if (chore.frequency === 'custom') {
@@ -3936,6 +3922,141 @@ function renderAllActivity() {
 // ---------------------------------------------------------------------
 // Settings tab (admin)
 // ---------------------------------------------------------------------
+// Settings > Hot Streak Bonus (mockups/hot-streak-bonus-mock.png, ADR-0027)
+// -- one bundled per-child program (enabled, amountCents, taskChoreIds),
+// replacing the old per-chore dailyStreakBonusCentsPerDay field entirely.
+// Config lives directly on the member doc (same direct-updateDoc pattern as
+// renderEditableAllowanceCard -- firestore.rules already lets an admin
+// update any member field except balanceCents, so no new callable is
+// needed). All-or-nothing weekly rule only, per the app owner: full
+// amountCents if EVERY selected task is approved EVERY day Mon-Sun, nothing
+// otherwise -- a late-approved task retroactively re-qualifies an
+// already-evaluated past week automatically (see onChoreLogReviewed), so
+// there's no separate "revert" action needed here, just approve the chore.
+function renderHotStreakBonusBody() {
+  const wrap = el('div', {});
+  const children = state.members.filter((m) => m.role === 'child' && m.active !== false);
+  if (children.length === 0) {
+    wrap.appendChild(el('div', { class: 'empty-state' }, 'Add a child first.'));
+    return wrap;
+  }
+  if (!state.hotStreakSettingsChildUid || !children.some((c) => c.uid === state.hotStreakSettingsChildUid)) {
+    state.hotStreakSettingsChildUid = children[0].uid;
+  }
+  const child = children.find((c) => c.uid === state.hotStreakSettingsChildUid);
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+  const cfg = child.hotStreakBonus || { enabled: false, amountCents: 0, taskChoreIds: [] };
+
+  if (children.length > 1) {
+    const childSelect = el('select', {}, children.map((c) => el(
+      'option', { value: c.uid, ...(c.uid === child.uid ? { selected: 'selected' } : {}) }, c.displayName || c.email
+    )));
+    childSelect.addEventListener('change', () => {
+      state.hotStreakSettingsChildUid = childSelect.value;
+      renderSettings();
+    });
+    wrap.appendChild(el('label', {}, 'Child'));
+    wrap.appendChild(childSelect);
+  }
+
+  const form = el('form', {});
+  const enableInput = el('input', { type: 'checkbox', ...(cfg.enabled ? { checked: 'checked' } : {}) });
+  form.appendChild(el('div', { class: 'more-toggle-row', style: 'padding:8px 0;' }, [
+    el('div', {}, [
+      el('div', { class: 'more-toggle-label' }, 'Enable hot streak bonus'),
+      el('div', { class: 'muted', style: 'font-size:0.78rem;' }, `Reward ${child.displayName || 'this child'} for completing selected daily tasks every day.`),
+    ]),
+    el('label', { class: 'theme-switch' }, [enableInput, el('span', { class: 'theme-switch-slider' })]),
+  ]));
+
+  const amountInput = el('input', { type: 'number', min: '0', step: '0.01', value: ((cfg.amountCents || 0) / 100).toFixed(2) });
+  form.appendChild(el('label', {}, `Bonus amount (${currency}/week)`));
+  form.appendChild(amountInput);
+
+  const dailyTasks = state.chores.filter(
+    (c) => c.active !== false && c.category === 'dailyTask' && resolvePool(c, activeChildUids()).includes(child.uid)
+  );
+  form.appendChild(el('label', {}, 'Included daily tasks'));
+  const taskCheckboxes = dailyTasks.map((c) => {
+    const cb = el('input', {
+      type: 'checkbox', value: c.id, style: 'width:auto;display:inline-block;margin-right:6px;',
+      ...((cfg.taskChoreIds || []).includes(c.id) ? { checked: 'checked' } : {}),
+    });
+    form.appendChild(el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:4px;' }, [cb, choreLabel(c)]));
+    return cb;
+  });
+  if (dailyTasks.length === 0) {
+    form.appendChild(el('div', { class: 'muted' }, `${child.displayName || 'This child'} has no daily tasks yet -- add one first (Manage Chores).`));
+  }
+
+  const errorEl = el('p', { class: 'error-text' });
+  errorEl.hidden = true;
+  form.appendChild(errorEl);
+  const saveBtn = el('button', { class: 'pill primary', type: 'submit' }, 'Save settings');
+  form.appendChild(saveBtn);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    errorEl.hidden = true;
+    saveBtn.disabled = true;
+    try {
+      const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await updateDoc(fsDoc(db, `families/${state.familyId}/members/${child.uid}`), {
+        hotStreakBonus: {
+          enabled: enableInput.checked,
+          amountCents: centsFromMajorUnits(amountInput.value),
+          taskChoreIds: taskCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
+        },
+      });
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+  wrap.appendChild(form);
+
+  // Live preview (mockup screen 3) -- always reflects the CURRENTLY SAVED
+  // config (cfg), not whatever's unsaved in the form above, so it always
+  // matches what the real weekly evaluation would actually find right now.
+  const taskChoreIds = cfg.taskChoreIds || [];
+  if (cfg.enabled && taskChoreIds.length > 0 && (cfg.amountCents || 0) > 0) {
+    const today = new Date();
+    const todayDateId = getIsoDateId(today);
+    const weekDateIds = getIsoWeekDates(today).map(getIsoDateId);
+    const dayStatus = computeHotStreakDayStatus(taskChoreIds, weekDateIds, child.uid, acceptedDaySwaps());
+    const elapsed = dayStatus.filter((d) => d.dateId <= todayDateId);
+    const daysComplete = elapsed.filter((d) => d.allDone).length;
+    const dayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+
+    const preview = el('div', { class: 'booking-card', style: 'margin-top:14px;' });
+    preview.appendChild(el('div', { class: 'row', style: 'align-items:center;' }, [
+      el('div', { class: 'muted', style: 'font-weight:700;' }, 'This week\'s streak preview'),
+    ]));
+    preview.appendChild(el('div', { style: 'display:flex;align-items:center;gap:10px;margin-top:8px;' }, [
+      svgIcon('flame', { size: 22, color: 'var(--accent2)' }),
+      el('div', {}, [
+        el('div', { style: 'font-weight:800;font-size:1.2rem;' }, `+${formatCents(cfg.amountCents, currency)} possible this week`),
+        el('div', { class: 'muted' }, `${taskChoreIds.length} task${taskChoreIds.length === 1 ? '' : 's'} selected`),
+      ]),
+    ]));
+    preview.appendChild(el('div', { class: 'streak-days-row', style: 'justify-content:flex-start;margin-top:12px;' },
+      weekDateIds.map((dateId, i) => el('div', {
+        class: `streak-day-dot ${dayStatus[i].allDone ? 'hit' : ''}`,
+      }, dayLetters[i]))));
+    preview.appendChild(el('div', { class: 'muted', style: 'margin-top:6px;' }, `${daysComplete} of ${elapsed.length} day${elapsed.length === 1 ? '' : 's'} complete`));
+    preview.appendChild(el('div', {
+      style: 'display:flex;align-items:center;gap:8px;margin-top:12px;padding:10px 12px;background:var(--panel2);border-radius:10px;font-size:0.82rem;',
+    }, [
+      svgIcon('infoCircle', { size: 16, color: 'var(--accent2)' }),
+      el('div', {}, 'Complete all selected daily tasks every day to earn the full streak bonus -- a task done late still counts once approved, even for a past week.'),
+    ]));
+    wrap.appendChild(preview);
+  }
+
+  return wrap;
+}
+
 function renderSettings() {
   const container = document.getElementById('page-settings');
   container.innerHTML = '';
@@ -3967,6 +4088,8 @@ function renderSettings() {
     });
   });
   container.appendChild(settingsForm);
+
+  container.appendChild(makeExpandable('Hot streak bonus', renderHotStreakBonusBody()));
 
   renderNotificationSettingsButton(container);
   container.appendChild(makeExpandable('Invite family member', renderAddMemberForm()));
