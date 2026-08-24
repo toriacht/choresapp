@@ -211,6 +211,44 @@
   .stat-tile .stat-value { font-size: 1.3rem; font-weight: 800; }
   .stat-tile .stat-label { font-size: 0.72rem; color: var(--muted); }
 
+  /* Weekly Base / Hot Streak / Extras / Deductions tiles (see
+     mockups/child dashboard.png, ADR-0026) -- 2x2 on a narrow phone,
+     4-across from a wide phone up, per the pasted designer spec. */
+  .balance-tile-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0;
+  }
+  @media (min-width: 480px) {
+    .balance-tile-grid { grid-template-columns: repeat(4, 1fr); }
+  }
+  .balance-tile { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
+  .balance-tile-head { display: flex; align-items: flex-start; justify-content: space-between; }
+  .balance-tile-icon {
+    width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--panel2); color: var(--accent2);
+  }
+  .balance-tile-icon.negative { background: var(--danger-tint); color: var(--danger); }
+  .balance-tile-label {
+    font-size: 0.68rem; font-weight: 700; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.03em; margin-top: 10px;
+  }
+  .balance-tile-value { font-size: 1.25rem; font-weight: 800; margin-top: 2px; }
+  .balance-tile-value.negative { color: var(--danger); }
+  .balance-tile-caption { font-size: 0.72rem; color: var(--muted); margin-top: 4px; }
+  .info-dot {
+    background: none; border: none; padding: 0; color: var(--muted); cursor: pointer;
+    display: inline-flex; align-items: center;
+  }
+
+  /* Hot Streak progress card (This week / Today / Hot Streak trio). */
+  .streak-days-row { display: flex; gap: 4px; justify-content: center; margin-top: 10px; }
+  .streak-day-dot {
+    width: 22px; height: 22px; border-radius: 50%; font-size: 0.62rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--panel2); color: var(--muted);
+  }
+  .streak-day-dot.hit { background: var(--accent2-fill); color: #fff; }
+
   .sub-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
   .sub-tab-btn {
     flex: 1; padding: 8px; border-radius: 8px; border: 1px solid var(--border);
@@ -849,6 +887,13 @@ const ICONS = {
   dishwasher: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 8h16"/><circle cx="7.5" cy="5.5" r="0.6"/><circle cx="16" cy="14" r="3"/>',
   trash: '<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12"/><path d="M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/>',
   vacuum: '<path d="M12 3v9"/><rect x="8" y="12" width="8" height="7" rx="1.5"/><circle cx="10" cy="21" r="1.3"/><circle cx="14" cy="21" r="1.3"/><path d="M4 11.5l4 1.2"/>',
+  // mockups/child dashboard.png: the 4 balance-tile icons (see ADR-0026's
+  // Dashboard redesign) -- circleMinus/infoCircle drawn as direct siblings
+  // of dollarCircle/checkCircleWithRing/helpCircle above (same r=9 circle,
+  // same stroke), calendarCheck traced from the mockup's "Weekly base" tile.
+  calendarCheck: '<rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/><path d="M8.5 14l2.2 2.2L15.5 12"/>',
+  circleMinus: '<circle cx="12" cy="12" r="9"/><path d="M7.5 12h9"/>',
+  infoCircle: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r="0.6"/>',
 };
 
 // Read-only translation for pre-ADR-0025 data: the onboarding wizard's 5
@@ -1865,7 +1910,7 @@ function pctLabel(approved, total) {
 //    from that computed payout is coming.
 // 4. No payout doc yet -- settlement hasn't run this week yet, so this is a
 //    live, still-changing PROJECTION of what settlement would compute if it
-//    ran right now (the same computeCurrentStreak-based estimate as before).
+//    ran right now.
 function computePendingPaymentLines(memberUid, member) {
   const weekId = getIsoWeekId(new Date());
   const thisWeekLedger = state.ledger.filter((tx) => tx.weekId === weekId && tx.memberUid === memberUid);
@@ -1889,22 +1934,55 @@ function computePendingPaymentLines(memberUid, member) {
     alreadySettled = true;
   } else {
     // Settlement hasn't run for this week yet -- a live, still-changing
-    // projection of what it WOULD compute right now. Prorated by chores
-    // actually done (base * done/total), mirroring settlement.js's own
-    // formula exactly (see ADR-0024) -- not all-or-nothing. A member with
-    // literally nothing assigned this week (total === 0) projects nothing,
-    // matching settlement's own "no assignment, no action" behavior.
-    const pendingAllowanceCents = weekProgress.total > 0
-      ? Math.round((member ? member.baseWeeklyAllowanceCents || 0 : 0) * weekProgress.done / weekProgress.total)
-      : 0;
-    if (pendingAllowanceCents > 0) {
-      baseLine = { label: `Base allowance (${weekProgress.done}/${weekProgress.total} done)`, cents: pendingAllowanceCents, pending: true };
+    // projection of what it WOULD compute right now. Base is unconditional
+    // (see ADR-0026, superseding ADR-0024's done/total proration) -- missed
+    // chores show up as their own separate, already-immediate
+    // missed_chore_deduction ledger lines instead, not a shrunken base.
+    const fullBaseCents = member ? member.baseWeeklyAllowanceCents || 0 : 0;
+    if (fullBaseCents > 0) {
+      baseLine = { label: 'Weekly allowance', cents: fullBaseCents, pending: true };
     }
     extraLines = computePendingStreakBonusLines(memberUid).map((l) => ({ label: l.label, cents: l.cents, pending: true }));
   }
 
   const lines = [...(baseLine ? [baseLine] : []), ...extraLines];
   return { lines, baseLine, extraLines, thisWeekLedger, alreadySettled, awaitingApproval, weekProgress };
+}
+
+// The single "Hot Streak" chore this member's progress card/tile highlights
+// -- the active-or-best daily streak among their eachMember daily chores
+// with a configured bonus (see computePendingStreakBonusLines for the
+// itemized multi-chore list this simplifies down from). hitDateIds is every
+// dateId this week (up to today) with an approved entry -- shown as the
+// M-T-W-T-F-S-S dot row, independent of the contiguous-streak reset logic
+// (a dot just means "done that day"), per mockups/child dashboard.png.
+function computeHotStreakSummary(memberUid) {
+  const today = new Date();
+  const todayDateId = getIsoDateId(today);
+  const weekDateIds = getIsoWeekDates(today).map(getIsoDateId);
+  const daySwaps = acceptedDaySwaps();
+  const pool0 = activeChildUids();
+  let best = null;
+  state.chores.forEach((chore) => {
+    if (chore.active === false || chore.frequency !== 'daily') return;
+    const bonusPerDay = chore.dailyStreakBonusCentsPerDay;
+    if (!Number.isInteger(bonusPerDay) || bonusPerDay <= 0) return;
+    if (resolveAssignmentMode(chore) !== 'eachMember') return;
+    if (!resolvePool(chore, pool0).includes(memberUid)) return;
+    const streak = getDisplayStreak(chore, memberUid, weekDateIds, todayDateId, daySwaps);
+    if (!best || streak > best.streak) best = { chore, streak, bonusPerDay };
+  });
+  if (!best) return null;
+  const hitDateIds = new Set();
+  weekDateIds.forEach((dateId) => {
+    if (dateId > todayDateId) return;
+    const executingUid = resolveEffectiveAssigneeForDate(best.chore.id, memberUid, dateId, daySwaps);
+    const approved = state.choreLog.some(
+      (e) => e.choreId === best.chore.id && e.memberUid === executingUid && e.dateId === dateId && e.status === 'approved'
+    );
+    if (approved) hitDateIds.add(dateId);
+  });
+  return { ...best, weekDateIds, todayDateId, hitDateIds };
 }
 
 // A small colored-circle emoji badge, used to give each money-activity line
@@ -1939,92 +2017,121 @@ function renderDashboard() {
   const { lines: pendingLines, baseLine, extraLines, thisWeekLedger, alreadySettled, awaitingApproval, weekProgress } =
     computePendingPaymentLines(state.user.uid, state.member);
 
-  // hasAnyAssignment/fullyDone mirror settlement.js's own gate (ADR-0024):
-  // the base allowance is prorated by done/total, not all-or-nothing, so
-  // "not fully done yet" is no longer a failure state -- it's just a
-  // number that's still growing, plus a visible ceiling for what's still
-  // achievable this week.
-  const hasAnyAssignment = weekProgress.total > 0;
-  const fullyDone = hasAnyAssignment && weekProgress.done === weekProgress.total;
+  // Base is unconditional (ADR-0026) -- exactly one of settledBaseCents /
+  // baseLine.cents is ever nonzero for a given week, so summing them just
+  // picks whichever applies right now (already an actual ledger row vs
+  // still a live projection of that same full amount). Hot Streak, Extras,
+  // and Deductions are each their own figure (not netted together) so a
+  // glance shows what's coming from where -- missed chores/tasks now show
+  // up here as their own itemized, already-immediate
+  // missed_chore_deduction/missed_chore_reversal ledger lines rather than
+  // silently shrinking Base.
   const fullBaseCents = state.member ? state.member.baseWeeklyAllowanceCents || 0 : 0;
-  const stillAchievableCents = (!alreadySettled && !awaitingApproval && hasAnyAssignment && !fullyDone)
-    ? Math.max(0, fullBaseCents - (baseLine ? baseLine.cents : 0))
-    : 0;
-  const remainingChoreCount = weekProgress.total - weekProgress.done;
-
-  // Base = this week's allowance, whether it's already an actual ledger
-  // row (paid) or still a line item (awaiting approval / a live
-  // projection) -- exactly one of those is ever nonzero at a time, so
-  // adding them together just picks whichever applies right now. Extras
-  // and Deductions are split into two separate figures (rather than one
-  // net "Extras") so a glance shows both what was earned AND what was
-  // lost, not just the difference -- both are always real, immediate
-  // ledger rows the moment an admin logs them (never "pending"), unlike
-  // Base's still-projected portion.
   const settledBaseCents = thisWeekLedger.filter((tx) => tx.type === 'weekly_payout').reduce((s, tx) => s + tx.amountCents, 0);
   const baseAmountCents = settledBaseCents + (baseLine ? baseLine.cents : 0);
-  const nonBaseLedger = thisWeekLedger.filter((tx) => tx.type !== 'weekly_payout');
-  const extrasAmountCents = nonBaseLedger.filter((tx) => tx.amountCents > 0).reduce((s, tx) => s + tx.amountCents, 0)
-    + extraLines.reduce((s, l) => s + l.cents, 0);
-  const deductionsAmountCents = nonBaseLedger.filter((tx) => tx.amountCents < 0).reduce((s, tx) => s + tx.amountCents, 0);
-  const totalCents = baseAmountCents + extrasAmountCents + deductionsAmountCents;
+
+  const settledStreakCents = thisWeekLedger.filter((tx) => tx.type === 'streak_bonus').reduce((s, tx) => s + tx.amountCents, 0);
+  const liveStreakCents = extraLines.reduce((s, l) => s + l.cents, 0);
+  const hotStreakCents = settledStreakCents + liveStreakCents;
+
+  const extrasAmountCents = thisWeekLedger
+    .filter((tx) => tx.type === 'extra_job_credit' || (tx.type === 'manual_adjustment' && tx.amountCents > 0))
+    .reduce((s, tx) => s + tx.amountCents, 0);
+  const deductionsAmountCents = thisWeekLedger
+    .filter((tx) => tx.type === 'deduction' || tx.type === 'missed_chore_deduction' || tx.type === 'missed_chore_reversal'
+      || (tx.type === 'manual_adjustment' && tx.amountCents < 0))
+    .reduce((s, tx) => s + tx.amountCents, 0);
+
+  const totalCents = baseAmountCents + hotStreakCents + extrasAmountCents + deductionsAmountCents;
+  const earnedSoFarCents = thisWeekLedger.reduce((s, tx) => s + tx.amountCents, 0);
+  const remainingChoreCount = Math.max(0, weekProgress.total - weekProgress.done);
 
   const runningTotalStatus = awaitingApproval ? 'Awaiting approval' : alreadySettled ? 'Settled' : 'Pending';
+  const hotStreak = computeHotStreakSummary(state.user.uid);
+  const dayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  const infoBtn = (text) => el('button', {
+    type: 'button', class: 'info-dot', onclick: () => alert(text),
+  }, svgIcon('infoCircle', { size: 14 }));
 
   const balanceCard = el('div', { class: 'booking-card' });
-  balanceCard.appendChild(el('div', { class: 'row', style: 'align-items:center;' }, [
-    el('div', { class: 'muted', style: 'font-weight:700;' }, 'Running total'),
+  balanceCard.appendChild(el('div', { class: 'row', style: 'align-items:center;gap:8px;' }, [
+    el('div', { class: 'muted', style: 'font-weight:700;flex:1;' }, "This week's running total"),
     el('span', { class: 'status-pill status-done' }, runningTotalStatus),
+    infoBtn("Your running total for the week: the full weekly base plus any hot streak bonus, extras, and deductions so far. The base and streak are live projections until settlement each Friday; extras and deductions are already final the moment they're logged."),
   ]));
-  balanceCard.appendChild(el('div', { class: 'muted', style: 'margin-top:10px;' }, "This week's money"));
-  balanceCard.appendChild(el('div', { style: 'font-weight:800;font-size:2rem;color:var(--success);' },
+  balanceCard.appendChild(el('div', { style: 'font-weight:800;font-size:2rem;color:var(--success);margin-top:6px;' },
     formatCents(totalCents, currency)));
   if (!alreadySettled && !awaitingApproval) {
-    balanceCard.appendChild(el('div', { class: 'muted', style: 'font-size:0.78rem;' }, 'Total can change during the week'));
+    balanceCard.appendChild(el('div', { class: 'muted', style: 'font-size:0.78rem;' }, 'Can change during the week'));
   }
-  balanceCard.appendChild(el('div', { class: 'stat-grid', style: 'margin-top:12px;margin-bottom:0;grid-template-columns:repeat(3,1fr);' }, [
-    el('div', { class: 'stat-tile' }, [
-      // baseAmountCents (what's actually earned/settled so far this week),
-      // not fullBaseCents (the sticker-price full allowance) -- showing the
-      // full amount here would make this tile disagree with the total
-      // above whenever the week isn't 100% done yet (base * done/total <
-      // full base), which read as "the totals don't add up".
-      el('div', { class: 'stat-value', style: 'font-size:1rem;' }, formatCents(baseAmountCents, currency)),
-      el('div', { class: 'stat-label' }, 'Base allowance'),
-      (!alreadySettled && !awaitingApproval && baseAmountCents < fullBaseCents)
-        ? el('div', { class: 'muted', style: 'font-size:0.68rem;' }, `of ${formatCents(fullBaseCents, currency)}`)
-        : null,
+  balanceCard.appendChild(el('div', {
+    style: 'display:flex;align-items:baseline;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:0.88rem;',
+  }, [
+    el('span', {}, "You've earned"),
+    el('span', { style: 'font-weight:800;color:var(--success);' }, formatCents(earnedSoFarCents, currency)),
+    el('span', {}, 'so far this week'),
+  ]));
+
+  balanceCard.appendChild(el('div', { class: 'balance-tile-grid' }, [
+    el('div', { class: 'balance-tile' }, [
+      el('div', { class: 'balance-tile-head' }, [
+        el('div', { class: 'balance-tile-icon' }, svgIcon('calendarCheck', { size: 20 })),
+        infoBtn('Your weekly allowance -- added in full every week, no matter what.'),
+      ]),
+      el('div', { class: 'balance-tile-label' }, 'Weekly base'),
+      el('div', { class: 'balance-tile-value' }, `+${formatCents(baseAmountCents, currency)}`),
+      el('div', { class: 'balance-tile-caption' }, 'Always added each week'),
     ]),
-    el('div', { class: 'stat-tile' }, [
-      el('div', { class: 'stat-value', style: 'font-size:1rem;color:var(--success);' }, `+${formatCents(extrasAmountCents, currency)}`),
-      el('div', { class: 'stat-label' }, 'Extras'),
+    el('div', { class: 'balance-tile' }, [
+      el('div', { class: 'balance-tile-head' }, [
+        el('div', { class: 'balance-tile-icon' }, svgIcon('flame', { size: 20 })),
+        infoBtn('Extra money for keeping a daily task streak going -- a missed day breaks it, and it restarts the next day you do the task.'),
+      ]),
+      el('div', { class: 'balance-tile-label' }, 'Hot streak bonus'),
+      el('div', { class: 'balance-tile-value' }, `+${formatCents(hotStreakCents, currency)}`),
+      el('div', { class: 'balance-tile-caption' }, hotStreak && hotStreak.streak > 0
+        ? [svgIcon('flame', { size: 12, color: 'var(--accent2)' }), ` ${hotStreak.streak} day streak · +${formatCents(hotStreak.bonusPerDay, currency)}/day`]
+        : 'No active streak yet'),
     ]),
-    el('div', { class: 'stat-tile' }, [
-      el('div', { class: 'stat-value', style: 'font-size:1rem;color:var(--danger);' }, formatCents(deductionsAmountCents, currency)),
-      el('div', { class: 'stat-label' }, 'Deductions'),
+    el('div', { class: 'balance-tile' }, [
+      el('div', { class: 'balance-tile-head' }, [
+        el('div', { class: 'balance-tile-icon' }, svgIcon('star', { size: 20 })),
+        infoBtn('Money from extra jobs an admin approved this week.'),
+      ]),
+      el('div', { class: 'balance-tile-label' }, 'Extras'),
+      el('div', { class: 'balance-tile-value' }, `+${formatCents(extrasAmountCents, currency)}`),
+      el('div', { class: 'balance-tile-caption' }, 'From extra tasks this week'),
+    ]),
+    el('div', { class: 'balance-tile' }, [
+      el('div', { class: 'balance-tile-head' }, [
+        el('div', { class: 'balance-tile-icon negative' }, svgIcon('circleMinus', { size: 20 })),
+        infoBtn("Missed chores/tasks and any admin deductions this week. Doing a missed one late and getting it approved credits the exact amount straight back as its own line."),
+      ]),
+      el('div', { class: 'balance-tile-label' }, 'Deductions'),
+      el('div', { class: `balance-tile-value ${deductionsAmountCents < 0 ? 'negative' : ''}` }, formatCents(deductionsAmountCents, currency)),
+      el('div', { class: 'balance-tile-caption' }, 'From missed tasks or choices'),
     ]),
   ]));
-  if (stillAchievableCents > 0) {
+  if (!alreadySettled && !awaitingApproval && remainingChoreCount > 0) {
     balanceCard.appendChild(el('div', {
       style: 'display:flex;align-items:center;gap:10px;margin-top:14px;padding:10px 12px;'
         + 'background:var(--panel2);border-radius:10px;',
     }, [
       svgIcon('award', { size: 22, color: 'var(--accent2)' }),
       el('div', { style: 'font-size:0.85rem;font-weight:600;' },
-        `Keep going -- finish your last ${remainingChoreCount === 1 ? 'chore' : `${remainingChoreCount} chores`} to improve this week's total!`),
+        `Keep going! ${remainingChoreCount === 1 ? 'One more chore' : `${remainingChoreCount} more chores`} can boost this week's total.`),
     ]));
   }
   container.appendChild(balanceCard);
 
-  // Weekly ring LEFT, today's ring RIGHT -- each clearly headed, each a
-  // 3-color donut (green approved / orange awaiting approval / muted not
-  // started) so a glance shows not just "how much" but "how much is stuck
-  // waiting on me to review" too.
+  // This week / Today / Hot Streak, side by side -- the first two are the
+  // same 3-color completion donuts as before; Hot Streak instead shows a
+  // day count plus an M-T-W-T-F-S-S dot row (see computeHotStreakSummary).
   const dayItems = getDayViewItems(todayDateId);
   const dayApproved = dayItems.filter((i) => i.status === 'approved').length;
   const dayPending = dayItems.filter((i) => i.status === 'done').length;
 
-  container.appendChild(el('div', { class: 'stat-grid' }, [
+  container.appendChild(el('div', { class: 'stat-grid', style: 'grid-template-columns:repeat(3,1fr);' }, [
     el('div', { class: 'booking-card', style: 'text-align:center;' }, [
       el('div', { class: 'ring-heading' }, 'This week'),
       renderProgressRing({
@@ -2041,6 +2148,21 @@ function renderDashboard() {
       }),
       el('div', { class: 'muted' }, `${dayApproved}/${dayItems.length} done`),
     ]),
+    el('div', { class: 'booking-card', style: 'text-align:center;' }, [
+      el('div', { class: 'ring-heading' }, 'Hot streak'),
+      hotStreak ? el('div', {}, [
+        el('div', { style: 'display:flex;align-items:center;justify-content:center;gap:6px;margin-top:6px;' }, [
+          svgIcon('flame', { size: 22, color: 'var(--accent2)' }),
+          el('div', { style: 'font-weight:800;font-size:1.3rem;' }, String(hotStreak.streak)),
+        ]),
+        el('div', { class: 'muted' }, hotStreak.streak === 1 ? 'day' : 'days'),
+        el('div', { class: 'streak-days-row' }, hotStreak.weekDateIds.map((dateId, i) => el('div', {
+          class: `streak-day-dot ${hotStreak.hitDateIds.has(dateId) ? 'hit' : ''}`,
+        }, dayLetters[i]))),
+        el('div', { class: 'muted', style: 'font-size:0.68rem;margin-top:6px;' },
+          `+${formatCents(hotStreak.bonusPerDay, currency)}/day if it continues`),
+      ]) : el('div', { class: 'muted', style: 'padding:24px 0;' }, 'No streak task yet'),
+    ]),
   ]));
 
   // Itemized breakdown, right below the rings -- every settled entry this
@@ -2053,7 +2175,7 @@ function renderDashboard() {
     ...thisWeekLedger.map((tx) => ({ label: tx.note || tx.type.replace(/_/g, ' '), cents: tx.amountCents, pending: false })),
     ...pendingLines,
   ];
-  if (calcLines.length > 0 || stillAchievableCents > 0) {
+  if (calcLines.length > 0) {
     const calcBody = el('div', {});
     calcLines.forEach((line) => {
       const positive = line.cents >= 0;
@@ -2066,12 +2188,6 @@ function renderDashboard() {
         el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(line.cents, currency)}`),
       ]));
     });
-    if (stillAchievableCents > 0) {
-      calcBody.appendChild(el('div', { class: 'payment-line' }, [
-        el('div', { class: 'muted', style: 'color:var(--warn);' },
-          `+${formatCents(stillAchievableCents, currency)} still possible -- ${remainingChoreCount} chore${remainingChoreCount === 1 ? '' : 's'} left`),
-      ]));
-    }
     calcBody.appendChild(el('div', {
       class: 'payment-line', style: 'background:var(--panel2);border-radius:8px;padding:8px 10px;font-weight:700;margin-top:6px;',
     }, [
@@ -3450,8 +3566,24 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   const frequencySelect = el('select', {}, [
     el('option', { value: 'weekly' }, 'Standing weekly chore'),
     el('option', { value: 'daily' }, 'Daily task (every day)'),
+    el('option', { value: 'custom' }, 'Specific days (e.g. Mon/Wed/Fri)'),
     el('option', { value: 'once' }, 'One-off task (this week only)'),
   ]);
+
+  // Only shown for frequency:'custom' -- see ADR-0026. ISO weekday numbers
+  // (1=Mon..7=Sun) are the wire format (chore.scheduledDays), matching
+  // functions/lib/missedChores.js:resolveChoreDueDateIds exactly.
+  const DAY_LABELS = [['M', 1], ['T', 2], ['W', 3], ['T', 4], ['F', 5], ['S', 6], ['S', 7]];
+  const dayButtons = DAY_LABELS.map(([label, isoDay]) => {
+    const btn = el('button', { type: 'button', class: 'pill small', 'data-day': String(isoDay) }, label);
+    btn.addEventListener('click', () => btn.classList.toggle('primary'));
+    return btn;
+  });
+  const scheduledDaysWrap = el('div', { style: 'display:flex;gap:6px;margin-bottom:10px;', hidden: true }, dayButtons);
+  function updateScheduledDaysVisibility() {
+    scheduledDaysWrap.hidden = frequencySelect.value !== 'custom';
+  }
+  frequencySelect.addEventListener('change', updateScheduledDaysVisibility);
   // One-tap default-setter for the common case (category/frequency/mode are
   // otherwise three separate abstract choices a parent has to correctly
   // combine to get a working daily requirement, e.g. "make your bed"). Left
@@ -3500,6 +3632,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     }
     renderAssigneeControl();
     updateStreakBonusVisibility();
+    updateScheduledDaysVisibility();
   });
 
   if (presetChildUid) {
@@ -3509,6 +3642,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
 
   renderAssigneeControl();
   updateStreakBonusVisibility();
+  updateScheduledDaysVisibility();
 
   form.appendChild(el('label', {}, 'Add a chore'));
   if (state.choreTemplates.filter((t) => t.active !== false).length > 0) {
@@ -3545,11 +3679,16 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   }
   form.appendChild(el('label', {}, 'Frequency'));
   form.appendChild(frequencySelect);
+  form.appendChild(scheduledDaysWrap);
   form.appendChild(streakBonusInput);
   form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add chore'));
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (frequencySelect.value === 'custom' && !dayButtons.some((b) => b.classList.contains('primary'))) {
+      alert('Pick at least one day for this chore.');
+      return;
+    }
     const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
     const mode = modeSelect.value;
     let assignedTo, rotation;
@@ -3566,6 +3705,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
         rotation = { pool: checked, history, currentAssigneeUid: first || null, currentAssigneeWeekId: first ? weekId : null };
       }
     }
+    const scheduledDays = dayButtons.filter((b) => b.classList.contains('primary')).map((b) => Number(b.dataset.day));
 
     await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
       name: nameInput.value.trim(),
@@ -3576,6 +3716,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       assignedTo,
       ...(rotation ? { rotation } : {}),
       frequency: frequencySelect.value,
+      ...(frequencySelect.value === 'custom' ? { scheduledDays } : {}),
       ...(!streakBonusInput.hidden && streakBonusInput.value
         ? { dailyStreakBonusCentsPerDay: centsFromMajorUnits(streakBonusInput.value) }
         : {}),
@@ -3586,9 +3727,11 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     });
     nameInput.value = ''; iconInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly'; streakBonusInput.value = '';
     categorySelect.value = 'chore'; modeSelect.value = 'fixed'; dailyRequirementCb.checked = false;
+    dayButtons.forEach((b) => b.classList.remove('primary'));
     if (applyToAllCb) applyToAllCb.checked = false;
     renderAssigneeControl();
     updateStreakBonusVisibility();
+    updateScheduledDaysVisibility();
   });
   return form;
 }
@@ -3632,6 +3775,11 @@ function renderActiveChores(container) {
       } else {
         assignedLabel = memberLabel((chore.assignedTo || [])[0]);
       }
+      if (chore.frequency === 'custom') {
+        const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const days = (chore.scheduledDays || []).slice().sort().map((d) => dayNames[d]).join('/');
+        assignedLabel += ` — ${days || 'no days picked'}`;
+      }
       const card = el('div', { class: 'booking-card' }, [
         el('div', { class: 'row' }, [
           el('div', {}, [
@@ -3673,6 +3821,33 @@ function renderActiveChores(container) {
             }, 'Save');
             return el('div', { style: 'display:flex;gap:8px;' }, [input, saveBtn]);
           })(),
+        ]));
+      }
+      // Which days a frequency:'custom' chore is due -- see ADR-0026's
+      // scheduledDays field. Edit-in-place, same pattern as streak bonus above.
+      if (chore.frequency === 'custom') {
+        const dayLabels = [['M', 1], ['T', 2], ['W', 3], ['T', 4], ['F', 5], ['S', 6], ['S', 7]];
+        const selected = new Set(chore.scheduledDays || []);
+        const editDayButtons = dayLabels.map(([label, isoDay]) => {
+          const btn = el('button', {
+            type: 'button', class: `pill small${selected.has(isoDay) ? ' primary' : ''}`, 'data-day': String(isoDay),
+          }, label);
+          btn.addEventListener('click', () => btn.classList.toggle('primary'));
+          return btn;
+        });
+        const saveDaysBtn = el('button', {
+          type: 'button', class: 'pill small',
+          onclick: async () => {
+            saveDaysBtn.disabled = true;
+            try {
+              const scheduledDays = editDayButtons.filter((b) => b.classList.contains('primary')).map((b) => Number(b.dataset.day));
+              const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+              await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { scheduledDays });
+            } catch (err) { alert(err.message); } finally { saveDaysBtn.disabled = false; }
+          },
+        }, 'Save');
+        card.appendChild(el('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap;' }, [
+          el('label', { style: 'margin:0;' }, 'Days'), ...editDayButtons, saveDaysBtn,
         ]));
       }
       container.appendChild(card);
