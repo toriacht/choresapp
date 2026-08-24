@@ -675,6 +675,7 @@ const callLogDeduction = httpsCallable(functions, 'logDeduction');
 const callApproveWeeklyPayout = httpsCallable(functions, 'approveWeeklyPayout');
 const callDeclineWeeklyPayout = httpsCallable(functions, 'declineWeeklyPayout');
 const callRegisterFcmToken = httpsCallable(functions, 'registerFcmToken');
+const callUnregisterFcmToken = httpsCallable(functions, 'unregisterFcmToken');
 const callAddFamilyMember = httpsCallable(functions, 'addFamilyMember');
 const callCreateFamilyAndAdmin = httpsCallable(functions, 'createFamilyAndAdmin');
 const callProposeChoreSwap = httpsCallable(functions, 'proposeChoreSwap');
@@ -1441,11 +1442,27 @@ async function enablePushNotifications() {
     throw new Error('Could not get a notification token.');
   }
   await callRegisterFcmToken({ token });
-  try { localStorage.setItem('choresAppPushEnabled', 'true'); } catch (e) {}
+  // The token itself (not just a boolean) so disablePushNotifications can
+  // unregister the exact same one -- getToken() would return it again
+  // anyway once permission is granted, but storing it avoids a redundant
+  // round trip and keeps enable/disable symmetric.
+  try { localStorage.setItem('choresAppPushToken', token); } catch (e) {}
 }
 
+// The other half of enablePushNotifications -- turns this device's push
+// off again. Only unregisters THIS device's token (arrayRemove server-side,
+// see functions/lib/notify.js), other devices/family members are untouched.
+async function disablePushNotifications() {
+  const token = getStoredPushToken();
+  if (token) await callUnregisterFcmToken({ token });
+  try { localStorage.removeItem('choresAppPushToken'); } catch (e) {}
+}
+
+function getStoredPushToken() {
+  try { return localStorage.getItem('choresAppPushToken'); } catch (e) { return null; }
+}
 function isPushEnabledLocally() {
-  try { return localStorage.getItem('choresAppPushEnabled') === 'true'; } catch (e) { return false; }
+  return !!getStoredPushToken();
 }
 
 // Foreground messages: the in-app inbox's realtime Firestore listener
@@ -1459,18 +1476,34 @@ isMessagingSupported().then((supported) => {
   onMessage(getMessaging(app), () => {});
 }).catch(() => {});
 
+// A real on/off switch (reusing the same .theme-switch look as the dark
+// mode toggle), not a link whose label text just changes -- a tap-to-toggle
+// link was too easy to miss whether it actually took effect.
 function renderNotificationSettingsButton(container) {
-  container.appendChild(renderMoreLink(
-    isPushEnabledLocally() ? 'Notifications enabled' : 'Enable notifications',
-    async () => {
-      try {
-        await enablePushNotifications();
-        renderCurrentTab();
-      } catch (err) {
-        alert(err.message);
-      }
+  const wrap = el('div', { class: 'more-item' });
+  const enabled = isPushEnabledLocally();
+  const input = el('input', { type: 'checkbox', ...(enabled ? { checked: 'checked' } : {}) });
+  const subEl = el('div', { class: 'muted', style: 'font-size:0.78rem;margin-top:2px;' },
+    enabled ? 'On for this device' : 'Off -- turn on to get alerts outside the app');
+  input.addEventListener('change', async () => {
+    const turningOn = input.checked;
+    input.disabled = true;
+    try {
+      if (turningOn) await enablePushNotifications();
+      else await disablePushNotifications();
+    } catch (err) {
+      input.checked = !turningOn;
+      alert(err.message);
+    } finally {
+      input.disabled = false;
+      renderCurrentTab();
     }
-  ));
+  });
+  wrap.appendChild(el('div', { class: 'more-toggle-row' }, [
+    el('div', {}, [el('span', { class: 'more-toggle-label' }, 'Push notifications'), subEl]),
+    el('label', { class: 'theme-switch' }, [input, el('span', { class: 'theme-switch-slider' })]),
+  ]));
+  container.appendChild(wrap);
 }
 
 function isStandalone() {
@@ -4541,7 +4574,7 @@ let wizardSaveAsTemplates = true;
 function renderWizardProgress() {
   const bar = document.getElementById('wizardProgress');
   bar.innerHTML = '';
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     bar.appendChild(el('div', { class: `wizard-dot ${i <= wizardStep ? 'active' : ''}` }));
   }
 }
@@ -4713,6 +4746,23 @@ function renderWizardStep() {
   }
 
   if (wizardStep === 4) {
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, 'Stay in the loop'));
+    card.appendChild(el('p', { class: 'muted' },
+      'Turn on notifications so you (and your kids) hear about chores marked done, approvals, and more right away -- not just next time you open the app.'));
+    // Same real on/off toggle as Settings/More -- its own renderCurrentTab()
+    // call is a harmless no-op here (the app screen is still hidden while
+    // onboarding is showing), so it's safe to reuse as-is.
+    renderNotificationSettingsButton(card);
+    card.appendChild(el('button', {
+      class: 'pill primary', style: 'width:100%;margin-top:10px;', type: 'button',
+      onclick: () => { wizardStep = 5; renderWizardStep(); },
+    }, 'Continue'));
+    content.appendChild(card);
+    return;
+  }
+
+  if (wizardStep === 5) {
     content.appendChild(el('div', { class: 'wizard-card' }, [
       el('h1', {}, "You're all set!"),
       el('p', { class: 'muted' }, 'Your family is ready to go. You can add more chores, invite more kids, or re-run this wizard anytime from Settings.'),
