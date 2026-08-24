@@ -59,6 +59,16 @@
   .booking-card.warn { border-left-color: var(--warn); }
   .booking-card.done { border-left-color: var(--success); }
   .booking-card.missed { opacity: 0.6; border-left-color: var(--danger); }
+  /* renderWizardOptionCard renders as a real <button> (not a <div>) for
+     reliable tap handling on Android -- a <div onclick>'s synthetic click
+     can be swallowed by any finger movement inside a scrollable container
+     between touchstart/touchend, unlike a native button's tap semantics.
+     Reset the browser's default button chrome back to the .booking-card
+     look, and add touch-action to remove any residual tap-delay ambiguity. */
+  button.booking-card {
+    display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+    cursor: pointer; touch-action: manipulation;
+  }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .muted { color: var(--muted); font-size: 0.85rem; }
   .amount { font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -92,6 +102,19 @@
   input, select, textarea {
     width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--panel); color: var(--text); font-size: 0.9rem; margin-bottom: 8px;
+  }
+  /* Replace the OS-default select arrow with a themed chevron -- the box
+     itself already picks up the border/background/padding above; only the
+     native caret was left unstyled. Two data-URIs (one per theme) since a
+     background-image can't reference a CSS custom property directly. */
+  select {
+    appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    padding-right: 32px;
+    background-repeat: no-repeat; background-position: right 10px center; background-size: 16px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23334155' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  }
+  :root[data-theme="dark"] select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a8b7c9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   }
   select.icon-input { width: 112px; flex: none; }
   label { font-size: 0.78rem; font-weight: 600; color: var(--muted); display: block; margin-bottom: 4px; }
@@ -264,6 +287,7 @@
   .wizard-card p { font-size: 1.05rem; line-height: 1.5; color: var(--text); }
   .wizard-card label { font-size: 0.9rem; }
   .wizard-card input, .wizard-card select { font-size: 1.05rem; padding: 13px 14px; margin-bottom: 12px; }
+  .wizard-card select { padding-right: 36px; background-position: right 12px center; }
   .wizard-card button.pill { font-size: 1rem; padding: 15px 20px; }
   .wizard-card button.pill.small { font-size: 0.85rem; padding: 8px 14px; }
 
@@ -291,16 +315,19 @@
   .entry-row-sub { font-size: 0.8rem; color: var(--muted); }
   .entry-row-chevron { margin-left: auto; color: var(--muted); flex-shrink: 0; }
 
-  /* Admin Dashboard -- 2-column icon quick-action grid. */
-  .quick-action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+  /* Admin Dashboard -- full-width, single-column quick-action list (was a
+     2-column icon grid; stacked centered icon+label read cramped on a phone
+     once each button spans the full screen width). */
+  .quick-action-grid { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 8px; }
   .quick-action-btn {
-    display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 8px;
+    display: flex; flex-direction: row; align-items: center; gap: 12px; width: 100%;
+    padding: 14px 16px; text-align: left; touch-action: manipulation;
     background: var(--panel); border: none; border-radius: 12px; cursor: pointer; color: var(--text);
-    font-weight: 700; font-size: 0.85rem;
+    font-weight: 700; font-size: 0.9rem;
   }
   .quick-action-icon {
     width: 38px; height: 38px; border-radius: 999px; background: var(--panel2); color: var(--accent2);
-    display: flex; align-items: center; justify-content: center;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
   .avatar-circle {
     width: 40px; height: 40px; border-radius: 999px; background: var(--panel2); color: var(--accent2);
@@ -499,7 +526,7 @@
     <div id="wizardContent"></div>
   </div>
 
-  <!-- Admin wizards (ADR-0030) -- "Run setup wizard" (reassign existing
+  <!-- Admin wizards (ADR-0030) -- "Assign chore wizard" (reassign existing
        chores/daily tasks) and "Add chores/tasks to library" (guided
        creation). Re-runnable any time, unlike the one-time onboarding
        wizard above -- separate screen/state so the two never collide. -->
@@ -924,20 +951,21 @@ const EMOJI_ICON_MAP = {
   '🛏️': 'bed', '🧹': 'broom', '🍽️': 'dishwasher', '🗑️': 'trash', '🧼': 'vacuum',
 };
 
-// ADR-0025: no free-text/emoji icon entry anywhere in the app -- every
-// icon field is set by picking from this closed list (the current ICONS
-// set), never typed. "No icon" is always a valid, first-listed choice.
-// When a chore concept has no matching glyph yet, that's a request for a
-// new icon from the app owner, not a prompt for the user to supply one.
+// ADR-0025 (amended): no free-text/emoji icon entry anywhere in the app --
+// every icon field is set by picking from this closed list (the current
+// ICONS set), never typed. "No icon" was removed as a choice -- every chore
+// gets a real icon, defaulting to 'broom' when nothing else is picked, since
+// an icon-less chore card read as unfinished rather than intentional. When a
+// chore concept has no matching glyph yet, that's a request for a new icon
+// from the app owner, not a prompt for the user to supply one.
 const CHORE_ICON_CHOICES = [
-  { key: '', label: 'No icon' },
   { key: 'bed', label: 'Bed' },
   { key: 'broom', label: 'Broom' },
   { key: 'dishwasher', label: 'Dishwasher' },
   { key: 'trash', label: 'Trash' },
   { key: 'vacuum', label: 'Vacuum' },
 ];
-function renderIconPicker(currentValue = '') {
+function renderIconPicker(currentValue = 'broom') {
   const select = el('select', { class: 'icon-input' });
   CHORE_ICON_CHOICES.forEach((c) => {
     select.appendChild(el('option', { value: c.key, ...(currentValue === c.key ? { selected: 'selected' } : {}) }, c.label));
@@ -946,14 +974,13 @@ function renderIconPicker(currentValue = '') {
 }
 
 // Coerces whatever a chore/template's stored `icon` field actually holds
-// (a valid picker key going forward; a legacy emoji from before ADR-0025
-// for older data) into a value renderIconPicker's <select> can actually
-// select -- unrecognized values (a family's old free-typed emoji) fall
-// back to "No icon" rather than leaving the picker on a phantom option.
+// (a valid picker key going forward; a legacy emoji from before ADR-0025;
+// or '' from before "No icon" was removed as a choice) into a value
+// renderIconPicker's <select> can actually select -- anything unrecognized
+// falls back to 'broom', the picker's default, rather than a phantom option.
 function resolveIconPickerValue(rawIcon) {
-  if (!rawIcon) return '';
   if (CHORE_ICON_CHOICES.some((c) => c.key === rawIcon)) return rawIcon;
-  return EMOJI_ICON_MAP[rawIcon] || '';
+  return EMOJI_ICON_MAP[rawIcon] || 'broom';
 }
 
 // Builds a real <svg> element from one of the ICONS path strings above --
@@ -1894,13 +1921,16 @@ async function viewProof(path, imgSlot) {
 }
 
 function choreLabel(chore) {
-  if (!chore.icon) return el('span', {}, chore.name);
   // Post-ADR-0025 data stores a real ICONS key (e.g. 'bed') directly;
   // pre-ADR-0025 data may still hold one of the wizard's 5 legacy emoji
   // defaults (EMOJI_ICON_MAP) or, rarer, a family's old free-typed emoji,
-  // which has no icon-system equivalent and just renders as-is.
-  const iconKey = ICONS[chore.icon] ? chore.icon : EMOJI_ICON_MAP[chore.icon];
-  const iconNode = iconKey ? svgIcon(iconKey, { size: 17, color: 'var(--accent2)' }) : chore.icon;
+  // which has no icon-system equivalent and just renders as-is. A chore
+  // saved before "No icon" was removed as a choice has no icon field at
+  // all -- infer 'broom' at read time, same as the picker's own default
+  // (see resolveIconPickerValue), no backfill needed.
+  const rawIcon = chore.icon || 'broom';
+  const iconKey = ICONS[rawIcon] ? rawIcon : EMOJI_ICON_MAP[rawIcon];
+  const iconNode = iconKey ? svgIcon(iconKey, { size: 17, color: 'var(--accent2)' }) : rawIcon;
   return el('span', {}, [el('span', { class: 'icon-prefix' }, iconNode), chore.name]);
 }
 
@@ -3072,7 +3102,7 @@ function renderAdminDashboard() {
     ]);
   }
   container.appendChild(el('div', { class: 'quick-action-grid' }, [
-    quickActionBtn('broom', 'Run setup wizard', openRunWizard),
+    quickActionBtn('broom', 'Assign chore wizard', () => openRunWizard()),
     quickActionBtn(null, 'Add chores to library', () => openAddWizard('chore')),
     quickActionBtn(null, 'Add daily tasks to library', () => openAddWizard('dailyTask')),
     quickActionBtn('people', 'Manage kids', () => switchTab('kids')),
@@ -3153,6 +3183,11 @@ function renderKidDetailBody(container, uid) {
       }),
     ]),
   ]));
+
+  container.appendChild(el('button', {
+    type: 'button', class: 'pill', style: 'width:100%;margin-bottom:10px;',
+    onclick: () => openRunWizard(uid),
+  }, `Assign chores for ${child.displayName || child.email}`));
 
   container.appendChild(renderEditableAllowanceCard(child, currency));
   container.appendChild(makeExpandable(
@@ -3830,6 +3865,22 @@ function readPoolControl(wrap, mode) {
   return Array.from(wrap.querySelectorAll('input[type=checkbox]:checked')).map((cb) => cb.value);
 }
 
+// Shared by renderChoreForm and the add-wizard's configure step -- every
+// chore recurs indefinitely by default; 'once' and 'occasional' are the two
+// ways to opt out of a fixed weekly cadence ('once' finishes and deactivates,
+// 'occasional' just has no schedule at all and is never counted as missed --
+// see ADR-0029/ADR-0031). No separate "recurring" field, this select alone
+// decides it.
+function renderFrequencySelect() {
+  return el('select', {}, [
+    el('option', { value: 'weekly' }, 'Recurring -- once a week'),
+    el('option', { value: 'daily' }, 'Recurring -- every day'),
+    el('option', { value: 'custom' }, 'Recurring -- specific days (e.g. Mon/Wed/Fri)'),
+    el('option', { value: 'occasional' }, 'Occasional -- no fixed schedule, never counts as missed'),
+    el('option', { value: 'once' }, 'One-off -- this week only, then done'),
+  ]);
+}
+
 // Builds the "Add a chore" form -- shared by Manage Chores (no args, pool
 // defaults to every child) and the Kids tab (presetChildUid: defaults the
 // pool to just that one child, with an explicit "apply to every kid too"
@@ -3850,15 +3901,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     el('option', { value: 'sharedAny' }, 'Shared -- any one of a group'),
     el('option', { value: 'eachMember' }, 'Everyone does their own'),
   ]);
-  const frequencySelect = el('select', {}, [
-    el('option', { value: 'weekly' }, 'Recurring -- once a week'),
-    el('option', { value: 'daily' }, 'Recurring -- every day'),
-    el('option', { value: 'custom' }, 'Recurring -- specific days (e.g. Mon/Wed/Fri)'),
-    el('option', { value: 'once' }, 'One-off -- this week only, then done'),
-  ]);
-  // Every chore recurs indefinitely by default (weekly/daily/custom) --
-  // 'once' is the only way to opt OUT of recurring. See ADR-0029; no
-  // separate "recurring" field needed, this select already decides it.
+  const frequencySelect = renderFrequencySelect();
   const difficultySelect = el('select', {}, [
     el('option', { value: 'easy' }, 'Easy'),
     el('option', { value: 'medium', selected: 'selected' }, 'Medium'),
@@ -4069,7 +4112,7 @@ function computeAssignmentUpdatePayload(chore, newMode, newAssignedTo) {
 
 // `options.confirmRemoval`, if given, is awaited before a pool-shrinking
 // save actually commits: `async ({ chore, removedMembers, newAssignedTo }) =>
-// boolean`. Used by the "Run setup wizard" (ADR-0030) to show a warning
+// boolean`. Used by the "Assign chore wizard" (ADR-0030) to show a warning
 // before a single-child-scoped run drops that child out of a chore still
 // shared with others (mockups/chore-task-wizard-mockups.png, Section C.2)
 // -- plain Manage Chores editing (no options passed) has no such gate.
@@ -4782,7 +4825,7 @@ function renderWizardStep() {
 }
 
 // ---------------------------------------------------------------------
-// Admin wizards (ADR-0030) -- "Run setup wizard" (re-assign existing
+// Admin wizards (ADR-0030) -- "Assign chore wizard" (re-assign existing
 // chores/daily tasks any time, not just at onboarding) and "Add chores/
 // tasks to library" (guided creation from a starter list, the family's own
 // existing chores, or from scratch). Separate screen/state machine from
@@ -4796,9 +4839,13 @@ let adminWizardKind = null; // 'run' | 'add' -- which flow #adminWizardScreen is
 let runWizard = null;
 let addWizard = null;
 
-function openRunWizard() {
+// presetScopeUid: launches the wizard already scoped to one child (from
+// that child's own admin page) -- the SCOPE step is skipped in both
+// directions whenever a scope is already preset, same as the existing
+// single-child-family skip (see the TYPE/INFO steps' goTo conditions).
+function openRunWizard(presetScopeUid) {
   adminWizardKind = 'run';
-  runWizard = { step: 0, type: null, scopeUid: 'family' };
+  runWizard = { step: 0, type: null, scopeUid: presetScopeUid || 'family' };
   showScreen('adminWizard');
   renderAdminWizardStep();
 }
@@ -4831,8 +4878,8 @@ function renderAdminWizardStep() {
 // single-choice screens (wizard type, scope, add-source), matching the
 // existing .booking-card/.wizard-card look rather than inventing new chrome.
 function renderWizardOptionCard({ title, subtitle, selected, onclick }) {
-  return el('div', {
-    class: `booking-card${selected ? ' done' : ''}`, style: 'cursor:pointer;', onclick,
+  return el('button', {
+    type: 'button', class: `booking-card${selected ? ' done' : ''}`, onclick,
   }, [
     el('div', { style: 'font-weight:700;' }, title),
     subtitle ? el('div', { class: 'muted' }, subtitle) : null,
@@ -4864,7 +4911,7 @@ function renderRunWizardStep() {
 
   if (runWizard.step === RUN_WIZARD_STEP.TYPE) {
     const card = el('div', { class: 'wizard-card' });
-    card.appendChild(el('h1', {}, 'Run setup wizard'));
+    card.appendChild(el('h1', {}, 'Assign chore wizard'));
     card.appendChild(el('p', { class: 'muted' }, 'What would you like to configure?'));
     const options = [
       ['chores', 'Chores only', 'Assign or reassign chores'],
@@ -4886,8 +4933,11 @@ function renderRunWizardStep() {
         onclick: () => {
           if (!runWizard.type) { alert('Pick what you\'d like to configure first.'); return; }
           // Single-child families have nothing meaningful to "scope" --
-          // skip straight past the scope step (see ADR-0030).
-          goTo(runWizardActiveChildren().length > 1 ? RUN_WIZARD_STEP.SCOPE : RUN_WIZARD_STEP.INFO);
+          // skip straight past the scope step (see ADR-0030). Same skip
+          // when a scope was already preset (opened from a child's own
+          // admin page) -- it's already answered.
+          goTo(runWizard.scopeUid !== 'family' || runWizardActiveChildren().length <= 1
+            ? RUN_WIZARD_STEP.INFO : RUN_WIZARD_STEP.SCOPE);
         },
       }, 'Next'),
     ]));
@@ -4952,7 +5002,8 @@ function renderRunWizardStep() {
     card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
       el('button', {
         class: 'pill', style: 'flex:1;', type: 'button',
-        onclick: () => goTo(runWizardActiveChildren().length > 1 ? RUN_WIZARD_STEP.SCOPE : RUN_WIZARD_STEP.TYPE),
+        onclick: () => goTo(runWizard.scopeUid !== 'family' || runWizardActiveChildren().length <= 1
+          ? RUN_WIZARD_STEP.TYPE : RUN_WIZARD_STEP.SCOPE),
       }, 'Back'),
       el('button', { class: 'pill primary', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.SUMMARY) }, 'Continue'),
     ]));
@@ -5264,12 +5315,7 @@ function renderAddWizardStep() {
     card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:flex-start;' }, [iconInput, nameInput]));
     card.appendChild(descInput);
 
-    const frequencySelect = el('select', {}, [
-      el('option', { value: 'weekly' }, 'Recurring -- once a week'),
-      el('option', { value: 'daily' }, 'Recurring -- every day'),
-      el('option', { value: 'custom' }, 'Recurring -- specific days (e.g. Mon/Wed/Fri)'),
-      el('option', { value: 'once' }, 'One-off -- this week only, then done'),
-    ]);
+    const frequencySelect = renderFrequencySelect();
     frequencySelect.value = draft.frequency;
     card.appendChild(el('label', {}, 'Recurs?'));
     card.appendChild(frequencySelect);
