@@ -3103,8 +3103,8 @@ function renderAdminDashboard() {
   }
   container.appendChild(el('div', { class: 'quick-action-grid' }, [
     quickActionBtn('broom', 'Assign chore wizard', () => openRunWizard()),
-    quickActionBtn(null, 'Add chores to library', () => openAddWizard('chore')),
-    quickActionBtn(null, 'Add daily tasks to library', () => openAddWizard('dailyTask')),
+    quickActionBtn('plus', 'Add chores to library', () => openAddWizard('chore')),
+    quickActionBtn('calendarCheck', 'Add daily tasks to library', () => openAddWizard('dailyTask')),
     quickActionBtn('people', 'Manage kids', () => switchTab('kids')),
     quickActionBtn('dollarCircle', 'Adjust money', () => switchTab('kids')),
     quickActionBtn(null, 'View activity', () => switchTab('allactivity')),

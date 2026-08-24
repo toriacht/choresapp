@@ -1,4 +1,4 @@
-const CACHE_NAME = 'choresapp-shell-v1';
+const CACHE_NAME = 'choresapp-shell-v2';
 const SHELL_ASSETS = ['./', './index.html', './manifest.json', './favicon.ico', './icon-192.png', './icon-512.png'];
 
 // Background push handling -- only one service worker can control this
