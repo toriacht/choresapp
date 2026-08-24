@@ -1553,6 +1553,66 @@ async function resolveMembership() {
 // ---------------------------------------------------------------------
 // Firestore subscriptions
 // ---------------------------------------------------------------------
+
+// choreLog/choreSwaps are queried scoped to "this week" (where('weekId',
+// '==', weekId)) rather than fetched in full, since a family's history can
+// grow large -- but that means the query's weekId is baked in at
+// subscribe time. Left as a single subscribe-once call, a session open
+// across the Monday boundary (a device that just stays signed in, which is
+// the common case, not the exception) would keep querying last week's
+// weekId forever: the ring/base-allowance/streak figures would all stay
+// frozen on last week's numbers until the next full sign-in. This function
+// is re-callable specifically so a rollover can re-subscribe with a fresh
+// weekId without a page reload -- see checkForWeekRollover below.
+let weekScopedUnsub = [];
+let currentSubscribedWeekId = null;
+function subscribeWeekScopedCollections(familyId) {
+  weekScopedUnsub.forEach((fn) => fn());
+  weekScopedUnsub = [];
+  const weekId = getIsoWeekId(new Date());
+  currentSubscribedWeekId = weekId;
+
+  const unsubChoreLog = onSnapshot(
+    query(collection(db, `families/${familyId}/choreLog`), where('weekId', '==', weekId)),
+    (snap) => {
+      state.choreLog = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderCurrentTab();
+    }
+  );
+  const unsubSwaps = onSnapshot(
+    query(collection(db, `families/${familyId}/choreSwaps`), where('weekId', '==', weekId)),
+    (snap) => {
+      state.choreSwaps = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderCurrentTab();
+    }
+  );
+  const unsubPayouts = onSnapshot(
+    query(collection(db, `families/${familyId}/payouts`), where('weekId', '==', weekId)),
+    (snap) => {
+      state.payouts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderCurrentTab();
+    }
+  );
+  weekScopedUnsub = [unsubChoreLog, unsubSwaps, unsubPayouts];
+  unsubscribers.push(() => weekScopedUnsub.forEach((fn) => fn()));
+}
+
+// Polling (not a setTimeout scheduled for the exact next UTC midnight)
+// because a scheduled far-future timer is unreliable across device
+// sleep/wake -- a phone that's been locked overnight can miss it entirely.
+// The visibilitychange listener is the real-world case that matters most
+// though: someone opens the app Monday morning after it sat backgrounded
+// all weekend, and this catches the rollover the instant the tab is back
+// in front of them rather than waiting up to 5 minutes for the interval.
+function checkForWeekRollover() {
+  if (!state.familyId) return;
+  if (getIsoWeekId(new Date()) !== currentSubscribedWeekId) {
+    subscribeWeekScopedCollections(state.familyId);
+  }
+}
+setInterval(checkForWeekRollover, 5 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForWeekRollover(); });
+
 function startFamilySubscriptions() {
   const familyId = state.familyId;
 
@@ -1574,22 +1634,7 @@ function startFamilySubscriptions() {
     renderCurrentTab();
   }));
 
-  const weekId = getIsoWeekId(new Date());
-  unsubscribers.push(onSnapshot(
-    query(collection(db, `families/${familyId}/choreLog`), where('weekId', '==', weekId)),
-    (snap) => {
-      state.choreLog = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      renderCurrentTab();
-    }
-  ));
-
-  unsubscribers.push(onSnapshot(
-    query(collection(db, `families/${familyId}/choreSwaps`), where('weekId', '==', weekId)),
-    (snap) => {
-      state.choreSwaps = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      renderCurrentTab();
-    }
-  ));
+  subscribeWeekScopedCollections(familyId);
 
   unsubscribers.push(onSnapshot(collection(db, `families/${familyId}/choreTemplates`), (snap) => {
     state.choreTemplates = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -1620,14 +1665,6 @@ function startFamilySubscriptions() {
       state.notifications = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       renderNotifBadge();
       if (!document.getElementById('notifModal').hidden) renderNotifModalBody();
-    }
-  ));
-
-  unsubscribers.push(onSnapshot(
-    query(collection(db, `families/${familyId}/payouts`), where('weekId', '==', weekId)),
-    (snap) => {
-      state.payouts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      renderCurrentTab();
     }
   ));
 
