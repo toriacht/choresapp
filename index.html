@@ -69,6 +69,27 @@
     display: block; width: 100%; text-align: left; font: inherit; color: inherit;
     cursor: pointer; touch-action: manipulation;
   }
+  /* renderWizardOptionCard's icon + trailing selected-indicator layout --
+     button.booking-card above sets display:block at equal specificity to a
+     bare .wizard-option-card rule, so this must match it (button + class)
+     to actually win the cascade. */
+  button.wizard-option-card { display: flex; align-items: center; gap: 12px; }
+  .wizard-option-card.done { background: var(--panel2); }
+  .wizard-option-icon {
+    width: 38px; height: 38px; border-radius: 999px; background: var(--panel2); color: var(--accent2);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .wizard-option-card.done .wizard-option-icon { background: var(--panel); }
+  .wizard-option-check {
+    width: 22px; height: 22px; border-radius: 999px; border: 2px solid var(--border);
+    flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  }
+  .wizard-option-check.checked { background: var(--success); border-color: var(--success); }
+  .summary-stat-row {
+    display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border);
+  }
+  .summary-stat-row:last-child { border-bottom: none; }
+  .summary-stat-row .wizard-option-icon { width: 30px; height: 30px; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .muted { color: var(--muted); font-size: 0.85rem; }
   .amount { font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -98,6 +119,10 @@
     border-radius: 999px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
     box-shadow: 0 2px 8px rgba(30, 111, 184, 0.3);
   }
+  /* Every checkbox/radio in the app themed green, not the browser's default
+     blue -- native accent-color is the one line needed, wide support on
+     mobile Chrome/Safari alike. */
+  input[type="checkbox"], input[type="radio"] { accent-color: var(--accent2); }
 
   input, select, textarea {
     width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border);
@@ -4875,14 +4900,33 @@ function renderAdminWizardStep() {
 }
 
 // A selectable "card" option -- shared visual language for the wizards'
-// single-choice screens (wizard type, scope, add-source), matching the
-// existing .booking-card/.wizard-card look rather than inventing new chrome.
-function renderWizardOptionCard({ title, subtitle, selected, onclick }) {
+// single-choice screens (wizard type, scope, add-source, family-library
+// pick). A leading icon (any existing ICONS key, per ADR-0025 -- never a
+// new one) plus a trailing checkmark/empty-circle indicator matches the
+// mockup's affordance -- a plain left-border color change alone wasn't a
+// strong enough "this is selected" signal.
+function renderWizardOptionCard({ icon, title, subtitle, selected, onclick }) {
   return el('button', {
-    type: 'button', class: `booking-card${selected ? ' done' : ''}`, onclick,
+    type: 'button', class: `booking-card wizard-option-card${selected ? ' done' : ''}`, onclick,
   }, [
-    el('div', { style: 'font-weight:700;' }, title),
-    subtitle ? el('div', { class: 'muted' }, subtitle) : null,
+    icon ? el('div', { class: 'wizard-option-icon' }, svgIcon(icon, { size: 18 })) : null,
+    el('div', { style: 'flex:1;min-width:0;' }, [
+      el('div', { style: 'font-weight:700;' }, title),
+      subtitle ? el('div', { class: 'muted' }, subtitle) : null,
+    ]),
+    el('div', { class: `wizard-option-check${selected ? ' checked' : ''}` },
+      selected ? svgIcon('check', { size: 13, color: '#fff' }) : null),
+  ]);
+}
+
+// A single "icon + label ... value" row for the wizard's Current summary
+// step -- an icon-labeled list reads clearer at this narrow width than a
+// 2-column number-tile grid did, and matches the mockup's summary screen.
+function summaryStatRow(icon, value, label) {
+  return el('div', { class: 'summary-stat-row' }, [
+    el('div', { class: 'wizard-option-icon' }, svgIcon(icon, { size: 16 })),
+    el('div', { style: 'flex:1;' }, label),
+    el('div', { style: 'font-weight:700;' }, String(value)),
   ]);
 }
 
@@ -4914,14 +4958,14 @@ function renderRunWizardStep() {
     card.appendChild(el('h1', {}, 'Assign chore wizard'));
     card.appendChild(el('p', { class: 'muted' }, 'What would you like to configure?'));
     const options = [
-      ['chores', 'Chores only', 'Assign or reassign chores'],
-      ['dailyTasks', 'Daily tasks only', 'Assign or reassign daily tasks'],
-      ['both', 'Both chores & daily tasks', 'Configure everything'],
+      ['chores', 'broom', 'Chores only', 'Assign or reassign chores'],
+      ['dailyTasks', 'calendarCheck', 'Daily tasks only', 'Assign or reassign daily tasks'],
+      ['both', 'checkCircleWithRing', 'Both chores & daily tasks', 'Configure everything'],
     ];
     const optionsWrap = el('div', {});
-    options.forEach(([value, title, subtitle]) => {
+    options.forEach(([value, icon, title, subtitle]) => {
       optionsWrap.appendChild(renderWizardOptionCard({
-        title, subtitle, selected: runWizard.type === value,
+        icon, title, subtitle, selected: runWizard.type === value,
         // Tapping an option advances immediately (no separate "Next" tap) --
         // a single-choice step re-rendering itself in place to show a
         // selection, then requiring a second tap on a below-the-fold "Next"
@@ -4950,12 +4994,12 @@ function renderRunWizardStep() {
     card.appendChild(el('p', { class: 'muted' }, 'You can run the wizard for the whole family or just one child.'));
     const optionsWrap = el('div', {});
     optionsWrap.appendChild(renderWizardOptionCard({
-      title: 'Whole family', subtitle: 'All children', selected: runWizard.scopeUid === 'family',
+      icon: 'people', title: 'Whole family', subtitle: 'All children', selected: runWizard.scopeUid === 'family',
       onclick: () => { runWizard.scopeUid = 'family'; goTo(RUN_WIZARD_STEP.INFO); },
     }));
     children.forEach((child) => {
       optionsWrap.appendChild(renderWizardOptionCard({
-        title: child.displayName || child.email, selected: runWizard.scopeUid === child.uid,
+        icon: 'person', title: child.displayName || child.email, selected: runWizard.scopeUid === child.uid,
         onclick: () => { runWizard.scopeUid = child.uid; goTo(RUN_WIZARD_STEP.INFO); },
       }));
     });
@@ -5018,17 +5062,13 @@ function renderRunWizardStep() {
     card.appendChild(el('p', { class: 'muted' }, 'This is what\'s currently configured.'));
     if (runWizard.type !== 'dailyTasks') {
       card.appendChild(el('div', { class: 'ring-heading' }, 'Chores'));
-      card.appendChild(el('div', { class: 'stat-grid' }, [
-        el('div', { class: 'stat-tile' }, [el('div', { class: 'stat-value' }, String(chores.length)), el('div', { class: 'stat-label' }, 'Active chores')]),
-        el('div', { class: 'stat-tile' }, [el('div', { class: 'stat-value' }, String(rotatingCount)), el('div', { class: 'stat-label' }, 'Round-robin chores')]),
-      ]));
+      card.appendChild(summaryStatRow('broom', chores.length, 'Active chores'));
+      card.appendChild(summaryStatRow('people', rotatingCount, 'Round-robin chores'));
     }
     if (runWizard.type !== 'chores') {
       card.appendChild(el('div', { class: 'ring-heading', style: 'margin-top:10px;' }, 'Daily tasks'));
-      card.appendChild(el('div', { class: 'stat-grid' }, [
-        el('div', { class: 'stat-tile' }, [el('div', { class: 'stat-value' }, String(dailyTasks.length)), el('div', { class: 'stat-label' }, 'Daily tasks')]),
-        el('div', { class: 'stat-tile' }, [el('div', { class: 'stat-value' }, String(appliedToAll)), el('div', { class: 'stat-label' }, 'Applied to all')]),
-      ]));
+      card.appendChild(summaryStatRow('calendarCheck', dailyTasks.length, 'Daily tasks'));
+      card.appendChild(summaryStatRow('people', appliedToAll, 'Applied to all'));
     }
     if (scoped.length === 0) {
       card.appendChild(el('div', { class: 'empty-state' }, 'Nothing in scope yet -- add some from "Add chores/daily tasks to library" first.'));
@@ -5081,7 +5121,11 @@ function renderRunWizardStep() {
         runWizard.type !== 'chores' ? el('div', {}, [svgIcon('check', { size: 14, color: 'var(--success)' }), ' Daily tasks updated']) : null,
         el('div', { class: 'muted', style: 'margin-top:6px;' }, `Scope: ${child ? (child.displayName || child.email) : 'Whole family'}`),
       ]),
-      el('button', { class: 'pill primary', style: 'width:100%;margin-top:10px;', type: 'button', onclick: closeAdminWizard }, 'Done'),
+      el('button', {
+        class: 'pill', style: 'width:100%;margin-top:10px;', type: 'button',
+        onclick: () => { closeAdminWizard(); switchTab('managechores'); },
+      }, 'View results'),
+      el('button', { class: 'pill primary', style: 'width:100%;margin-top:8px;', type: 'button', onclick: closeAdminWizard }, 'Done'),
     ]));
   }
 }
@@ -5171,18 +5215,18 @@ function renderAddWizardStep() {
     card.appendChild(el('h1', {}, `Add new ${addWizardCategoryLabel()}`));
     card.appendChild(el('p', { class: 'muted' }, 'Where would you like to add from?'));
     card.appendChild(renderWizardOptionCard({
-      title: 'Starter library', subtitle: `Choose from common ${addWizardCategoryLabel()}s used by families`,
+      icon: 'star', title: 'Starter library', subtitle: `Choose from common ${addWizardCategoryLabel()}s used by families`,
       onclick: () => { addWizard.screen = 'starterBrowse'; addWizard.step = 1; renderAdminWizardStep(); },
     }));
     card.appendChild(renderWizardOptionCard({
-      title: 'My family library', subtitle: 'Use or duplicate from your existing list',
+      icon: 'people', title: 'My family library', subtitle: 'Use or duplicate from your existing list',
       onclick: () => {
         if (addWizardFamilyItems().length === 0) { alert(`You don't have any ${addWizardCategoryLabel()}s yet -- try Starter library or Create custom.`); return; }
         addWizard.screen = 'familyPick'; addWizard.step = 1; renderAdminWizardStep();
       },
     }));
     card.appendChild(renderWizardOptionCard({
-      title: 'Create custom', subtitle: `Add a completely new ${addWizardCategoryLabel()}`,
+      icon: 'plus', title: 'Create custom', subtitle: `Add a completely new ${addWizardCategoryLabel()}`,
       onclick: () => {
         addWizard.draft = { name: '', icon: null, description: '', frequency: addWizard.category === 'dailyTask' ? 'daily' : 'weekly', difficulty: 'medium', mode: addWizard.category === 'dailyTask' ? 'eachMember' : 'rotating' };
         addWizard.screen = 'configure'; addWizard.step = 1; renderAdminWizardStep();
@@ -5200,7 +5244,7 @@ function renderAddWizardStep() {
     content.appendChild(card);
     addWizardFamilyItems().forEach((chore) => {
       content.appendChild(renderWizardOptionCard({
-        title: chore.name, subtitle: chore.description || null,
+        icon: resolveIconPickerValue(chore.icon), title: chore.name, subtitle: chore.description || null,
         onclick: () => {
           addWizard.draft = {
             name: `${chore.name} (copy)`, icon: chore.icon || null, description: chore.description || '',
