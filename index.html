@@ -499,6 +499,15 @@
     <div id="wizardContent"></div>
   </div>
 
+  <!-- Admin wizards (ADR-0030) -- "Run setup wizard" (reassign existing
+       chores/daily tasks) and "Add chores/tasks to library" (guided
+       creation). Re-runnable any time, unlike the one-time onboarding
+       wizard above -- separate screen/state so the two never collide. -->
+  <div id="adminWizardScreen" hidden style="max-width:480px;margin:0 auto;padding-top:24px;">
+    <div class="wizard-progress" id="adminWizardProgress"></div>
+    <div id="adminWizardContent"></div>
+  </div>
+
   <div id="tourScreen" hidden style="max-width:480px;margin:0 auto;padding-top:24px;">
     <div class="wizard-progress" id="tourProgress"></div>
     <div id="tourContent"></div>
@@ -1210,6 +1219,7 @@ const screens = {
   signIn: document.getElementById('signInScreen'),
   setup: document.getElementById('setupScreen'),
   onboarding: document.getElementById('onboardingScreen'),
+  adminWizard: document.getElementById('adminWizardScreen'),
   tour: document.getElementById('tourScreen'),
   changePassword: document.getElementById('changePasswordScreen'),
   app: document.getElementById('app'),
@@ -3029,10 +3039,12 @@ function renderAdminDashboard() {
     ]);
   }
   container.appendChild(el('div', { class: 'quick-action-grid' }, [
+    quickActionBtn('broom', 'Run setup wizard', openRunWizard),
+    quickActionBtn(null, 'Add chores to library', () => openAddWizard('chore')),
+    quickActionBtn(null, 'Add daily tasks to library', () => openAddWizard('dailyTask')),
     quickActionBtn('people', 'Manage kids', () => switchTab('kids')),
-    quickActionBtn('broom', 'Manage chores', () => switchTab('managechores')),
-    quickActionBtn(null, 'View activity', () => switchTab('allactivity')),
     quickActionBtn('dollarCircle', 'Adjust money', () => switchTab('kids')),
+    quickActionBtn(null, 'View activity', () => switchTab('allactivity')),
   ]));
 }
 
@@ -3761,6 +3773,22 @@ function renderPoolControl(wrap, mode, checkedUids) {
     });
   }
 }
+// See ADR-0030: daily tasks are always personal (or "apply to all" -- i.e.
+// eachMember), never round-robin -- confirmed directly with the app owner.
+// Hides/disables the 'rotating' <option> whenever category is 'dailyTask',
+// resetting off it if it was already selected. `categorySelect` may be a
+// live <select> (renderChoreForm, where category is still editable) or a
+// plain string (renderEditAssignmentBody, where it's fixed to the chore's
+// own stored category).
+function updateModeOptionsForCategory(modeSelect, categorySelect) {
+  const rotatingOption = modeSelect.querySelector('option[value=rotating]');
+  if (!rotatingOption) return;
+  const category = typeof categorySelect === 'string' ? categorySelect : categorySelect.value;
+  const isDailyTask = category === 'dailyTask';
+  rotatingOption.hidden = isDailyTask;
+  rotatingOption.disabled = isDailyTask;
+  if (isDailyTask && modeSelect.value === 'rotating') modeSelect.value = 'eachMember';
+}
 function readPoolControl(wrap, mode) {
   if (mode === 'fixed') {
     const select = wrap.querySelector('select');
@@ -3840,6 +3868,10 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     renderPoolControl(poolWrap, modeSelect.value, checkedUids);
   }
   modeSelect.addEventListener('change', () => { renderAssigneeControl(); });
+  categorySelect.addEventListener('change', () => {
+    updateModeOptionsForCategory(modeSelect, categorySelect);
+    renderAssigneeControl();
+  });
 
   dailyRequirementCb.addEventListener('change', () => {
     if (dailyRequirementCb.checked) {
@@ -3847,6 +3879,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       frequencySelect.value = 'daily';
       modeSelect.value = 'eachMember';
     }
+    updateModeOptionsForCategory(modeSelect, categorySelect);
     renderAssigneeControl();
     updateScheduledDaysVisibility();
   });
@@ -3856,6 +3889,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     applyToAllCb.addEventListener('change', renderAssigneeControl);
   }
 
+  updateModeOptionsForCategory(modeSelect, categorySelect);
   renderAssigneeControl();
   updateScheduledDaysVisibility();
 
@@ -3946,6 +3980,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     difficultySelect.value = 'medium';
     dayButtons.forEach((b) => b.classList.remove('primary'));
     if (applyToAllCb) applyToAllCb.checked = false;
+    updateModeOptionsForCategory(modeSelect, categorySelect);
     renderAssigneeControl();
     updateScheduledDaysVisibility();
   });
@@ -3959,7 +3994,53 @@ function renderChoreForm({ presetChildUid = null } = {}) {
 // Deliberately a direct client updateDoc, not a callable -- this is
 // CRUD-style admin config, not money or cross-document consistency work
 // (firestore.rules already lets an admin write any chore field).
-function renderEditAssignmentBody(chore) {
+// Shared by renderEditAssignmentBody's "Save assignment" and the Run Setup
+// Wizard's simpler per-child toggle (ADR-0030) -- computes the
+// {assignmentMode, assignedTo, rotation?} update payload for a chore whose
+// pool changed (mode changing INTO 'rotating' is handled here; changing
+// OUT of it is the caller's job, since that's a one-line deleteField()).
+// Applies the same rotation-history transition rules either way (ADR-0029):
+// preserve history for members who stayed, seed new members at 0, drop
+// removed members' history, and null out currentAssigneeUid if it belonged
+// to a removed member (self-corrects next Monday).
+function computeAssignmentUpdatePayload(chore, newMode, newAssignedTo) {
+  const wasRotating = resolveAssignmentMode(chore) === 'rotating';
+  const payload = { assignmentMode: newMode, assignedTo: newAssignedTo };
+  if (newMode !== 'rotating') return payload;
+
+  if (wasRotating) {
+    const oldHistory = (chore.rotation && chore.rotation.history) || {};
+    const history = {};
+    newAssignedTo.forEach((uid) => {
+      history[uid] = oldHistory[uid] || { timesAssigned: 0, lastAssignedWeekId: null };
+    });
+    const keepCurrent = chore.rotation && newAssignedTo.includes(chore.rotation.currentAssigneeUid);
+    payload.rotation = {
+      pool: newAssignedTo,
+      history,
+      currentAssigneeUid: keepCurrent ? chore.rotation.currentAssigneeUid : null,
+      currentAssigneeWeekId: keepCurrent ? chore.rotation.currentAssigneeWeekId : null,
+    };
+  } else {
+    // Switching INTO rotating -- seed fresh, exactly like creation.
+    const weekId = getIsoWeekId(new Date());
+    const first = newAssignedTo[0];
+    const history = {};
+    newAssignedTo.forEach((uid) => {
+      history[uid] = { timesAssigned: uid === first ? 1 : 0, lastAssignedWeekId: uid === first ? weekId : null };
+    });
+    payload.rotation = { pool: newAssignedTo, history, currentAssigneeUid: first || null, currentAssigneeWeekId: first ? weekId : null };
+  }
+  return payload;
+}
+
+// `options.confirmRemoval`, if given, is awaited before a pool-shrinking
+// save actually commits: `async ({ chore, removedMembers, newAssignedTo }) =>
+// boolean`. Used by the "Run setup wizard" (ADR-0030) to show a warning
+// before a single-child-scoped run drops that child out of a chore still
+// shared with others (mockups/chore-task-wizard-mockups.png, Section C.2)
+// -- plain Manage Chores editing (no options passed) has no such gate.
+function renderEditAssignmentBody(chore, options = {}) {
   const wrap = el('div', {});
 
   const difficultySelect = el('select', {}, [
@@ -3988,6 +4069,7 @@ function renderEditAssignmentBody(chore) {
   ]);
   const currentMode = resolveAssignmentMode(chore);
   modeSelect.value = currentMode;
+  updateModeOptionsForCategory(modeSelect, chore.category || 'chore');
   const poolWrap = el('div', {});
   function refreshPool() {
     // Keep the chore's actual current pool checked while the mode select
@@ -4009,42 +4091,23 @@ function renderEditAssignmentBody(chore) {
     errorEl.hidden = true;
     saveAssignmentBtn.disabled = true;
     try {
-      const { updateDoc, doc: fsDoc, deleteField } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
       const newMode = modeSelect.value;
       const newAssignedTo = readPoolControl(poolWrap, newMode);
-      const wasRotating = currentMode === 'rotating';
-      const payload = { assignmentMode: newMode, assignedTo: newAssignedTo };
 
-      if (newMode === 'rotating') {
-        if (wasRotating) {
-          // Already rotating, pool edited -- preserve history for members
-          // who stayed, seed new members at 0 (self-heals via the existing
-          // "no history = pick me first" rule), drop removed members'
-          // history entirely. If the current turn's owner was removed,
-          // null out currentAssigneeUid -- corrects itself next Monday.
-          const oldHistory = (chore.rotation && chore.rotation.history) || {};
-          const history = {};
-          newAssignedTo.forEach((uid) => {
-            history[uid] = oldHistory[uid] || { timesAssigned: 0, lastAssignedWeekId: null };
-          });
-          const keepCurrent = chore.rotation && newAssignedTo.includes(chore.rotation.currentAssigneeUid);
-          payload.rotation = {
-            pool: newAssignedTo,
-            history,
-            currentAssigneeUid: keepCurrent ? chore.rotation.currentAssigneeUid : null,
-            currentAssigneeWeekId: keepCurrent ? chore.rotation.currentAssigneeWeekId : null,
-          };
-        } else {
-          // Switching INTO rotating -- seed fresh, exactly like creation.
-          const weekId = getIsoWeekId(new Date());
-          const first = newAssignedTo[0];
-          const history = {};
-          newAssignedTo.forEach((uid) => {
-            history[uid] = { timesAssigned: uid === first ? 1 : 0, lastAssignedWeekId: uid === first ? weekId : null };
-          });
-          payload.rotation = { pool: newAssignedTo, history, currentAssigneeUid: first || null, currentAssigneeWeekId: first ? weekId : null };
+      if (options.confirmRemoval) {
+        const oldPool = resolvePool(chore, activeChildUids());
+        const removedMembers = oldPool.filter((uid) => !newAssignedTo.includes(uid));
+        if (removedMembers.length > 0 && oldPool.length > 1) {
+          const proceed = await options.confirmRemoval({ chore, removedMembers, newAssignedTo, currentMode });
+          if (!proceed) { saveAssignmentBtn.disabled = false; return; }
         }
-      } else if (wasRotating) {
+      }
+
+      const { updateDoc, doc: fsDoc, deleteField } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      const wasRotating = currentMode === 'rotating';
+      const payload = computeAssignmentUpdatePayload(chore, newMode, newAssignedTo);
+
+      if (newMode !== 'rotating' && wasRotating) {
         // Switching OUT of rotating -- rotation no longer applies.
         payload.rotation = deleteField();
       }
@@ -4426,6 +4489,44 @@ function renderSettings() {
 // ---------------------------------------------------------------------
 // Onboarding wizard (admin, first-run or re-entered from Settings)
 // ---------------------------------------------------------------------
+// Admin wizards (ADR-0030) -- "Add chores/tasks to library" browse lists.
+// Frontend-only static data (not Firestore) since it's the same suggestion
+// set for every family, same spirit as STARTER_TEMPLATES below but broader
+// and room-tagged for the browse/filter UI. `icon` is only ever one of the
+// 5 already hand-traced chore-relevant icons (see ADR-0025 -- no bespoke
+// icons) or null; `room` is display/filter-only, never persisted onto the
+// resulting chore doc.
+const STARTER_CHORE_LIBRARY = [
+  { name: 'Empty/fill the dishwasher', icon: 'dishwasher', description: '', room: 'kitchen' },
+  { name: 'Wipe down the counters', icon: null, description: '', room: 'kitchen' },
+  { name: 'Set the table', icon: null, description: '', room: 'kitchen' },
+  { name: 'Sweep the kitchen floor', icon: 'broom', description: '', room: 'kitchen' },
+  { name: 'Take out the bins', icon: 'trash', description: '', room: 'house' },
+  { name: 'Vacuum the living room', icon: 'vacuum', description: '', room: 'house' },
+  { name: 'Dust the shelves', icon: null, description: '', room: 'house' },
+  { name: 'Tidy your room', icon: 'broom', description: '', room: 'bedroom' },
+  { name: 'Change the bed sheets', icon: 'bed', description: '', room: 'bedroom' },
+  { name: 'Mow the lawn', icon: null, description: '', room: 'outside' },
+  { name: 'Water the plants', icon: null, description: '', room: 'outside' },
+  { name: 'Wash the car', icon: null, description: '', room: 'outside' },
+];
+const STARTER_DAILY_TASK_LIBRARY = [
+  { name: 'Make your bed', icon: 'bed', description: '', room: 'bedroom' },
+  { name: 'Tidy your room', icon: 'broom', description: '', room: 'bedroom' },
+  { name: 'Brush your teeth', icon: null, description: '', room: 'bedroom' },
+  { name: 'Pack your school bag', icon: null, description: '', room: 'bedroom' },
+  { name: 'Put clothes in the hamper', icon: null, description: '', room: 'bedroom' },
+  { name: 'Read for 15 minutes', icon: null, description: '', room: 'house' },
+  { name: 'Feed the pet', icon: null, description: '', room: 'house' },
+];
+const STARTER_LIBRARY_ROOMS = [
+  { value: 'all', label: 'All' },
+  { value: 'house', label: 'House' },
+  { value: 'kitchen', label: 'Kitchen' },
+  { value: 'bedroom', label: 'Bedroom' },
+  { value: 'outside', label: 'Outside' },
+];
+
 const STARTER_TEMPLATES = [
   { name: 'Make your bed', icon: 'bed', description: '', category: 'dailyTask', assignmentMode: 'eachMember', frequency: 'daily', checked: true },
   { name: 'Tidy your room', icon: 'broom', description: '', category: 'dailyTask', assignmentMode: 'eachMember', frequency: 'daily', checked: true },
@@ -4626,6 +4727,603 @@ function renderWizardStep() {
           switchTab(state.currentTab);
         },
       }, 'Go to my dashboard'),
+    ]));
+  }
+}
+
+// ---------------------------------------------------------------------
+// Admin wizards (ADR-0030) -- "Run setup wizard" (re-assign existing
+// chores/daily tasks any time, not just at onboarding) and "Add chores/
+// tasks to library" (guided creation from a starter list, the family's own
+// existing chores, or from scratch). Separate screen/state machine from
+// the onboarding wizard above -- these are meant to be re-run repeatedly
+// throughout a family's life, not once at setup. "Library" here means the
+// family's actual chore list (state.chores), not the smaller, separate
+// choreTemplates quick-pick collection the plain "Add a chore" form already
+// has -- see ADR-0030.
+// ---------------------------------------------------------------------
+let adminWizardKind = null; // 'run' | 'add' -- which flow #adminWizardScreen is currently showing
+let runWizard = null;
+let addWizard = null;
+
+function openRunWizard() {
+  adminWizardKind = 'run';
+  runWizard = { step: 0, type: null, scopeUid: 'family' };
+  showScreen('adminWizard');
+  renderAdminWizardStep();
+}
+function openAddWizard(category) {
+  adminWizardKind = 'add';
+  addWizard = { step: 0, screen: 'source', category, starterSelections: new Set(), starterRoom: 'all', draft: null, lastAdded: [] };
+  showScreen('adminWizard');
+  renderAdminWizardStep();
+}
+function closeAdminWizard() {
+  adminWizardKind = null;
+  runWizard = null;
+  addWizard = null;
+  showScreen('app');
+  switchTab(state.currentTab);
+}
+function renderAdminWizardProgress(stepCount, currentStep) {
+  const bar = document.getElementById('adminWizardProgress');
+  bar.innerHTML = '';
+  for (let i = 0; i < stepCount; i++) {
+    bar.appendChild(el('div', { class: `wizard-dot ${i <= currentStep ? 'active' : ''}` }));
+  }
+}
+function renderAdminWizardStep() {
+  if (adminWizardKind === 'run') renderRunWizardStep();
+  else if (adminWizardKind === 'add') renderAddWizardStep();
+}
+
+// A selectable "card" option -- shared visual language for the wizards'
+// single-choice screens (wizard type, scope, add-source), matching the
+// existing .booking-card/.wizard-card look rather than inventing new chrome.
+function renderWizardOptionCard({ title, subtitle, selected, onclick }) {
+  return el('div', {
+    class: `booking-card${selected ? ' done' : ''}`, style: 'cursor:pointer;', onclick,
+  }, [
+    el('div', { style: 'font-weight:700;' }, title),
+    subtitle ? el('div', { class: 'muted' }, subtitle) : null,
+  ]);
+}
+
+const RUN_WIZARD_STEP = { TYPE: 0, SCOPE: 1, INFO: 2, SUMMARY: 3, ITEMS: 4, DONE: 5 };
+const RUN_WIZARD_STEP_COUNT = 6;
+
+function runWizardActiveChildren() {
+  return state.members.filter((m) => m.role === 'child' && m.active !== false);
+}
+function runWizardMatchesType(chore) {
+  const cat = chore.category || 'chore';
+  if (runWizard.type === 'chores') return cat !== 'dailyTask';
+  if (runWizard.type === 'dailyTasks') return cat === 'dailyTask';
+  return true; // 'both'
+}
+function runWizardScopedChores() {
+  return state.chores.filter((c) => c.active !== false && runWizardMatchesType(c)
+    && (runWizard.scopeUid === 'family' || resolvePool(c, activeChildUids()).includes(runWizard.scopeUid)));
+}
+
+function renderRunWizardStep() {
+  renderAdminWizardProgress(RUN_WIZARD_STEP_COUNT, runWizard.step);
+  const content = document.getElementById('adminWizardContent');
+  content.innerHTML = '';
+  const goTo = (step) => { runWizard.step = step; renderRunWizardStep(); };
+
+  if (runWizard.step === RUN_WIZARD_STEP.TYPE) {
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, 'Run setup wizard'));
+    card.appendChild(el('p', { class: 'muted' }, 'What would you like to configure?'));
+    const options = [
+      ['chores', 'Chores only', 'Assign or reassign chores'],
+      ['dailyTasks', 'Daily tasks only', 'Assign or reassign daily tasks'],
+      ['both', 'Both chores & daily tasks', 'Configure everything'],
+    ];
+    const optionsWrap = el('div', {});
+    options.forEach(([value, title, subtitle]) => {
+      optionsWrap.appendChild(renderWizardOptionCard({
+        title, subtitle, selected: runWizard.type === value,
+        onclick: () => { runWizard.type = value; renderRunWizardStep(); },
+      }));
+    });
+    card.appendChild(optionsWrap);
+    card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
+      el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: closeAdminWizard }, 'Cancel'),
+      el('button', {
+        class: 'pill primary', style: 'flex:1;', type: 'button',
+        onclick: () => {
+          if (!runWizard.type) { alert('Pick what you\'d like to configure first.'); return; }
+          // Single-child families have nothing meaningful to "scope" --
+          // skip straight past the scope step (see ADR-0030).
+          goTo(runWizardActiveChildren().length > 1 ? RUN_WIZARD_STEP.SCOPE : RUN_WIZARD_STEP.INFO);
+        },
+      }, 'Next'),
+    ]));
+    content.appendChild(card);
+    return;
+  }
+
+  if (runWizard.step === RUN_WIZARD_STEP.SCOPE) {
+    const children = runWizardActiveChildren();
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, 'Who is this for?'));
+    card.appendChild(el('p', { class: 'muted' }, 'You can run the wizard for the whole family or just one child.'));
+    const optionsWrap = el('div', {});
+    optionsWrap.appendChild(renderWizardOptionCard({
+      title: 'Whole family', subtitle: 'All children', selected: runWizard.scopeUid === 'family',
+      onclick: () => { runWizard.scopeUid = 'family'; renderRunWizardStep(); },
+    }));
+    children.forEach((child) => {
+      optionsWrap.appendChild(renderWizardOptionCard({
+        title: child.displayName || child.email, selected: runWizard.scopeUid === child.uid,
+        onclick: () => { runWizard.scopeUid = child.uid; renderRunWizardStep(); },
+      }));
+    });
+    card.appendChild(optionsWrap);
+    card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
+      el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.TYPE) }, 'Back'),
+      el('button', { class: 'pill primary', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.INFO) }, 'Next'),
+    ]));
+    content.appendChild(card);
+    card.appendChild(el('div', {
+      style: 'display:flex;gap:8px;align-items:flex-start;margin-top:14px;padding:10px 12px;background:var(--panel2);border-radius:10px;font-size:0.82rem;',
+    }, [
+      svgIcon('infoCircle', { size: 16, color: 'var(--accent2)' }),
+      el('div', {}, 'Running for one child will only affect their chores and/or daily tasks.'),
+    ]));
+    return;
+  }
+
+  if (runWizard.step === RUN_WIZARD_STEP.INFO) {
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, 'What happens when you run this wizard?'));
+    if (runWizard.scopeUid !== 'family') {
+      const child = state.members.find((m) => m.uid === runWizard.scopeUid);
+      card.appendChild(el('div', {
+        style: 'padding:10px 12px;background:var(--panel2);border-radius:10px;margin-bottom:14px;',
+      }, [
+        el('div', { style: 'font-weight:700;' }, `This will apply to ${child ? (child.displayName || child.email) : 'this child'} only`),
+        el('div', { class: 'muted', style: 'font-size:0.85rem;margin-top:4px;' },
+          `Only their chores and/or daily tasks will be updated. Shared (round-robin) chores will stay as they are unless you change them.`),
+      ]));
+    }
+    [
+      ['Preserve by default', 'Round-robin assignments and current schedules will be preserved.'],
+      ['You can still change things', 'You can update assignments, frequencies, or remove a child from shared chores if needed.'],
+      ['Changes apply to selected scope', 'Only the selected child (or the whole family) will be affected.'],
+    ].forEach(([title, body]) => {
+      card.appendChild(el('div', { class: 'booking-card' }, [
+        el('div', { style: 'font-weight:700;' }, title),
+        el('div', { class: 'muted' }, body),
+      ]));
+    });
+    card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
+      el('button', {
+        class: 'pill', style: 'flex:1;', type: 'button',
+        onclick: () => goTo(runWizardActiveChildren().length > 1 ? RUN_WIZARD_STEP.SCOPE : RUN_WIZARD_STEP.TYPE),
+      }, 'Back'),
+      el('button', { class: 'pill primary', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.SUMMARY) }, 'Continue'),
+    ]));
+    content.appendChild(card);
+    return;
+  }
+
+  if (runWizard.step === RUN_WIZARD_STEP.SUMMARY) {
+    const scoped = runWizardScopedChores();
+    const chores = scoped.filter((c) => (c.category || 'chore') !== 'dailyTask');
+    const dailyTasks = scoped.filter((c) => (c.category || 'chore') === 'dailyTask');
+    const rotatingCount = chores.filter((c) => resolveAssignmentMode(c) === 'rotating').length;
+    const appliedToAll = dailyTasks.filter((c) => (c.assignedTo || []).includes('any')).length;
+
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, 'Current summary'));
+    card.appendChild(el('p', { class: 'muted' }, 'This is what\'s currently configured.'));
+    if (runWizard.type !== 'dailyTasks') {
+      card.appendChild(el('div', { class: 'ring-heading' }, 'Chores'));
+      card.appendChild(el('div', { class: 'stat-grid' }, [
+        el('div', { class: 'stat-tile' }, [el('div', { class: 'stat-value' }, String(chores.length)), el('div', { class: 'stat-label' }, 'Active chores')]),
+        el('div', { class: 'stat-tile' }, [el('div', { class: 'stat-value' }, String(rotatingCount)), el('div', { class: 'stat-label' }, 'Round-robin chores')]),
+      ]));
+    }
+    if (runWizard.type !== 'chores') {
+      card.appendChild(el('div', { class: 'ring-heading', style: 'margin-top:10px;' }, 'Daily tasks'));
+      card.appendChild(el('div', { class: 'stat-grid' }, [
+        el('div', { class: 'stat-tile' }, [el('div', { class: 'stat-value' }, String(dailyTasks.length)), el('div', { class: 'stat-label' }, 'Daily tasks')]),
+        el('div', { class: 'stat-tile' }, [el('div', { class: 'stat-value' }, String(appliedToAll)), el('div', { class: 'stat-label' }, 'Applied to all')]),
+      ]));
+    }
+    if (scoped.length === 0) {
+      card.appendChild(el('div', { class: 'empty-state' }, 'Nothing in scope yet -- add some from "Add chores/daily tasks to library" first.'));
+    }
+    card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
+      el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.INFO) }, 'Back'),
+      el('button', {
+        class: 'pill primary', style: 'flex:1;', type: 'button',
+        onclick: () => goTo(RUN_WIZARD_STEP.ITEMS),
+      }, 'Start wizard'),
+    ]));
+    content.appendChild(card);
+    return;
+  }
+
+  if (runWizard.step === RUN_WIZARD_STEP.ITEMS) {
+    const scoped = runWizardScopedChores();
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, 'Review assignments'));
+    card.appendChild(el('p', { class: 'muted' }, runWizard.scopeUid === 'family'
+      ? 'Adjust anything that needs to change -- everything else stays as it is.'
+      : 'You can only add or remove this child here -- everyone else\'s assignments are untouched.'));
+    content.appendChild(card);
+
+    if (scoped.length === 0) {
+      content.appendChild(el('div', { class: 'empty-state' }, 'Nothing in scope.'));
+    }
+    ['chore', 'dailyTask'].forEach((cat) => {
+      const items = scoped.filter((c) => (c.category || 'chore') === cat);
+      if (items.length === 0) return;
+      content.appendChild(el('h2', { style: 'margin-top:10px;' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
+      items.forEach((chore) => content.appendChild(runWizardItemRow(chore)));
+    });
+
+    content.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
+      el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.SUMMARY) }, 'Back'),
+      el('button', { class: 'pill primary', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.DONE) }, 'Finish'),
+    ]));
+    return;
+  }
+
+  if (runWizard.step === RUN_WIZARD_STEP.DONE) {
+    const child = runWizard.scopeUid !== 'family' ? state.members.find((m) => m.uid === runWizard.scopeUid) : null;
+    content.appendChild(el('div', { class: 'wizard-card', style: 'text-align:center;' }, [
+      svgIcon('checkCircleWithRing', { size: 56, color: 'var(--accent2)' }),
+      el('h1', { style: 'margin-top:14px;' }, "You're all set!"),
+      el('p', { class: 'muted' }, 'Your setup has been updated.'),
+      el('div', { class: 'booking-card', style: 'text-align:left;' }, [
+        runWizard.type !== 'dailyTasks' ? el('div', {}, [svgIcon('check', { size: 14, color: 'var(--success)' }), ' Chores updated']) : null,
+        runWizard.type !== 'chores' ? el('div', {}, [svgIcon('check', { size: 14, color: 'var(--success)' }), ' Daily tasks updated']) : null,
+        el('div', { class: 'muted', style: 'margin-top:6px;' }, `Scope: ${child ? (child.displayName || child.email) : 'Whole family'}`),
+      ]),
+      el('button', { class: 'pill primary', style: 'width:100%;margin-top:10px;', type: 'button', onclick: closeAdminWizard }, 'Done'),
+    ]));
+  }
+}
+
+// Single-child-scope's simpler "does this child do this?" toggle -- see
+// RUN_WIZARD_STEP.ITEMS. Whole-family scope instead reuses the full
+// mode/pool editor (renderEditAssignmentBody) directly, since there's no
+// "just one child" constraint to enforce there.
+function runWizardItemRow(chore) {
+  const mode = resolveAssignmentMode(chore);
+  const label = choreLabel(chore);
+  const card = el('div', { class: 'booking-card' });
+
+  if (runWizard.scopeUid === 'family') {
+    card.appendChild(el('div', { style: 'font-weight:600;margin-bottom:8px;' }, [label]));
+    card.appendChild(renderEditAssignmentBody(chore));
+    return card;
+  }
+
+  const pool = resolvePool(chore, activeChildUids());
+  const scopedUid = runWizard.scopeUid;
+  const included = pool.includes(scopedUid);
+  const modeLabel = mode === 'rotating' ? 'Rotates with the family'
+    : mode === 'fixed' ? 'Fixed to one person'
+    : mode === 'sharedAny' ? 'Shared with the family' : 'Everyone does their own';
+  const cb = el('input', { type: 'checkbox', style: 'width:auto;', ...(included ? { checked: 'checked' } : {}) });
+  const errorEl = el('p', { class: 'error-text', style: 'margin:4px 0 0;' });
+  errorEl.hidden = true;
+
+  cb.addEventListener('change', async () => {
+    cb.disabled = true;
+    errorEl.hidden = true;
+    try {
+      const newAssignedTo = mode === 'fixed'
+        ? (cb.checked ? [scopedUid] : [])
+        : (cb.checked ? [...pool.filter((uid) => uid !== scopedUid), scopedUid] : pool.filter((uid) => uid !== scopedUid));
+
+      if (!cb.checked && pool.length > 1) {
+        const proceed = confirm(
+          `Remove from shared chore\n\n"${chore.name}" is currently shared with the family. If you remove it for ${memberLabel(scopedUid)}:\n\n`
+          + `• ${memberLabel(scopedUid)} will no longer be part of it.\n`
+          + `• The rotation order for others may change.\n\nAre you sure you want to continue?`
+        );
+        if (!proceed) { cb.checked = true; cb.disabled = false; return; }
+      }
+
+      const payload = computeAssignmentUpdatePayload(chore, mode, newAssignedTo);
+      const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), payload);
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+      cb.checked = !cb.checked;
+    } finally {
+      cb.disabled = false;
+    }
+  });
+
+  card.appendChild(el('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:10px;' }, [
+    el('div', {}, [el('div', { style: 'font-weight:600;' }, [label]), el('div', { class: 'muted' }, modeLabel)]),
+    cb,
+  ]));
+  card.appendChild(errorEl);
+  return card;
+}
+
+// "Add chores/daily tasks to library" (ADR-0030) -- a guided, three-source
+// alternative to the plain "Add a chore" form: bulk-add from a built-in
+// starter list, duplicate one of the family's own existing chores as a
+// starting point, or build one from scratch. Ends by creating real, active
+// `chores` docs -- "library" here means the family's actual chore list
+// (state.chores), matching mockups/chore-task-wizard-mockups.png's own
+// "My family library -- use or duplicate from your existing list" wording,
+// NOT the smaller separate choreTemplates quick-pick collection the plain
+// form already has.
+function addWizardCategoryLabel() { return addWizard.category === 'dailyTask' ? 'daily task' : 'chore'; }
+function addWizardStarterLibrary() { return addWizard.category === 'dailyTask' ? STARTER_DAILY_TASK_LIBRARY : STARTER_CHORE_LIBRARY; }
+function addWizardFamilyItems() { return state.chores.filter((c) => (c.category || 'chore') === addWizard.category); }
+
+function renderAddWizardStep() {
+  renderAdminWizardProgress(3, Math.min(addWizard.step, 2));
+  const content = document.getElementById('adminWizardContent');
+  content.innerHTML = '';
+
+  if (addWizard.screen === 'source') {
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, `Add new ${addWizardCategoryLabel()}`));
+    card.appendChild(el('p', { class: 'muted' }, 'Where would you like to add from?'));
+    card.appendChild(renderWizardOptionCard({
+      title: 'Starter library', subtitle: `Choose from common ${addWizardCategoryLabel()}s used by families`,
+      onclick: () => { addWizard.screen = 'starterBrowse'; addWizard.step = 1; renderAdminWizardStep(); },
+    }));
+    card.appendChild(renderWizardOptionCard({
+      title: 'My family library', subtitle: 'Use or duplicate from your existing list',
+      onclick: () => {
+        if (addWizardFamilyItems().length === 0) { alert(`You don't have any ${addWizardCategoryLabel()}s yet -- try Starter library or Create custom.`); return; }
+        addWizard.screen = 'familyPick'; addWizard.step = 1; renderAdminWizardStep();
+      },
+    }));
+    card.appendChild(renderWizardOptionCard({
+      title: 'Create custom', subtitle: `Add a completely new ${addWizardCategoryLabel()}`,
+      onclick: () => {
+        addWizard.draft = { name: '', icon: null, description: '', frequency: addWizard.category === 'dailyTask' ? 'daily' : 'weekly', difficulty: 'medium', mode: addWizard.category === 'dailyTask' ? 'eachMember' : 'rotating' };
+        addWizard.screen = 'configure'; addWizard.step = 1; renderAdminWizardStep();
+      },
+    }));
+    card.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-top:6px;', type: 'button', onclick: closeAdminWizard }, 'Cancel'));
+    content.appendChild(card);
+    return;
+  }
+
+  if (addWizard.screen === 'familyPick') {
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, `Duplicate a ${addWizardCategoryLabel()}`));
+    card.appendChild(el('p', { class: 'muted' }, 'Pick one to use as a starting point -- you can change anything before saving.'));
+    content.appendChild(card);
+    addWizardFamilyItems().forEach((chore) => {
+      content.appendChild(renderWizardOptionCard({
+        title: chore.name, subtitle: chore.description || null,
+        onclick: () => {
+          addWizard.draft = {
+            name: `${chore.name} (copy)`, icon: chore.icon || null, description: chore.description || '',
+            frequency: chore.frequency || 'weekly', difficulty: resolveDifficulty(chore),
+            mode: resolveAssignmentMode(chore) === 'rotating' && addWizard.category === 'dailyTask' ? 'eachMember' : resolveAssignmentMode(chore),
+          };
+          addWizard.screen = 'configure'; addWizard.step = 1; renderAdminWizardStep();
+        },
+      }));
+    });
+    content.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-top:10px;', type: 'button', onclick: () => { addWizard.screen = 'source'; addWizard.step = 0; renderAdminWizardStep(); } }, 'Back'));
+    return;
+  }
+
+  if (addWizard.screen === 'starterBrowse') {
+    const existingNames = new Set(state.chores.filter((c) => (c.category || 'chore') === addWizard.category).map((c) => c.name.toLowerCase()));
+    const library = addWizardStarterLibrary().filter((item) => !existingNames.has(item.name.toLowerCase()));
+
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, 'Starter library'));
+    const searchInput = el('input', { type: 'text', placeholder: 'Search…' });
+    card.appendChild(searchInput);
+    const roomTabs = el('div', { class: 'sub-tabs' });
+    STARTER_LIBRARY_ROOMS.forEach((r) => {
+      const btn = el('button', { type: 'button', class: `sub-tab-btn${addWizard.starterRoom === r.value ? ' active' : ''}` }, r.label);
+      btn.addEventListener('click', () => { addWizard.starterRoom = r.value; renderAddWizardStep(); });
+      roomTabs.appendChild(btn);
+    });
+    card.appendChild(roomTabs);
+
+    const listWrap = el('div', {});
+    function renderList() {
+      listWrap.innerHTML = '';
+      const q = searchInput.value.trim().toLowerCase();
+      library
+        .filter((item) => (addWizard.starterRoom === 'all' || item.room === addWizard.starterRoom))
+        .filter((item) => !q || item.name.toLowerCase().includes(q))
+        .forEach((item) => {
+          const cb = el('input', {
+            type: 'checkbox', style: 'width:auto;margin-right:8px;flex-shrink:0;',
+            ...(addWizard.starterSelections.has(item.name) ? { checked: 'checked' } : {}),
+          });
+          cb.addEventListener('change', () => {
+            if (cb.checked) addWizard.starterSelections.add(item.name); else addWizard.starterSelections.delete(item.name);
+            updateAddSelectedLabel();
+          });
+          listWrap.appendChild(el('label', {
+            style: 'display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;',
+          }, [cb, item.icon ? svgIcon(item.icon, { size: 16, color: 'var(--accent2)' }) : null, el('span', { style: 'margin-left:6px;' }, item.name)]));
+        });
+      if (!listWrap.children.length) listWrap.appendChild(el('div', { class: 'empty-state' }, 'No matches.'));
+    }
+    searchInput.addEventListener('input', renderList);
+    card.appendChild(listWrap);
+    renderList();
+
+    const addSelectedBtn = el('button', { class: 'pill primary', style: 'flex:1;', type: 'button' }, 'Add selected (0)');
+    function updateAddSelectedLabel() {
+      addSelectedBtn.textContent = `Add selected (${addWizard.starterSelections.size})`;
+      addSelectedBtn.disabled = addWizard.starterSelections.size === 0;
+    }
+    updateAddSelectedLabel();
+    addSelectedBtn.addEventListener('click', async () => {
+      addSelectedBtn.disabled = true;
+      try {
+        const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+        const activeChildren = activeChildUids();
+        const items = addWizardStarterLibrary().filter((item) => addWizard.starterSelections.has(item.name));
+        for (const item of items) {
+          const mode = addWizard.category === 'dailyTask' ? 'eachMember' : (activeChildren.length > 1 ? 'rotating' : 'fixed');
+          const payload = computeAssignmentUpdatePayload({ assignmentMode: 'fixed' }, mode, activeChildren);
+          await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
+            name: item.name, icon: item.icon || null, description: item.description || '',
+            category: addWizard.category, assignmentMode: payload.assignmentMode, assignedTo: payload.assignedTo,
+            ...(payload.rotation ? { rotation: payload.rotation } : {}),
+            frequency: addWizard.category === 'dailyTask' ? 'daily' : 'weekly',
+            difficulty: 'medium', active: true, createdBy: state.user.uid,
+            createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+          });
+        }
+        addWizard.lastAdded = items.map((i) => i.name);
+        addWizard.starterSelections = new Set();
+        addWizard.screen = 'done'; addWizard.step = 2;
+        renderAdminWizardStep();
+      } catch (err) {
+        alert(err.message);
+        addSelectedBtn.disabled = false;
+      }
+    });
+    card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:10px;' }, [
+      el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => { addWizard.screen = 'source'; addWizard.step = 0; renderAdminWizardStep(); } }, 'Cancel'),
+      addSelectedBtn,
+    ]));
+    content.appendChild(card);
+    return;
+  }
+
+  if (addWizard.screen === 'configure') {
+    const draft = addWizard.draft;
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, `Configure ${addWizardCategoryLabel()}`));
+    const nameInput = el('input', { type: 'text', placeholder: `${addWizard.category === 'dailyTask' ? 'Daily task' : 'Chore'} name`, required: true });
+    nameInput.value = draft.name;
+    const iconInput = renderIconPicker(resolveIconPickerValue(draft.icon));
+    const descInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
+    descInput.value = draft.description;
+    card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:flex-start;' }, [iconInput, nameInput]));
+    card.appendChild(descInput);
+
+    const frequencySelect = el('select', {}, [
+      el('option', { value: 'weekly' }, 'Recurring -- once a week'),
+      el('option', { value: 'daily' }, 'Recurring -- every day'),
+      el('option', { value: 'custom' }, 'Recurring -- specific days (e.g. Mon/Wed/Fri)'),
+      el('option', { value: 'once' }, 'One-off -- this week only, then done'),
+    ]);
+    frequencySelect.value = draft.frequency;
+    card.appendChild(el('label', {}, 'Recurs?'));
+    card.appendChild(frequencySelect);
+
+    let difficultySelect = null;
+    if (addWizard.category !== 'dailyTask') {
+      difficultySelect = el('select', {}, [
+        el('option', { value: 'easy' }, 'Easy'), el('option', { value: 'medium' }, 'Medium'), el('option', { value: 'hard' }, 'Hard'),
+      ]);
+      difficultySelect.value = draft.difficulty;
+      card.appendChild(el('label', {}, 'Difficulty'));
+      card.appendChild(difficultySelect);
+    }
+
+    const modeSelect = el('select', {}, [
+      el('option', { value: 'fixed' }, 'One specific person'),
+      el('option', { value: 'rotating' }, 'Rotates fairly among a group'),
+      el('option', { value: 'sharedAny' }, 'Shared -- any one of a group'),
+      el('option', { value: 'eachMember' }, 'Everyone does their own'),
+    ]);
+    modeSelect.value = draft.mode;
+    updateModeOptionsForCategory(modeSelect, addWizard.category);
+    card.appendChild(el('label', {}, 'Assignment'));
+    card.appendChild(modeSelect);
+
+    card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
+      el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => { addWizard.screen = 'source'; addWizard.step = 0; renderAdminWizardStep(); } }, 'Back'),
+      el('button', {
+        class: 'pill primary', style: 'flex:1;', type: 'button',
+        onclick: () => {
+          if (!nameInput.value.trim()) { alert(`Give this ${addWizardCategoryLabel()} a name first.`); return; }
+          addWizard.draft = {
+            name: nameInput.value.trim(), icon: iconInput.value.trim() || null, description: descInput.value.trim(),
+            frequency: frequencySelect.value, difficulty: difficultySelect ? difficultySelect.value : 'medium', mode: modeSelect.value,
+          };
+          addWizard.screen = 'assignment'; addWizard.step = 1;
+          renderAdminWizardStep();
+        },
+      }, 'Next'),
+    ]));
+    content.appendChild(card);
+    return;
+  }
+
+  if (addWizard.screen === 'assignment') {
+    const draft = addWizard.draft;
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, 'Assignment details'));
+    card.appendChild(el('p', { class: 'muted' }, draft.mode === 'rotating'
+      ? 'This chore rotates between these children.'
+      : draft.mode === 'fixed' ? 'Who\'s responsible for this?' : 'Who\'s included?'));
+
+    const poolWrap = el('div', {});
+    renderPoolControl(poolWrap, draft.mode, new Set(activeChildUids()));
+    card.appendChild(poolWrap);
+    const errorEl = el('p', { class: 'error-text' });
+    errorEl.hidden = true;
+
+    card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
+      el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => { addWizard.screen = 'configure'; addWizard.step = 1; renderAdminWizardStep(); } }, 'Back'),
+      el('button', {
+        class: 'pill primary', style: 'flex:1;', type: 'button',
+        onclick: async () => {
+          errorEl.hidden = true;
+          const pool = readPoolControl(poolWrap, draft.mode);
+          if (pool.length === 0 || !pool[0]) { errorEl.textContent = 'Pick at least one child.'; errorEl.hidden = false; return; }
+          try {
+            const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+            const payload = computeAssignmentUpdatePayload({ assignmentMode: 'fixed' }, draft.mode, pool);
+            await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
+              name: draft.name, icon: draft.icon, description: draft.description,
+              category: addWizard.category, assignmentMode: payload.assignmentMode, assignedTo: payload.assignedTo,
+              ...(payload.rotation ? { rotation: payload.rotation } : {}),
+              frequency: draft.frequency, difficulty: draft.difficulty,
+              active: true, createdBy: state.user.uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+            });
+            addWizard.lastAdded = [draft.name];
+            addWizard.screen = 'done'; addWizard.step = 2;
+            renderAdminWizardStep();
+          } catch (err) {
+            errorEl.textContent = err.message;
+            errorEl.hidden = false;
+          }
+        },
+      }, 'Save'),
+    ]));
+    card.appendChild(errorEl);
+    content.appendChild(card);
+    return;
+  }
+
+  if (addWizard.screen === 'done') {
+    const names = addWizard.lastAdded || [];
+    content.appendChild(el('div', { class: 'wizard-card', style: 'text-align:center;' }, [
+      svgIcon('checkCircleWithRing', { size: 56, color: 'var(--accent2)' }),
+      el('h1', { style: 'margin-top:14px;' }, 'Added to your library!'),
+      el('p', { class: 'muted' }, names.length === 1
+        ? `"${names[0]}" has been added.`
+        : `${names.length} ${addWizardCategoryLabel()}s have been added.`),
+      el('button', {
+        class: 'pill', style: 'width:100%;margin-bottom:8px;', type: 'button',
+        onclick: () => { addWizard.screen = 'source'; addWizard.step = 0; addWizard.draft = null; renderAdminWizardStep(); },
+      }, 'Add another'),
+      el('button', { class: 'pill primary', style: 'width:100%;', type: 'button', onclick: closeAdminWizard }, 'Done'),
     ]));
   }
 }
