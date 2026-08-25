@@ -1762,8 +1762,15 @@ async function enablePushNotifications() {
   // The token itself (not just a boolean) so disablePushNotifications can
   // unregister the exact same one -- getToken() would return it again
   // anyway once permission is granted, but storing it avoids a redundant
-  // round trip and keeps enable/disable symmetric.
-  try { localStorage.setItem('choresAppPushToken', token); } catch (e) {}
+  // round trip and keeps enable/disable symmetric. Keyed by uid, NOT a
+  // single flat key -- localStorage is shared across the whole origin
+  // regardless of which family member is currently signed in, so on a
+  // shared/test device where an admin and a child sign in from the same
+  // browser, a flat key made the SECOND account's toggle show "on" purely
+  // because the FIRST account had enabled it, without that second account
+  // ever actually registering its own token server-side -- it would then
+  // never receive a push at all, silently.
+  try { localStorage.setItem(pushTokenStorageKey(), token); } catch (e) {}
 }
 
 // The other half of enablePushNotifications -- turns this device's push
@@ -1772,11 +1779,14 @@ async function enablePushNotifications() {
 async function disablePushNotifications() {
   const token = getStoredPushToken();
   if (token) await callUnregisterFcmToken({ token });
-  try { localStorage.removeItem('choresAppPushToken'); } catch (e) {}
+  try { localStorage.removeItem(pushTokenStorageKey()); } catch (e) {}
 }
 
+function pushTokenStorageKey() {
+  return `choresAppPushToken:${state.user ? state.user.uid : 'anon'}`;
+}
 function getStoredPushToken() {
-  try { return localStorage.getItem('choresAppPushToken'); } catch (e) { return null; }
+  try { return localStorage.getItem(pushTokenStorageKey()); } catch (e) { return null; }
 }
 function isPushEnabledLocally() {
   return !!getStoredPushToken();
