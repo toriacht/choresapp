@@ -31,14 +31,16 @@
     --muted: #334155; --accent: #22b573; --accent2: #1b7a43;
     --border: #e6edf5; --warn: #ea580c; --warn-tint-rgb: 234, 88, 12;
     --success: #15803d; --danger: #b91c1c; --accent2-fill: #1b7a43;
-    --danger-tint: #fdecec;
+    --danger-tint: #fdecec; --info: #2563eb; --info-tint: #eaf1fd;
+    --warn-tint: #fdf1e7; --success-tint: #e8f5ec;
   }
   :root[data-theme="dark"] {
     --bg: #0f172a; --panel: #1e293b; --panel2: #223a2c; --text: #f1f5f9;
     --muted: #a8b7c9; --accent: #4ade80; --accent2: #34c759;
     --border: #33445c; --warn: #fb923c; --warn-tint-rgb: 251, 146, 60;
     --success: #6ee7a0; --danger: #fca5a5; --accent2-fill: #34c759;
-    --danger-tint: #3a2020;
+    --danger-tint: #3a2020; --info: #60a5fa; --info-tint: #1e293b;
+    --warn-tint: #2e2417; --success-tint: #14291c;
   }
   * { box-sizing: border-box; }
   body {
@@ -110,10 +112,14 @@
     cursor: pointer; touch-action: manipulation; display: flex; align-items: center; justify-content: center;
   }
   .swap-wrap { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
-  .status-pending { background: #64748b; }
-  .status-done, .status-proposed { background: var(--warn); }
-  .status-approved, .status-paid, .status-accepted { background: #16a34a; }
-  .status-rejected, .status-declined { background: #dc2626; }
+  /* Semantic pill colors per mockups/components.png: orange = needs action
+     (still to do), blue = in progress/awaiting someone else, green =
+     done/approved, red = rejected/missed, grey = neutral/not urgent yet. */
+  .status-pending { background: var(--warn); }
+  .status-neutral { background: #64748b; }
+  .status-done, .status-proposed { background: var(--info); }
+  .status-approved, .status-paid, .status-accepted { background: var(--success); }
+  .status-rejected, .status-declined { background: var(--danger); }
 
   button.pill, a.pill {
     display: inline-block; border: none; border-radius: 999px; padding: 9px 16px;
@@ -128,10 +134,35 @@
     border-radius: 999px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
     box-shadow: 0 2px 8px rgba(30, 111, 184, 0.3);
   }
-  /* Every checkbox/radio in the app themed green, not the browser's default
-     blue -- native accent-color is the one line needed, wide support on
-     mobile Chrome/Safari alike. */
-  input[type="checkbox"], input[type="radio"] { accent-color: var(--accent2); }
+  /* Custom checkbox/radio look (see mockups/components.png) -- a real
+     native input underneath (kept for accessibility/keyboard/screen-reader
+     behavior) with its OS-default box replaced entirely via appearance:none
+     plus hand-drawn checked states, rather than just recoloring the native
+     control. `.theme-switch input` (the on/off switch component) already
+     scopes its own width/height/opacity/position at equal specificity and
+     is declared later in the sheet, so it still wins there and stays
+     invisible under its slider -- this block never touches how it looks. */
+  input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none;
+    width: 20px; height: 20px; min-width: 20px; margin: 0;
+    border: 2px solid var(--border); border-radius: 5px; background: var(--panel);
+    cursor: pointer; flex-shrink: 0; vertical-align: middle;
+  }
+  input[type="checkbox"]:checked {
+    background-color: var(--accent2); border-color: var(--accent2);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: center; background-size: 13px;
+  }
+  input[type="radio"] {
+    appearance: none; -webkit-appearance: none;
+    width: 22px; height: 22px; min-width: 22px; margin: 0;
+    border: 2px solid var(--border); border-radius: 999px; background: var(--panel);
+    cursor: pointer; flex-shrink: 0; vertical-align: middle;
+  }
+  input[type="radio"]:checked { border: 6px solid var(--accent2); background: var(--panel); }
+  input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
 
   input, select, textarea {
     width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border);
@@ -332,6 +363,15 @@
   .modal-card {
     background: var(--bg); border-radius: 16px; padding: 28px 22px; width: 100%;
     max-width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+  }
+  /* showAppAlert/showAppConfirm's header row (icon + title + close X) --
+     see mockups/components.png's "Pop-up / Modal dialogs" examples. */
+  .app-alert-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .app-alert-icon { display: none; flex-shrink: 0; }
+  .app-alert-icon:not(:empty) { display: flex; }
+  .app-alert-close {
+    background: none; border: none; color: var(--muted); cursor: pointer; padding: 4px;
+    flex-shrink: 0; display: flex; align-items: center; justify-content: center; touch-action: manipulation;
   }
 
   /* Kids tab -- "Adjust money" entry row + its dedicated Add/Deduct modal. */
@@ -608,8 +648,14 @@
   </div>
 
   <div id="appAlertOverlay" class="modal-overlay" hidden>
-    <div class="modal-card center-screen" style="min-height:0;">
-      <h1 id="appAlertTitle"></h1>
+    <div class="modal-card" style="min-height:0;">
+      <div class="app-alert-header">
+        <span id="appAlertIcon" class="app-alert-icon"></span>
+        <h1 id="appAlertTitle" style="flex:1;"></h1>
+        <button type="button" id="appAlertCloseBtn" class="app-alert-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
       <p id="appAlertMessage" class="muted" style="white-space:pre-wrap;text-align:left;width:100%;"></p>
       <div id="appAlertButtons" style="display:flex;gap:8px;width:100%;margin-top:6px;"></div>
     </div>
@@ -1415,30 +1461,47 @@ document.getElementById('credentialModalDoneBtn').addEventListener('click', () =
 // (nothing depends on dismissal timing the way native alert()'s blocking
 // behavior did), but showAppConfirm's return value gates real logic, so
 // every call site of it must await it.
-function showAppAlert(message, { title = 'Notice' } = {}) {
+// icon: an ICONS key (per ADR-0025, never a bespoke glyph) shown in a
+// tinted circle next to the title -- omitted by default for a plain
+// notice; showAppConfirm defaults it to 'infoCircle' tinted danger-red
+// when danger:true, matching the "Remove from shared chore?" warning
+// look in mockups/components.png.
+function renderAppAlertIcon(icon, tint) {
+  const iconSlot = document.getElementById('appAlertIcon');
+  iconSlot.innerHTML = '';
+  iconSlot.style.color = '';
+  if (!icon) return;
+  iconSlot.style.color = `var(--${tint || 'accent2'})`;
+  iconSlot.appendChild(svgIcon(icon, { size: 22 }));
+}
+function showAppAlert(message, { title = 'Notice', icon = null, tint = null } = {}) {
   return new Promise((resolve) => {
     document.getElementById('appAlertTitle').textContent = title;
     document.getElementById('appAlertMessage').textContent = message;
+    renderAppAlertIcon(icon, tint);
     const buttonsWrap = document.getElementById('appAlertButtons');
     buttonsWrap.innerHTML = '';
-    const okBtn = el('button', { class: 'pill primary', type: 'button', style: 'flex:1;' }, 'OK');
-    okBtn.addEventListener('click', () => { document.getElementById('appAlertOverlay').hidden = true; resolve(); });
+    const finish = () => { document.getElementById('appAlertOverlay').hidden = true; resolve(); };
+    const okBtn = el('button', { class: 'pill primary', type: 'button', style: 'flex:1;', onclick: finish }, 'OK');
     buttonsWrap.appendChild(okBtn);
+    document.getElementById('appAlertCloseBtn').onclick = finish;
     document.getElementById('appAlertOverlay').hidden = false;
   });
 }
-function showAppConfirm(message, { title = 'Are you sure?', confirmLabel = 'Yes', cancelLabel = 'Cancel', danger = false } = {}) {
+function showAppConfirm(message, { title = 'Are you sure?', confirmLabel = 'Yes', cancelLabel = 'Cancel', danger = false, icon, tint } = {}) {
   return new Promise((resolve) => {
     document.getElementById('appAlertTitle').textContent = title;
     document.getElementById('appAlertMessage').textContent = message;
+    renderAppAlertIcon(icon === undefined ? (danger ? 'infoCircle' : null) : icon, tint || (danger ? 'danger' : 'accent2'));
     const buttonsWrap = document.getElementById('appAlertButtons');
     buttonsWrap.innerHTML = '';
-    const cancelBtn = el('button', { class: 'pill', type: 'button', style: 'flex:1;' }, cancelLabel);
-    const confirmBtn = el('button', { class: `pill ${danger ? 'danger' : 'primary'}`, type: 'button', style: 'flex:1;' }, confirmLabel);
-    cancelBtn.addEventListener('click', () => { document.getElementById('appAlertOverlay').hidden = true; resolve(false); });
-    confirmBtn.addEventListener('click', () => { document.getElementById('appAlertOverlay').hidden = true; resolve(true); });
+    const cancel = () => { document.getElementById('appAlertOverlay').hidden = true; resolve(false); };
+    const confirmChoice = () => { document.getElementById('appAlertOverlay').hidden = true; resolve(true); };
+    const cancelBtn = el('button', { class: 'pill', type: 'button', style: 'flex:1;', onclick: cancel }, cancelLabel);
+    const confirmBtn = el('button', { class: `pill ${danger ? 'danger' : 'primary'}`, type: 'button', style: 'flex:1;', onclick: confirmChoice }, confirmLabel);
     buttonsWrap.appendChild(cancelBtn);
     buttonsWrap.appendChild(confirmBtn);
+    document.getElementById('appAlertCloseBtn').onclick = cancel;
     document.getElementById('appAlertOverlay').hidden = false;
   });
 }
@@ -2276,7 +2339,7 @@ function renderEarnItBackForm(tx, currency) {
   proposeAmount.addEventListener('input', updateSubmitEnabled);
 
   options.forEach((job) => {
-    const radio = el('input', { type: 'radio', name: radioName, style: 'width:auto;margin-right:8px;flex-shrink:0;' });
+    const radio = el('input', { type: 'radio', name: radioName, style: 'margin-right:8px;' });
     radio.addEventListener('change', () => {
       selectedCatalogId = job.id;
       proposeDesc.hidden = true; proposeAmount.hidden = true;
@@ -2290,7 +2353,7 @@ function renderEarnItBackForm(tx, currency) {
     ]));
   });
 
-  const proposeRadio = el('input', { type: 'radio', name: radioName, style: 'width:auto;margin-right:8px;flex-shrink:0;' });
+  const proposeRadio = el('input', { type: 'radio', name: radioName, style: 'margin-right:8px;' });
   proposeRadio.addEventListener('change', () => {
     selectedCatalogId = null;
     proposeDesc.hidden = false; proposeAmount.hidden = false;
@@ -2687,7 +2750,7 @@ function renderChores() {
 
       let pillLabel, pillClass;
       if (missed) { pillLabel = 'missed'; pillClass = 'status-rejected'; }
-      else if (notYetDue) { pillLabel = 'not due yet'; pillClass = 'status-pending'; }
+      else if (notYetDue) { pillLabel = 'not due yet'; pillClass = 'status-neutral'; }
       else if (status === 'done') { pillLabel = 'awaiting approval'; pillClass = 'status-done'; }
       else { pillLabel = status.replace('_', ' '); pillClass = `status-${status}`; }
 
@@ -3946,7 +4009,7 @@ function renderPoolControl(wrap, mode, checkedUids) {
   } else {
     wrap.appendChild(el('label', {}, 'Who\'s included'));
     children.forEach((m) => {
-      const cb = el('input', { type: 'checkbox', value: m.uid, ...(checkedUids.has(m.uid) ? { checked: 'checked' } : {}), style: 'width:auto;display:inline-block;margin-right:6px;' });
+      const cb = el('input', { type: 'checkbox', value: m.uid, ...(checkedUids.has(m.uid) ? { checked: 'checked' } : {}), style: 'margin-right:6px;' });
       wrap.appendChild(el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:4px;' }, [cb, m.displayName || m.email]));
     });
   }
@@ -4559,7 +4622,7 @@ function renderHotStreakBonusBody() {
   form.appendChild(el('label', {}, 'Included daily tasks'));
   const taskCheckboxes = dailyTasks.map((c) => {
     const cb = el('input', {
-      type: 'checkbox', value: c.id, style: 'width:auto;display:inline-block;margin-right:6px;',
+      type: 'checkbox', value: c.id, style: 'margin-right:6px;',
       ...((cfg.taskChoreIds || []).includes(c.id) ? { checked: 'checked' } : {}),
     });
     form.appendChild(el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:4px;' }, [cb, choreLabel(c)]));
@@ -4828,7 +4891,7 @@ function renderWizardStep() {
 
     wizardItems.forEach((item, idx) => {
       const row = el('div', { style: 'display:flex;gap:6px;align-items:center;margin-bottom:6px;' });
-      const cb = el('input', { type: 'checkbox', style: 'width:auto;', ...(item.checked ? { checked: 'checked' } : {}) });
+      const cb = el('input', { type: 'checkbox', ...(item.checked ? { checked: 'checked' } : {}) });
       cb.addEventListener('change', () => { item.checked = cb.checked; });
       const iconInput = renderIconPicker(resolveIconPickerValue(item.icon));
       iconInput.style.marginBottom = '0';
@@ -4850,7 +4913,7 @@ function renderWizardStep() {
     }, '+ Add custom item'));
 
     const saveTemplatesRow = el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:10px;' });
-    const saveTemplatesCb = el('input', { type: 'checkbox', style: 'width:auto;', ...(wizardSaveAsTemplates ? { checked: 'checked' } : {}) });
+    const saveTemplatesCb = el('input', { type: 'checkbox', ...(wizardSaveAsTemplates ? { checked: 'checked' } : {}) });
     saveTemplatesCb.addEventListener('change', () => { wizardSaveAsTemplates = saveTemplatesCb.checked; });
     saveTemplatesRow.appendChild(saveTemplatesCb);
     saveTemplatesRow.appendChild(el('span', {}, 'Also save these as quick-pick templates'));
@@ -5242,7 +5305,7 @@ function runWizardItemRow(chore) {
   const modeLabel = mode === 'rotating' ? 'Rotates with the family'
     : mode === 'fixed' ? 'Fixed to one person'
     : mode === 'sharedAny' ? 'Shared with the family' : 'Everyone does their own';
-  const cb = el('input', { type: 'checkbox', style: 'width:auto;', ...(included ? { checked: 'checked' } : {}) });
+  const cb = el('input', { type: 'checkbox', ...(included ? { checked: 'checked' } : {}) });
   const errorEl = el('p', { class: 'error-text', style: 'margin:4px 0 0;' });
   errorEl.hidden = true;
 
@@ -5376,7 +5439,7 @@ function renderAddWizardStep() {
         .filter((item) => !q || item.name.toLowerCase().includes(q))
         .forEach((item) => {
           const cb = el('input', {
-            type: 'checkbox', style: 'width:auto;margin-right:8px;flex-shrink:0;',
+            type: 'checkbox', style: 'margin-right:8px;',
             ...(addWizard.starterSelections.has(item.name) ? { checked: 'checked' } : {}),
           });
           cb.addEventListener('change', () => {
