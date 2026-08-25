@@ -3415,9 +3415,7 @@ function renderAdminDashboard() {
     ]);
   }
   container.appendChild(el('div', { class: 'quick-action-grid' }, [
-    quickActionBtn('broom', 'Assign chore wizard', () => openRunWizard()),
-    quickActionBtn('plus', 'Add chores to library', () => openAddWizard('chore')),
-    quickActionBtn('calendarCheck', 'Add daily tasks to library', () => openAddWizard('dailyTask')),
+    quickActionBtn('broom', 'Chore wizard', () => openChoreWizard()),
     quickActionBtn('people', 'Manage kids', () => switchTab('kids')),
     quickActionBtn('dollarCircle', 'Adjust money', () => switchTab('kids')),
     quickActionBtn(null, 'View activity', () => switchTab('allactivity')),
@@ -5154,10 +5152,22 @@ function renderWizardStep() {
 // choreTemplates quick-pick collection the plain "Add a chore" form already
 // has -- see ADR-0030.
 // ---------------------------------------------------------------------
-let adminWizardKind = null; // 'run' | 'add' -- which flow #adminWizardScreen is currently showing
+let adminWizardKind = null; // 'chore' | 'run' | 'add' -- which flow #adminWizardScreen is currently showing
+let choreWizard = null;
 let runWizard = null;
 let addWizard = null;
 
+// The single Quick Actions entry point -- starts at the unified Mode/Type
+// chooser (renderChoreWizardStep), which then hands off into runWizard or
+// addWizard below. Kept separate from openRunWizard(presetScopeUid) (the
+// per-child "Assign chores for X" shortcut), which still jumps straight
+// into the reassign flow with clear, already-declared intent.
+function openChoreWizard() {
+  adminWizardKind = 'chore';
+  choreWizard = { step: 'mode', mode: null, type: null };
+  showScreen('adminWizard');
+  renderAdminWizardStep();
+}
 // presetScopeUid: launches the wizard already scoped to one child (from
 // that child's own admin page) -- the SCOPE step is skipped in both
 // directions whenever a scope is already preset, same as the existing
@@ -5176,6 +5186,7 @@ function openAddWizard(category) {
 }
 function closeAdminWizard() {
   adminWizardKind = null;
+  choreWizard = null;
   runWizard = null;
   addWizard = null;
   showScreen('app');
@@ -5189,7 +5200,8 @@ function renderAdminWizardProgress(stepCount, currentStep) {
   }
 }
 function renderAdminWizardStep() {
-  if (adminWizardKind === 'run') renderRunWizardStep();
+  if (adminWizardKind === 'chore') renderChoreWizardStep();
+  else if (adminWizardKind === 'run') renderRunWizardStep();
   else if (adminWizardKind === 'add') renderAddWizardStep();
 }
 
@@ -5222,6 +5234,151 @@ function summaryStatRow(icon, value, label) {
     el('div', { style: 'flex:1;' }, label),
     el('div', { style: 'font-weight:700;' }, String(value)),
   ]);
+}
+
+// ---------------------------------------------------------------------
+// Unified "Chore wizard" chooser (in front of the reassign/add flows
+// below) -- two steps (Mode, then Type), then hands off. Deliberately
+// thin: no reassign/add logic is duplicated here, this only decides
+// which existing flow to hand off to and pre-seeds its starting state.
+// "Both" is only offered for Reassign -- addWizard (and the starter
+// library it's built on) is architecturally single-category per run.
+// ---------------------------------------------------------------------
+const CHORE_WIZARD_TYPE_OPTIONS = [
+  ['chores', 'broom', 'Chores only', 'Assign or reassign chores'],
+  ['dailyTasks', 'calendarCheck', 'Daily tasks only', 'Assign or reassign daily tasks'],
+  ['both', 'checkCircleWithRing', 'Both chores & daily tasks', 'Configure everything'],
+];
+
+function renderChoreWizardStep() {
+  renderAdminWizardProgress(2, choreWizard.step === 'mode' ? 0 : 1);
+  const content = document.getElementById('adminWizardContent');
+  content.innerHTML = '';
+
+  if (choreWizard.step === 'mode') {
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, 'Chore wizard'));
+    card.appendChild(el('p', { class: 'muted' }, 'What would you like to do?'));
+    const options = [
+      ['reassign', 'people', 'Reassign existing', 'Change who does what, or their schedule'],
+      ['add', 'plus', 'Add new', 'Add chores or daily tasks to your list'],
+      ['startFresh', 'circleMinus', 'Start fresh', 'Clear everything and rebuild from scratch'],
+    ];
+    const optionsWrap = el('div', {});
+    options.forEach(([value, icon, title, subtitle]) => {
+      optionsWrap.appendChild(renderWizardOptionCard({
+        icon, title, subtitle, selected: choreWizard.mode === value,
+        onclick: () => { choreWizard.mode = value; choreWizard.step = 'type'; renderChoreWizardStep(); },
+      }));
+    });
+    card.appendChild(optionsWrap);
+    card.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-top:6px;', type: 'button', onclick: closeAdminWizard }, 'Cancel'));
+    content.appendChild(card);
+    return;
+  }
+
+  if (choreWizard.step === 'type') {
+    const card = el('div', { class: 'wizard-card' });
+    card.appendChild(el('h1', {}, 'Chore wizard'));
+    card.appendChild(el('p', { class: 'muted' }, 'Chores, daily tasks, or both?'));
+    const options = choreWizard.mode === 'reassign'
+      ? CHORE_WIZARD_TYPE_OPTIONS
+      : CHORE_WIZARD_TYPE_OPTIONS.filter(([value]) => value !== 'both');
+    const optionsWrap = el('div', {});
+    options.forEach(([value, icon, title, subtitle]) => {
+      optionsWrap.appendChild(renderWizardOptionCard({
+        icon, title, subtitle, selected: choreWizard.type === value,
+        onclick: () => { choreWizard.type = value; handOffChoreWizard(); },
+      }));
+    });
+    card.appendChild(optionsWrap);
+    card.appendChild(el('button', {
+      class: 'pill', style: 'width:100%;margin-top:6px;', type: 'button',
+      onclick: () => { choreWizard.step = 'mode'; renderChoreWizardStep(); },
+    }, 'Back'));
+    content.appendChild(card);
+    return;
+  }
+
+  if (choreWizard.step === 'startFreshConfirm') {
+    renderStartFreshConfirmStep(content);
+    return;
+  }
+}
+
+// Reassign hands off into runWizard already past its own (now redundant
+// for this path) TYPE step -- runWizard.type is pre-seeded from here, and
+// its TYPE step is only ever reached directly via the per-child shortcut
+// (openRunWizard(uid)), never via this chooser. Add hands off into
+// addWizard exactly as its own Quick Action used to. Start fresh continues
+// into its own confirm step below before doing anything.
+function handOffChoreWizard() {
+  const category = choreWizard.type === 'dailyTasks' ? 'dailyTask' : 'chore';
+  if (choreWizard.mode === 'reassign') {
+    adminWizardKind = 'run';
+    runWizard = {
+      step: runWizardActiveChildren().length <= 1 ? RUN_WIZARD_STEP.INFO : RUN_WIZARD_STEP.SCOPE,
+      type: choreWizard.type, scopeUid: 'family',
+    };
+    renderAdminWizardStep();
+  } else if (choreWizard.mode === 'add') {
+    openAddWizard(category);
+  } else if (choreWizard.mode === 'startFresh') {
+    choreWizard.step = 'startFreshConfirm';
+    renderChoreWizardStep();
+  }
+}
+
+// Deactivates every active chore/dailyTask of the chosen type for the
+// whole family (per-chore updateDoc, same field firestore.rules already
+// lets an admin write via Manage Chores' existing "Deactivate" toggle --
+// no new write path), then hands straight into addWizard's starter-library
+// screen (skipping its own 'source' screen, since the source is already
+// decided) to rebuild. History/ledger entries are untouched -- this only
+// ever writes `active: false`, never deletes anything.
+function renderStartFreshConfirmStep(content) {
+  const category = choreWizard.type === 'dailyTasks' ? 'dailyTask' : 'chore';
+  const label = category === 'dailyTask' ? 'daily task' : 'chore';
+  const matching = state.chores.filter((c) => c.active !== false && (c.category || 'chore') === category);
+  const card = el('div', { class: 'wizard-card' });
+  card.appendChild(el('h1', {}, 'Start fresh?'));
+  card.appendChild(el('div', {
+    style: 'display:flex;gap:8px;align-items:flex-start;padding:10px 12px;background:var(--warn-tint);border-radius:10px;margin-bottom:14px;',
+  }, [
+    svgIcon('infoCircle', { size: 16, color: 'var(--warn)' }),
+    el('div', {}, `This will deactivate all ${matching.length} active ${label}${matching.length === 1 ? '' : 's'} for the whole family. `
+      + 'They\'ll be removed from everyone\'s list, but their history stays intact. This can\'t be easily undone from here.'),
+  ]));
+  const errorEl = el('p', { class: 'error-text' });
+  errorEl.hidden = true;
+  card.appendChild(errorEl);
+  card.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [
+    el('button', {
+      class: 'pill', style: 'flex:1;', type: 'button',
+      onclick: () => { choreWizard.step = 'type'; renderChoreWizardStep(); },
+    }, 'Cancel'),
+    el('button', {
+      class: 'pill danger', style: 'flex:1;', type: 'button',
+      onclick: async (event) => {
+        event.currentTarget.disabled = true;
+        try {
+          const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+          await Promise.all(matching.map((c) => updateDoc(fsDoc(db, `families/${state.familyId}/chores/${c.id}`), { active: false })));
+          adminWizardKind = 'add';
+          addWizard = {
+            step: 1, screen: 'starterBrowse', category, starterSelections: new Set(),
+            starterRoom: 'all', draft: null, lastAdded: [], lastSkipped: [],
+          };
+          renderAdminWizardStep();
+        } catch (err) {
+          errorEl.textContent = err.message;
+          errorEl.hidden = false;
+          event.currentTarget.disabled = false;
+        }
+      },
+    }, 'Yes, start fresh'),
+  ]));
+  content.appendChild(card);
 }
 
 const RUN_WIZARD_STEP = { TYPE: 0, SCOPE: 1, INFO: 2, SUMMARY: 3, ITEMS: 4, DONE: 5 };
