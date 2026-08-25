@@ -182,6 +182,40 @@
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a8b7c9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   }
   select.icon-input { width: 112px; flex: none; }
+  /* Custom dropdown (see attachCustomSelect) -- a real <select> can only
+     ever be styled up to its closed box; the OPEN state is native OS
+     chrome on every platform and CSS cannot touch it. Everywhere a
+     dropdown is user-facing, the actual <select> is kept (hidden) as the
+     real data model and the visible trigger+panel below fully replace its
+     interaction, so opening one never shows an unstyled system picker. */
+  .custom-select-wrap { position: relative; margin-bottom: 8px; }
+  .custom-select-native {
+    position: absolute; opacity: 0; width: 1px; height: 1px; overflow: hidden;
+    pointer-events: none; margin: 0;
+  }
+  .custom-select-trigger {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 0.9rem; font-family: inherit;
+    cursor: pointer; touch-action: manipulation; text-align: left;
+  }
+  .custom-select-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
+  .custom-select-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .custom-select-chevron { flex-shrink: 0; color: var(--muted); transition: transform 0.15s ease; display: flex; }
+  .custom-select-trigger.open .custom-select-chevron { transform: rotate(180deg); }
+  .custom-select-panel {
+    position: absolute; top: calc(100% - 4px); left: 0; right: 0; z-index: 50;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.18); max-height: 280px; overflow-y: auto; padding: 6px;
+  }
+  .custom-select-option {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
+    padding: 10px 10px; border: none; background: none; border-radius: 8px; text-align: left;
+    font-size: 0.9rem; font-family: inherit; color: var(--text); cursor: pointer; touch-action: manipulation;
+  }
+  .custom-select-option:hover, .custom-select-option:focus-visible { background: var(--panel2); }
+  .custom-select-option.selected { font-weight: 700; color: var(--accent2); }
+  .wizard-card .custom-select-trigger { font-size: 1.05rem; padding: 13px 14px; }
   label { font-size: 0.78rem; font-weight: 600; color: var(--muted); display: block; margin-bottom: 4px; }
   .field { margin-bottom: 10px; }
   form .pill.primary { margin-top: 4px; }
@@ -986,6 +1020,96 @@ function el(tag, attrs, children) {
   return node;
 }
 
+// Wraps an already-built <select> (still populated/read/written exactly as
+// before -- every existing `.value`, `.addEventListener('change', ...)`,
+// `.querySelector('option[...]')` call site keeps working unchanged, since
+// this is the SAME node, just relocated) with a custom-styled trigger +
+// panel that fully replaces its tap/click interaction. A native <select>'s
+// closed box can be styled, but its OPEN state is unstylable OS chrome on
+// every platform -- this is the only way to avoid it. Returns the wrapper
+// to insert in the select's place; call this at the point you'd otherwise
+// do `container.appendChild(mySelect)`, not at creation time.
+function attachCustomSelect(selectEl) {
+  const wrap = el('div', { class: 'custom-select-wrap' });
+  selectEl.classList.add('custom-select-native');
+  selectEl.tabIndex = -1;
+  const label = el('span', { class: 'custom-select-label' }, '');
+  // A generic chevron glyph, not a chore/content icon -- built the same
+  // inline-SVG way as the native <select>'s own chevron background-image
+  // (see the `select` CSS rule), rather than added to the closed chore-icon
+  // set (ADR-0025's "one approved set" scope is about chore/deduction/
+  // extra-job content icons, not chrome like this).
+  const chevron = el('span', { class: 'custom-select-chevron' });
+  chevron.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    + 'stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;display:block;">'
+    + '<polyline points="6 9 12 15 18 9"/></svg>';
+  const trigger = el('button', {
+    type: 'button', class: 'custom-select-trigger', 'aria-haspopup': 'listbox',
+  }, [label, chevron]);
+  const panel = el('div', { class: 'custom-select-panel', hidden: true, role: 'listbox' });
+
+  function closePanel() {
+    panel.hidden = true;
+    trigger.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+  }
+  function renderPanel() {
+    panel.innerHTML = '';
+    Array.from(selectEl.options).filter((opt) => !opt.hidden && !opt.disabled).forEach((opt) => {
+      const selected = opt.value === selectEl.value;
+      const row = el('button', {
+        type: 'button', class: `custom-select-option${selected ? ' selected' : ''}`, role: 'option',
+        onclick: () => { selectEl.value = opt.value; selectEl.dispatchEvent(new Event('change', { bubbles: true })); closePanel(); },
+      }, [
+        el('span', {}, opt.textContent),
+        selected ? svgIcon('check', { size: 14, color: 'var(--accent2)' }) : null,
+      ]);
+      panel.appendChild(row);
+    });
+  }
+  function openPanel() {
+    renderPanel();
+    panel.hidden = false;
+    trigger.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
+  }
+  trigger.addEventListener('click', () => { panel.hidden ? openPanel() : closePanel(); });
+  document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) closePanel(); });
+
+  // Any existing code that sets `mySelect.value = x` (programmatic, no user
+  // interaction) must still update the visible label -- a MutationObserver
+  // can't see IDL property assignment, so the setter is overridden directly.
+  const nativeValueDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  Object.defineProperty(selectEl, 'value', {
+    configurable: true,
+    get() { return nativeValueDesc.get.call(selectEl); },
+    set(v) { nativeValueDesc.set.call(selectEl, v); syncLabel(); },
+  });
+  function syncLabel() {
+    const opt = selectEl.options[selectEl.selectedIndex];
+    label.textContent = opt ? opt.textContent : '';
+  }
+  selectEl.addEventListener('change', syncLabel);
+  // Options/disabled state can also change after the fact (e.g.
+  // updateModeOptionsForCategory toggling the 'rotating' option) without
+  // going through .value -- re-check the label whenever the select regains
+  // focus-worthy interaction, i.e. right before the panel opens (see
+  // renderPanel above) and once up front here.
+  trigger.disabled = false;
+  const nativeDisabledDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'disabled');
+  Object.defineProperty(selectEl, 'disabled', {
+    configurable: true,
+    get() { return nativeDisabledDesc.get.call(selectEl); },
+    set(v) { nativeDisabledDesc.set.call(selectEl, v); trigger.disabled = v; },
+  });
+
+  wrap.appendChild(trigger);
+  wrap.appendChild(panel);
+  wrap.appendChild(selectEl);
+  syncLabel();
+  return wrap;
+}
+
 // Line-icon system, matching the family's uploaded "Icon Set A" (rounded
 // outline, single stroke, currentColor) -- replaces ad hoc emoji, which
 // render as whatever multi-colored glyph the OS's own emoji font happens
@@ -1592,9 +1716,15 @@ const installBtn = document.getElementById('installBtn');
 
 // sw.js existed but was never actually registered -- neither the offline
 // shell caching nor (now) push notifications can work without this.
+// `navigator.serviceWorker.ready` (not the raw `.register()` result) is
+// what actually guarantees an ACTIVE worker -- register() can resolve while
+// the worker is still 'installing', and passing that half-ready
+// registration to getToken() is exactly what produced the "no service
+// worker" / "no active Service Worker" failure Enable notifications hit.
 let swRegistration = null;
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js')
+    .then(() => navigator.serviceWorker.ready)
     .then((reg) => { swRegistration = reg; })
     .catch((err) => console.error('[choresapp] service worker registration failed:', err));
 }
@@ -2840,7 +2970,7 @@ function renderChores() {
             } catch (err) { showAppAlert(err.message); }
           },
         }, canProposeDaySwap ? "Trade today's task" : 'Propose swap');
-        swapWrap.appendChild(targetSelect);
+        swapWrap.appendChild(attachCustomSelect(targetSelect));
         swapWrap.appendChild(swapBtn);
         card.appendChild(swapWrap);
       }
@@ -2913,7 +3043,7 @@ function renderExtras() {
     const catDescInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
     const catAmountInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Amount (e.g. 5.00)', required: true });
     catalogForm.appendChild(el('label', {}, 'Add a listed extra job'));
-    catalogForm.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [catIconInput, catNameInput]));
+    catalogForm.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [attachCustomSelect(catIconInput), catNameInput]));
     catalogForm.appendChild(catDescInput);
     catalogForm.appendChild(catAmountInput);
     catalogForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add to list'));
@@ -2954,7 +3084,7 @@ function renderExtras() {
     const dedNameInput = el('input', { type: 'text', placeholder: 'e.g. Boots left in the hall', required: true });
     const dedAmountInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Deduction amount (e.g. 1.00)', required: true });
     deductionCatalogForm.appendChild(el('label', {}, 'Add a "not to do" (deduction)'));
-    deductionCatalogForm.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [dedIconInput, dedNameInput]));
+    deductionCatalogForm.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [attachCustomSelect(dedIconInput), dedNameInput]));
     deductionCatalogForm.appendChild(dedAmountInput);
     deductionCatalogForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add to list'));
     deductionCatalogForm.addEventListener('submit', async (event) => {
@@ -3000,8 +3130,8 @@ function renderExtras() {
       const itemSelect = el('select', {});
       activeDeductions.forEach((d) => itemSelect.appendChild(el('option', { value: d.id }, `${d.name} (-${formatCents(d.amountCents, currency)})`)));
       logForm.appendChild(el('label', {}, 'Log a deduction'));
-      logForm.appendChild(childSelect);
-      logForm.appendChild(itemSelect);
+      logForm.appendChild(attachCustomSelect(childSelect));
+      logForm.appendChild(attachCustomSelect(itemSelect));
       const logError = el('p', { class: 'error-text' });
       logError.hidden = true;
       logForm.appendChild(logError);
@@ -3856,7 +3986,7 @@ function renderAddMemberForm() {
   updateFieldsForRole();
 
   form.appendChild(el('label', {}, 'Role'));
-  form.appendChild(roleSelect);
+  form.appendChild(attachCustomSelect(roleSelect));
   form.appendChild(emailInput);
   form.appendChild(usernameInput);
   form.appendChild(passwordInput);
@@ -4005,7 +4135,7 @@ function renderPoolControl(wrap, mode, checkedUids) {
     children.forEach((m) => select.appendChild(
       el('option', { value: m.uid, ...(checkedUids.has(m.uid) ? { selected: 'selected' } : {}) }, m.displayName || m.email)
     ));
-    wrap.appendChild(select);
+    wrap.appendChild(attachCustomSelect(select));
   } else {
     wrap.appendChild(el('label', {}, 'Who\'s included'));
     children.forEach((m) => {
@@ -4157,18 +4287,18 @@ function renderChoreForm({ presetChildUid = null } = {}) {
         iconInput.value = resolveIconPickerValue(t.icon);
       }
     });
-    form.appendChild(templateSelect);
+    form.appendChild(attachCustomSelect(templateSelect));
   }
-  form.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:flex-start;' }, [iconInput, nameInput]));
+  form.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:flex-start;' }, [attachCustomSelect(iconInput), nameInput]));
   form.appendChild(descInput);
   const dailyRequirementRow = el('label', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:10px;cursor:pointer;' }, [
     dailyRequirementCb, el('span', {}, 'This is a daily requirement (e.g. make your bed)'),
   ]);
   form.appendChild(dailyRequirementRow);
   form.appendChild(el('label', {}, 'Category'));
-  form.appendChild(categorySelect);
+  form.appendChild(attachCustomSelect(categorySelect));
   form.appendChild(el('label', {}, 'Who does it'));
-  form.appendChild(modeSelect);
+  form.appendChild(attachCustomSelect(modeSelect));
   form.appendChild(poolWrap);
   if (applyToAllCb) {
     form.appendChild(el('label', { style: 'display:flex;align-items:center;gap:6px;margin:-2px 0 10px;cursor:pointer;' }, [
@@ -4176,10 +4306,10 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     ]));
   }
   form.appendChild(el('label', {}, 'Recurs?'));
-  form.appendChild(frequencySelect);
+  form.appendChild(attachCustomSelect(frequencySelect));
   form.appendChild(scheduledDaysWrap);
   form.appendChild(el('label', {}, 'Difficulty'));
-  form.appendChild(difficultySelect);
+  form.appendChild(attachCustomSelect(difficultySelect));
   form.appendChild(el('div', { class: 'muted', style: 'margin:-4px 0 10px;font-size:0.78rem;' },
     'Harder chores count for more when we balance whose turn it is.'));
   form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add chore'));
@@ -4313,7 +4443,7 @@ function renderEditAssignmentBody(chore, options = {}) {
     } catch (err) { showAppAlert(err.message); } finally { saveDifficultyBtn.disabled = false; }
   });
   wrap.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-bottom:14px;' }, [
-    el('label', { style: 'margin:0;' }, 'Difficulty'), difficultySelect, saveDifficultyBtn,
+    el('label', { style: 'margin:0;' }, 'Difficulty'), attachCustomSelect(difficultySelect), saveDifficultyBtn,
   ]));
 
   const modeSelect = el('select', {}, [
@@ -4377,7 +4507,7 @@ function renderEditAssignmentBody(chore, options = {}) {
   });
 
   wrap.appendChild(el('label', { style: 'margin:0;' }, 'Who does it'));
-  wrap.appendChild(modeSelect);
+  wrap.appendChild(attachCustomSelect(modeSelect));
   wrap.appendChild(poolWrap);
   wrap.appendChild(el('div', { class: 'muted', style: 'font-size:0.75rem;margin-top:2px;' },
     'Changes to a rotation\'s lineup take effect from next Monday.'));
@@ -4490,7 +4620,7 @@ function renderChoreLibrary(container) {
   const nameInput = el('input', { type: 'text', placeholder: 'Template name (e.g. "Clean your room")', required: true });
   const descInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
   form.appendChild(el('label', {}, 'Add a quick-pick template'));
-  form.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [iconInput, nameInput]));
+  form.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [attachCustomSelect(iconInput), nameInput]));
   form.appendChild(descInput);
   form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add to library'));
   form.addEventListener('submit', async (event) => {
@@ -4536,7 +4666,7 @@ function renderAllActivity() {
   state.members.forEach((m) => {
     select.appendChild(el('option', { value: m.uid, selected: m.uid === state.ledgerViewUid ? 'selected' : null }, m.displayName || m.email));
   });
-  container.appendChild(select);
+  container.appendChild(attachCustomSelect(select));
 
   if (state.ledger.length === 0) {
     container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
@@ -4599,7 +4729,7 @@ function renderHotStreakBonusBody() {
       renderSettings();
     });
     wrap.appendChild(el('label', {}, 'Child'));
-    wrap.appendChild(childSelect);
+    wrap.appendChild(attachCustomSelect(childSelect));
   }
 
   const form = el('form', {});
@@ -4718,9 +4848,9 @@ function renderSettings() {
   const daySelect = el('select', {}, dayNames.map((d, i) => el('option', { value: String(i) }, d)));
   daySelect.value = String((state.family && state.family.settings && state.family.settings.payoutDayOfWeek) ?? 5);
   settingsForm.appendChild(el('label', {}, 'Currency'));
-  settingsForm.appendChild(currencySelect);
+  settingsForm.appendChild(attachCustomSelect(currencySelect));
   settingsForm.appendChild(el('label', {}, 'Weekly allowance day'));
-  settingsForm.appendChild(daySelect);
+  settingsForm.appendChild(attachCustomSelect(daySelect));
   settingsForm.appendChild(el('div', { class: 'muted', style: 'margin-bottom:8px;' }, 'Saved for future use -- the automatic payout currently runs Friday evening for all families regardless of this setting.'));
   settingsForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Save'));
   settingsForm.addEventListener('submit', async (event) => {
@@ -4899,7 +5029,7 @@ function renderWizardStep() {
       const nameInput = el('input', { type: 'text', style: 'margin-bottom:0;' });
       nameInput.value = item.name;
       nameInput.addEventListener('input', () => { item.name = nameInput.value; });
-      row.appendChild(cb); row.appendChild(iconInput); row.appendChild(nameInput);
+      row.appendChild(cb); row.appendChild(attachCustomSelect(iconInput)); row.appendChild(nameInput);
       card.appendChild(row);
       card.appendChild(el('div', { class: 'muted', style: 'margin:-4px 0 6px 26px;' }, item.category === 'dailyTask' ? 'Daily task — everyone does their own' : 'Chore — rotates fairly'));
     });
@@ -5511,13 +5641,13 @@ function renderAddWizardStep() {
     const iconInput = renderIconPicker(resolveIconPickerValue(draft.icon));
     const descInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
     descInput.value = draft.description;
-    card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:flex-start;' }, [iconInput, nameInput]));
+    card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:flex-start;' }, [attachCustomSelect(iconInput), nameInput]));
     card.appendChild(descInput);
 
     const frequencySelect = renderFrequencySelect();
     frequencySelect.value = draft.frequency;
     card.appendChild(el('label', {}, 'Recurs?'));
-    card.appendChild(frequencySelect);
+    card.appendChild(attachCustomSelect(frequencySelect));
 
     let difficultySelect = null;
     if (addWizard.category !== 'dailyTask') {
@@ -5526,7 +5656,7 @@ function renderAddWizardStep() {
       ]);
       difficultySelect.value = draft.difficulty;
       card.appendChild(el('label', {}, 'Difficulty'));
-      card.appendChild(difficultySelect);
+      card.appendChild(attachCustomSelect(difficultySelect));
     }
 
     const modeSelect = el('select', {}, [
@@ -5538,7 +5668,7 @@ function renderAddWizardStep() {
     modeSelect.value = draft.mode;
     updateModeOptionsForCategory(modeSelect, addWizard.category);
     card.appendChild(el('label', {}, 'Assignment'));
-    card.appendChild(modeSelect);
+    card.appendChild(attachCustomSelect(modeSelect));
 
     card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
       el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => { addWizard.screen = 'source'; addWizard.step = 0; renderAdminWizardStep(); } }, 'Back'),
