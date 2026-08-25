@@ -99,8 +99,17 @@
 
   .status-pill {
     display: inline-block; border-radius: 999px; padding: 2px 9px; font-size: 0.65rem;
-    font-weight: 700; text-transform: uppercase; color: #fff;
+    font-weight: 700; text-transform: uppercase; color: #fff; white-space: nowrap; flex-shrink: 0;
   }
+  /* Overflow toggle for a chore card's rare actions (propose/trade a swap)
+     -- kept out of the way instead of a select+button permanently sitting
+     on every eligible card. */
+  .card-kebab-btn {
+    width: 26px; height: 26px; flex-shrink: 0; border-radius: 999px; border: none;
+    background: transparent; color: var(--muted); font-size: 1.1rem; line-height: 1;
+    cursor: pointer; touch-action: manipulation; display: flex; align-items: center; justify-content: center;
+  }
+  .swap-wrap { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
   .status-pending { background: #64748b; }
   .status-done, .status-proposed { background: var(--warn); }
   .status-approved, .status-paid, .status-accepted { background: #16a34a; }
@@ -598,6 +607,14 @@
     </div>
   </div>
 
+  <div id="appAlertOverlay" class="modal-overlay" hidden>
+    <div class="modal-card center-screen" style="min-height:0;">
+      <h1 id="appAlertTitle"></h1>
+      <p id="appAlertMessage" class="muted" style="white-space:pre-wrap;text-align:left;width:100%;"></p>
+      <div id="appAlertButtons" style="display:flex;gap:8px;width:100%;margin-top:6px;"></div>
+    </div>
+  </div>
+
   <div id="app" hidden>
     <div class="app-header">
       <div>
@@ -791,6 +808,26 @@ function resolvePool(chore, allChildUids) {
     return chore.rotation.pool;
   }
   return assignedTo;
+}
+// Blocks accidentally creating two literal instances of the same chore for
+// the same child -- e.g. duplicating a chore from "My family library" and
+// saving it unedited (still named "X (copy)" or worse, if the admin
+// changed it back to match). Name match is trimmed/case-insensitive, and
+// only within the same category (chore vs dailyTask), since those are
+// different concepts even when named the same; pool overlap means "would
+// end up assigned to the same kid twice," not merely "same name exists
+// somewhere in the family."
+function findDuplicateChoreForPool(name, category, pool, excludeChoreId) {
+  const normalized = (name || '').trim().toLowerCase();
+  if (!normalized || pool.length === 0) return null;
+  return state.chores.find((c) => {
+    if (c.id === excludeChoreId) return false;
+    if (c.active === false) return false;
+    if ((c.category || 'chore') !== (category || 'chore')) return false;
+    if ((c.name || '').trim().toLowerCase() !== normalized) return false;
+    const existingPool = resolvePool(c, activeChildUids());
+    return pool.some((uid) => existingPool.includes(uid));
+  }) || null;
 }
 function resolveBaseAssignee(chore) {
   const mode = resolveAssignmentMode(chore);
@@ -1296,10 +1333,10 @@ document.getElementById('signInModeKidBtn').addEventListener('click', () => {
   document.getElementById('kidSignInHelp').hidden = false;
 });
 document.getElementById('kidInviteHelpBtn').addEventListener('click', () => {
-  alert("Kid accounts are set up by a parent, not self-signup -- ask a parent to add you from their Kids tab (Admin Dashboard → Kids → + Add another child).");
+  showAppAlert("Kid accounts are set up by a parent, not self-signup -- ask a parent to add you from their Kids tab (Admin Dashboard → Kids → + Add another child).");
 });
 document.getElementById('kidNeedHelpBtn').addEventListener('click', () => {
-  alert("Ask your parent for the username and password they set up for you. They can also change your password for you from their Kids tab if you've forgotten it.");
+  showAppAlert("Ask your parent for the username and password they set up for you. They can also change your password for you from their Kids tab if you've forgotten it.");
 });
 
 document.getElementById('toggleKidPasswordBtn').addEventListener('click', () => {
@@ -1370,6 +1407,41 @@ function showCredentialModal({ title }) {
 document.getElementById('credentialModalDoneBtn').addEventListener('click', () => {
   document.getElementById('credentialModal').hidden = true;
 });
+
+// Styled replacements for the browser's native alert()/confirm() -- those
+// render as unstyled OS chrome that looks nothing like the rest of the app.
+// Both resolve their Promise the moment a button is tapped and hide the
+// shared overlay; showAppAlert's caller almost never needs to await it
+// (nothing depends on dismissal timing the way native alert()'s blocking
+// behavior did), but showAppConfirm's return value gates real logic, so
+// every call site of it must await it.
+function showAppAlert(message, { title = 'Notice' } = {}) {
+  return new Promise((resolve) => {
+    document.getElementById('appAlertTitle').textContent = title;
+    document.getElementById('appAlertMessage').textContent = message;
+    const buttonsWrap = document.getElementById('appAlertButtons');
+    buttonsWrap.innerHTML = '';
+    const okBtn = el('button', { class: 'pill primary', type: 'button', style: 'flex:1;' }, 'OK');
+    okBtn.addEventListener('click', () => { document.getElementById('appAlertOverlay').hidden = true; resolve(); });
+    buttonsWrap.appendChild(okBtn);
+    document.getElementById('appAlertOverlay').hidden = false;
+  });
+}
+function showAppConfirm(message, { title = 'Are you sure?', confirmLabel = 'Yes', cancelLabel = 'Cancel', danger = false } = {}) {
+  return new Promise((resolve) => {
+    document.getElementById('appAlertTitle').textContent = title;
+    document.getElementById('appAlertMessage').textContent = message;
+    const buttonsWrap = document.getElementById('appAlertButtons');
+    buttonsWrap.innerHTML = '';
+    const cancelBtn = el('button', { class: 'pill', type: 'button', style: 'flex:1;' }, cancelLabel);
+    const confirmBtn = el('button', { class: `pill ${danger ? 'danger' : 'primary'}`, type: 'button', style: 'flex:1;' }, confirmLabel);
+    cancelBtn.addEventListener('click', () => { document.getElementById('appAlertOverlay').hidden = true; resolve(false); });
+    confirmBtn.addEventListener('click', () => { document.getElementById('appAlertOverlay').hidden = true; resolve(true); });
+    buttonsWrap.appendChild(cancelBtn);
+    buttonsWrap.appendChild(confirmBtn);
+    document.getElementById('appAlertOverlay').hidden = false;
+  });
+}
 
 // ---------------------------------------------------------------------
 // Notification inbox -- bell icon + badge (always live, via the realtime
@@ -1545,7 +1617,7 @@ function renderNotificationSettingsButton(container) {
       else await disablePushNotifications();
     } catch (err) {
       input.checked = !turningOn;
-      alert(err.message);
+      showAppAlert(err.message);
     } finally {
       input.disabled = false;
       renderCurrentTab();
@@ -1580,7 +1652,7 @@ function updateInstallUI() {
     installBtn.textContent = 'Add to Home Screen';
     installBtn.style.display = 'inline-flex';
     installBtn.onclick = () => {
-      alert('On iPhone:\n\n1. Tap the Share icon (square with an arrow up) at the bottom of Safari\n2. Scroll down and tap "Add to Home Screen"\n3. Tap "Add"');
+      showAppAlert('On iPhone:\n\n1. Tap the Share icon (square with an arrow up) at the bottom of Safari\n2. Scroll down and tap "Add to Home Screen"\n3. Tap "Add"');
     };
   } else {
     installBtn.style.display = 'none';
@@ -2303,7 +2375,7 @@ function renderDashboard() {
   const hotStreak = computeHotStreakSummary(state.user.uid);
   const dayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
   const infoBtn = (text) => el('button', {
-    type: 'button', class: 'info-dot', onclick: () => alert(text),
+    type: 'button', class: 'info-dot', onclick: () => showAppAlert(text),
   }, svgIcon('infoCircle', { size: 14 }));
 
   const balanceCard = el('div', { class: 'booking-card' });
@@ -2533,11 +2605,11 @@ function renderChores() {
         el('div', { style: 'margin-top:8px;display:flex;gap:8px;' }, [
           el('button', {
             class: 'pill primary small',
-            onclick: async () => { try { await callAcceptChoreSwap({ swapId: swap.id }); } catch (err) { alert(err.message); } },
+            onclick: async () => { try { await callAcceptChoreSwap({ swapId: swap.id }); } catch (err) { showAppAlert(err.message); } },
           }, 'Accept'),
           el('button', {
             class: 'pill danger small',
-            onclick: async () => { try { await callDeclineChoreSwap({ swapId: swap.id }); } catch (err) { alert(err.message); } },
+            onclick: async () => { try { await callDeclineChoreSwap({ swapId: swap.id }); } catch (err) { showAppAlert(err.message); } },
           }, 'Decline'),
         ]),
       ]));
@@ -2552,7 +2624,7 @@ function renderChores() {
         el('div', {}, `${scope} ${chore ? chore.name : swap.choreId} → ${memberLabel(swap.targetUid)}`),
         el('button', {
           class: 'pill small', style: 'margin-top:8px;',
-          onclick: async () => { try { await callCancelChoreSwap({ swapId: swap.id }); } catch (err) { alert(err.message); } },
+          onclick: async () => { try { await callCancelChoreSwap({ swapId: swap.id }); } catch (err) { showAppAlert(err.message); } },
         }, 'Cancel'),
       ]));
     });
@@ -2619,6 +2691,29 @@ function renderChores() {
       else if (status === 'done') { pillLabel = 'awaiting approval'; pillClass = 'status-done'; }
       else { pillLabel = status.replace('_', ' '); pillClass = `status-${status}`; }
 
+      // Propose a swap -- only from today's tab (a swap is a "right now"
+      // action, same as marking done), and only while it's still mine to
+      // hand off. Fixed/rotating chores propose a week-swap (the original,
+      // unchanged mechanism); an eachMember daily task proposes a day-swap
+      // instead (handing off just today's instance -- there's no "week" of
+      // a shared gate to swap for a chore everyone already does
+      // independently). This is a rare action -- tucked behind a "..."
+      // toggle instead of a select+button permanently taking up space on
+      // every eligible card.
+      const canProposeWeekSwap = (mode === 'fixed' || mode === 'rotating') && isMyGate && iCanExecute
+        && selectedDateId === todayDateId && status !== 'approved' && status !== 'done';
+      const canProposeDaySwap = isDaily && mode === 'eachMember' && !swappedAwayToday
+        && selectedDateId === todayDateId && status !== 'approved' && status !== 'done';
+      const swapOtherKids = (canProposeWeekSwap || canProposeDaySwap)
+        ? state.members.filter((m) => m.role === 'child' && m.active !== false && m.uid !== state.user.uid)
+        : [];
+      const canShowSwap = (canProposeWeekSwap || canProposeDaySwap) && swapOtherKids.length > 0;
+      const swapWrap = canShowSwap ? el('div', { class: 'swap-wrap', hidden: true }) : null;
+      const kebabBtn = canShowSwap ? el('button', {
+        type: 'button', class: 'card-kebab-btn', 'aria-label': 'More actions',
+        onclick: () => { swapWrap.hidden = !swapWrap.hidden; },
+      }, '⋯') : null;
+
       card.appendChild(el('div', { class: 'row' }, [
         el('div', {}, [
           el('div', { style: 'font-weight:600;' }, [choreLabel(chore)]),
@@ -2630,7 +2725,10 @@ function renderChores() {
           (status === 'rejected' && entry && entry.reviewNote) ? el('div', { class: 'muted' }, `Rejected: ${entry.reviewNote}`) : null,
           isDaily ? renderStreakBadge(chore, executingUid, weekDates, todayDateId) : null,
         ]),
-        el('span', { class: `status-pill ${pillClass}` }, pillLabel),
+        el('div', { style: 'display:flex;align-items:center;gap:6px;flex-shrink:0;' }, [
+          el('span', { class: `status-pill ${pillClass}` }, pillLabel),
+          kebabBtn,
+        ]),
       ]));
 
       if (actionable) {
@@ -2650,7 +2748,7 @@ function renderChores() {
               const photoStoragePath = await uploadProof('choreProof', entryId, fileInput.files[0]);
               await callMarkChoreDone({ choreId: chore.id, photoStoragePath });
             } catch (err) {
-              alert(err.message);
+              showAppAlert(err.message);
             } finally {
               markBtn.disabled = false;
             }
@@ -2665,36 +2763,23 @@ function renderChores() {
         card.appendChild(slot);
       }
 
-      // Propose a swap -- only from today's tab (a swap is a "right now"
-      // action, same as marking done), and only while it's still mine to
-      // hand off. Fixed/rotating chores propose a week-swap (the original,
-      // unchanged mechanism); an eachMember daily task proposes a day-swap
-      // instead (handing off just today's instance -- there's no "week" of
-      // a shared gate to swap for a chore everyone already does
-      // independently).
-      const canProposeWeekSwap = (mode === 'fixed' || mode === 'rotating') && isMyGate && iCanExecute
-        && selectedDateId === todayDateId && status !== 'approved' && status !== 'done';
-      const canProposeDaySwap = isDaily && mode === 'eachMember' && !swappedAwayToday
-        && selectedDateId === todayDateId && status !== 'approved' && status !== 'done';
-      if (canProposeWeekSwap || canProposeDaySwap) {
-        const otherKids = state.members.filter((m) => m.role === 'child' && m.active !== false && m.uid !== state.user.uid);
-        if (otherKids.length > 0) {
-          const targetSelect = el('select', { style: 'margin-top:8px;' });
-          otherKids.forEach((m) => targetSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email)));
-          const swapBtn = el('button', {
-            class: 'pill small',
-            onclick: async () => {
-              try {
-                await callProposeChoreSwap({
-                  choreId: chore.id, targetUid: targetSelect.value,
-                  duration: canProposeDaySwap ? 'day' : 'week',
-                });
-              } catch (err) { alert(err.message); }
-            },
-          }, canProposeDaySwap ? "Trade today's task" : 'Propose swap');
-          card.appendChild(targetSelect);
-          card.appendChild(swapBtn);
-        }
+      if (canShowSwap) {
+        const targetSelect = el('select', { style: 'margin-top:8px;' });
+        swapOtherKids.forEach((m) => targetSelect.appendChild(el('option', { value: m.uid }, m.displayName || m.email)));
+        const swapBtn = el('button', {
+          class: 'pill small',
+          onclick: async () => {
+            try {
+              await callProposeChoreSwap({
+                choreId: chore.id, targetUid: targetSelect.value,
+                duration: canProposeDaySwap ? 'day' : 'week',
+              });
+            } catch (err) { showAppAlert(err.message); }
+          },
+        }, canProposeDaySwap ? "Trade today's task" : 'Propose swap');
+        swapWrap.appendChild(targetSelect);
+        swapWrap.appendChild(swapBtn);
+        card.appendChild(swapWrap);
       }
 
       container.appendChild(card);
@@ -2908,13 +2993,13 @@ function renderExtraJobCard(job, currency) {
     actions.appendChild(el('button', {
       class: 'pill primary small',
       onclick: async () => {
-        try { await callApproveExtraJob({ jobId: job.id, approve: true }); } catch (err) { alert(err.message); }
+        try { await callApproveExtraJob({ jobId: job.id, approve: true }); } catch (err) { showAppAlert(err.message); }
       },
     }, 'Approve'));
     actions.appendChild(el('button', {
       class: 'pill danger small',
       onclick: async () => {
-        try { await callApproveExtraJob({ jobId: job.id, approve: false }); } catch (err) { alert(err.message); }
+        try { await callApproveExtraJob({ jobId: job.id, approve: false }); } catch (err) { showAppAlert(err.message); }
       },
     }, 'Reject'));
     card.appendChild(actions);
@@ -3090,7 +3175,7 @@ function renderAdminDashboard() {
     familyNeedsReview.length > 0 ? el('button', {
       class: 'pill small', onclick: async (event) => {
         event.target.disabled = true;
-        try { await approveAllChoreLogEntries(familyNeedsReview); } catch (err) { alert(err.message); }
+        try { await approveAllChoreLogEntries(familyNeedsReview); } catch (err) { showAppAlert(err.message); }
       },
     }, `Approve all (${familyNeedsReview.length})`) : null,
   ]));
@@ -3227,7 +3312,7 @@ function renderKidDetailBody(container, uid) {
       el('button', {
         class: 'pill small', onclick: async (event) => {
           event.target.disabled = true;
-          try { await approveAllChoreLogEntries(needsReview); } catch (err) { alert(err.message); }
+          try { await approveAllChoreLogEntries(needsReview); } catch (err) { showAppAlert(err.message); }
         },
       }, `Approve all (${needsReview.length})`),
     ]));
@@ -3286,13 +3371,13 @@ function renderKidDetailBody(container, uid) {
       actions.appendChild(el('button', {
         class: 'pill primary small',
         onclick: async () => {
-          try { await callApproveWeeklyPayout({ payoutId: payout.id }); } catch (err) { alert(err.message); }
+          try { await callApproveWeeklyPayout({ payoutId: payout.id }); } catch (err) { showAppAlert(err.message); }
         },
       }, 'Approve'));
       actions.appendChild(el('button', {
         class: 'pill danger small',
         onclick: async () => {
-          try { await callDeclineWeeklyPayout({ payoutId: payout.id }); } catch (err) { alert(err.message); }
+          try { await callDeclineWeeklyPayout({ payoutId: payout.id }); } catch (err) { showAppAlert(err.message); }
         },
       }, 'Decline'));
       card.appendChild(actions);
@@ -4039,7 +4124,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (frequencySelect.value === 'custom' && !dayButtons.some((b) => b.classList.contains('primary'))) {
-      alert('Pick at least one day for this chore.');
+      showAppAlert('Pick at least one day for this chore.');
       return;
     }
     const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
@@ -4059,6 +4144,12 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       }
     }
     const scheduledDays = dayButtons.filter((b) => b.classList.contains('primary')).map((b) => Number(b.dataset.day));
+
+    const dup = findDuplicateChoreForPool(nameInput.value, categorySelect.value, assignedTo);
+    if (dup) {
+      showAppAlert(`"${dup.name}" already exists for ${dup.category === 'dailyTask' ? 'this' : 'one of these'} child(ren) -- edit that one instead of adding a second copy.`, { title: 'Already exists' });
+      return;
+    }
 
     await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
       name: nameInput.value.trim(),
@@ -4156,7 +4247,7 @@ function renderEditAssignmentBody(chore, options = {}) {
     try {
       const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
       await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { difficulty: difficultySelect.value });
-    } catch (err) { alert(err.message); } finally { saveDifficultyBtn.disabled = false; }
+    } catch (err) { showAppAlert(err.message); } finally { saveDifficultyBtn.disabled = false; }
   });
   wrap.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-bottom:14px;' }, [
     el('label', { style: 'margin:0;' }, 'Difficulty'), difficultySelect, saveDifficultyBtn,
@@ -4242,7 +4333,7 @@ function renderActiveChores(container) {
       el('button', {
         class: 'pill small', onclick: async (event) => {
           event.target.disabled = true;
-          try { await approveAllChoreLogEntries(needsReview); } catch (err) { alert(err.message); }
+          try { await approveAllChoreLogEntries(needsReview); } catch (err) { showAppAlert(err.message); }
         },
       }, `Approve all (${needsReview.length})`),
     ]));
@@ -4314,7 +4405,7 @@ function renderActiveChores(container) {
               const scheduledDays = editDayButtons.filter((b) => b.classList.contains('primary')).map((b) => Number(b.dataset.day));
               const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
               await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { scheduledDays });
-            } catch (err) { alert(err.message); } finally { saveDaysBtn.disabled = false; }
+            } catch (err) { showAppAlert(err.message); } finally { saveDaysBtn.disabled = false; }
           },
         }, 'Save');
         card.appendChild(el('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap;' }, [
@@ -4876,7 +4967,7 @@ function openRunWizard(presetScopeUid) {
 }
 function openAddWizard(category) {
   adminWizardKind = 'add';
-  addWizard = { step: 0, screen: 'source', category, starterSelections: new Set(), starterRoom: 'all', draft: null, lastAdded: [] };
+  addWizard = { step: 0, screen: 'source', category, starterSelections: new Set(), starterRoom: 'all', draft: null, lastAdded: [], lastSkipped: [] };
   showScreen('adminWizard');
   renderAdminWizardStep();
 }
@@ -5164,10 +5255,11 @@ function runWizardItemRow(chore) {
         : (cb.checked ? [...pool.filter((uid) => uid !== scopedUid), scopedUid] : pool.filter((uid) => uid !== scopedUid));
 
       if (!cb.checked && pool.length > 1) {
-        const proceed = confirm(
-          `Remove from shared chore\n\n"${chore.name}" is currently shared with the family. If you remove it for ${memberLabel(scopedUid)}:\n\n`
+        const proceed = await showAppConfirm(
+          `"${chore.name}" is currently shared with the family. If you remove it for ${memberLabel(scopedUid)}:\n\n`
           + `• ${memberLabel(scopedUid)} will no longer be part of it.\n`
-          + `• The rotation order for others may change.\n\nAre you sure you want to continue?`
+          + `• The rotation order for others may change.`,
+          { title: 'Remove from shared chore', confirmLabel: 'Yes, remove', danger: true }
         );
         if (!proceed) { cb.checked = true; cb.disabled = false; return; }
       }
@@ -5221,7 +5313,7 @@ function renderAddWizardStep() {
     card.appendChild(renderWizardOptionCard({
       icon: 'people', title: 'My family library', subtitle: 'Use or duplicate from your existing list',
       onclick: () => {
-        if (addWizardFamilyItems().length === 0) { alert(`You don't have any ${addWizardCategoryLabel()}s yet -- try Starter library or Create custom.`); return; }
+        if (addWizardFamilyItems().length === 0) { showAppAlert(`You don't have any ${addWizardCategoryLabel()}s yet -- try Starter library or Create custom.`); return; }
         addWizard.screen = 'familyPick'; addWizard.step = 1; renderAdminWizardStep();
       },
     }));
@@ -5313,7 +5405,11 @@ function renderAddWizardStep() {
         const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
         const activeChildren = activeChildUids();
         const items = addWizardStarterLibrary().filter((item) => addWizard.starterSelections.has(item.name));
+        const skipped = [];
+        const added = [];
         for (const item of items) {
+          if (findDuplicateChoreForPool(item.name, addWizard.category, activeChildren)) { skipped.push(item.name); continue; }
+          added.push(item.name);
           const mode = addWizard.category === 'dailyTask' ? 'eachMember' : (activeChildren.length > 1 ? 'rotating' : 'fixed');
           const payload = computeAssignmentUpdatePayload({ assignmentMode: 'fixed' }, mode, activeChildren);
           await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
@@ -5325,12 +5421,13 @@ function renderAddWizardStep() {
             createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
           });
         }
-        addWizard.lastAdded = items.map((i) => i.name);
+        addWizard.lastAdded = added;
+        addWizard.lastSkipped = skipped;
         addWizard.starterSelections = new Set();
         addWizard.screen = 'done'; addWizard.step = 2;
         renderAdminWizardStep();
       } catch (err) {
-        alert(err.message);
+        showAppAlert(err.message);
         addSelectedBtn.disabled = false;
       }
     });
@@ -5385,7 +5482,7 @@ function renderAddWizardStep() {
       el('button', {
         class: 'pill primary', style: 'flex:1;', type: 'button',
         onclick: () => {
-          if (!nameInput.value.trim()) { alert(`Give this ${addWizardCategoryLabel()} a name first.`); return; }
+          if (!nameInput.value.trim()) { showAppAlert(`Give this ${addWizardCategoryLabel()} a name first.`); return; }
           addWizard.draft = {
             name: nameInput.value.trim(), icon: iconInput.value.trim() || null, description: descInput.value.trim(),
             frequency: frequencySelect.value, difficulty: difficultySelect ? difficultySelect.value : 'medium', mode: modeSelect.value,
@@ -5421,6 +5518,12 @@ function renderAddWizardStep() {
           errorEl.hidden = true;
           const pool = readPoolControl(poolWrap, draft.mode);
           if (pool.length === 0 || !pool[0]) { errorEl.textContent = 'Pick at least one child.'; errorEl.hidden = false; return; }
+          const dup = findDuplicateChoreForPool(draft.name, addWizard.category, pool);
+          if (dup) {
+            errorEl.textContent = `"${dup.name}" already exists for one of these children -- edit that one instead of adding a second copy.`;
+            errorEl.hidden = false;
+            return;
+          }
           try {
             const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
             const payload = computeAssignmentUpdatePayload({ assignmentMode: 'fixed' }, draft.mode, pool);
@@ -5448,12 +5551,17 @@ function renderAddWizardStep() {
 
   if (addWizard.screen === 'done') {
     const names = addWizard.lastAdded || [];
+    const skipped = addWizard.lastSkipped || [];
     content.appendChild(el('div', { class: 'wizard-card', style: 'text-align:center;' }, [
       svgIcon('checkCircleWithRing', { size: 56, color: 'var(--accent2)' }),
-      el('h1', { style: 'margin-top:14px;' }, 'Added to your library!'),
-      el('p', { class: 'muted' }, names.length === 1
+      el('h1', { style: 'margin-top:14px;' }, names.length === 0 ? 'Nothing new added' : 'Added to your library!'),
+      names.length > 0 ? el('p', { class: 'muted' }, names.length === 1
         ? `"${names[0]}" has been added.`
-        : `${names.length} ${addWizardCategoryLabel()}s have been added.`),
+        : `${names.length} ${addWizardCategoryLabel()}s have been added.`) : null,
+      skipped.length > 0 ? el('div', { class: 'booking-card warn', style: 'text-align:left;' }, [
+        el('div', { style: 'font-weight:700;' }, 'Already exists, skipped'),
+        el('div', { class: 'muted' }, `${skipped.join(', ')} -- already assigned to one of these children. Edit the existing one from Manage Chores instead.`),
+      ]) : null,
       el('button', {
         class: 'pill', style: 'width:100%;margin-bottom:8px;', type: 'button',
         onclick: () => { addWizard.screen = 'source'; addWizard.step = 0; addWizard.draft = null; renderAdminWizardStep(); },
