@@ -1479,6 +1479,30 @@ function getDayViewItems(dateId) {
   });
 }
 
+// Shared by the Chores tab and the Dashboard's own "Daily tasks"/"Chores"
+// breakdown (both render items from getDayViewItems) -- kept as one place
+// so the two never drift the way they did before: the Dashboard used to
+// build its own status label from computeWeekProgressForMember's
+// satisfied/pending pair instead, which had two real problems fixed by
+// switching to this: a rejected entry fell through to a generic "to do"
+// (no rejected state at all), and for a 'daily'/'timesPerWeek' chore
+// "satisfied" is a whole-week concept (matches settlement's own "any
+// approved entry this week" gate) that stays true for the rest of the
+// week the instant any single day is approved -- so the Dashboard kept
+// showing "done" on Tuesday for a task that hadn't been touched since
+// Monday, until the day rolled over to a NEW status by coincidence.
+function chorePillFor({ status, missed, notYetDue }) {
+  const cardClass = missed ? 'missed'
+    : (status === 'approved' || status === 'done') ? 'done'
+    : (status === 'rejected') ? 'warn' : '';
+  let pillLabel, pillClass;
+  if (missed) { pillLabel = 'missed'; pillClass = 'status-rejected'; }
+  else if (notYetDue) { pillLabel = 'not due yet'; pillClass = 'status-neutral'; }
+  else if (status === 'done') { pillLabel = 'awaiting approval'; pillClass = 'status-done'; }
+  else { pillLabel = status.replace('_', ' '); pillClass = `status-${status}`; }
+  return { cardClass, pillLabel, pillClass };
+}
+
 // Display-only variant of computeCurrentStreak: settlement.js evaluates the
 // streak at the exact moment of Friday's payout, so "today not done yet"
 // correctly means "broken, pays 0" there -- but showing that same 0 to a
@@ -2141,8 +2165,35 @@ function checkForWeekRollover() {
     subscribeWeekScopedCollections(state.familyId);
   }
 }
-setInterval(checkForWeekRollover, 5 * 60 * 1000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForWeekRollover(); });
+
+// The day-level counterpart: everything on the child's Dashboard/Chores
+// view (actionable "today", missed/not-due-yet, streaks, the day chips'
+// highlighted "today") is derived from getIsoDateId(new Date()) fresh on
+// every render -- but nothing was forcing a render to happen again once
+// the calendar day itself rolled over without any Firestore data actually
+// changing. Left open (or just backgrounded, unlike checkForWeekRollover
+// which mainly matters after being fully closed) across midnight, the
+// whole view kept showing yesterday until some unrelated snapshot update
+// happened to fire. If the child had been viewing "today" specifically
+// (either by default or by having tapped it), follow the rollover to the
+// new today rather than leaving them stranded on what's now yesterday; if
+// they'd manually navigated to a different day (e.g. looking ahead),
+// leave that selection alone.
+let lastKnownDateId = getIsoDateId(new Date());
+function checkForDayRollover() {
+  const nowDateId = getIsoDateId(new Date());
+  if (nowDateId === lastKnownDateId) return;
+  if (typeof selectedDashboardDateId !== 'undefined' && selectedDashboardDateId === lastKnownDateId) {
+    selectedDashboardDateId = nowDateId;
+  }
+  lastKnownDateId = nowDateId;
+  if (state.familyId) renderCurrentTab();
+}
+
+setInterval(() => { checkForWeekRollover(); checkForDayRollover(); }, 5 * 60 * 1000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { checkForWeekRollover(); checkForDayRollover(); }
+});
 
 function startFamilySubscriptions() {
   const familyId = state.familyId;
@@ -2838,14 +2889,11 @@ function renderDashboard() {
   }
 
   ['dailyTask', 'chore'].forEach((cat) => {
-    const items = weekProgress.items.filter((i) => (i.chore.category || 'chore') === cat);
+    const items = dayItems.filter((i) => (i.chore.category || 'chore') === cat);
     if (items.length === 0) return;
     container.appendChild(el('h2', { style: 'margin-top:16px;' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
     items.forEach((item) => {
-      let pillLabel, pillClass, cardClass;
-      if (item.satisfied) { pillLabel = 'done'; pillClass = 'status-approved'; cardClass = 'done'; }
-      else if (item.pending) { pillLabel = 'awaiting approval'; pillClass = 'status-done'; cardClass = ''; }
-      else { pillLabel = 'to do'; pillClass = 'status-pending'; cardClass = ''; }
+      const { cardClass, pillLabel, pillClass } = chorePillFor(item);
       container.appendChild(el('div', {
         class: `booking-card ${cardClass}`, style: 'cursor:pointer;',
         onclick: () => switchTab('chores'),
@@ -2996,16 +3044,8 @@ function renderChores() {
 
     catItems.forEach((item) => {
       const { chore, mode, executingUid, isMyGate, iCanExecute, entry, status, isDaily, isTimesPerWeek, missed, notYetDue, actionable, dayExecutingUid, swappedAwayToday, approvedCount, required } = item;
-      const cardClass = missed ? 'missed'
-        : (status === 'approved' || status === 'done') ? 'done'
-        : (status === 'rejected') ? 'warn' : '';
+      const { cardClass, pillLabel, pillClass } = chorePillFor(item);
       const card = el('div', { class: `booking-card ${cardClass}` });
-
-      let pillLabel, pillClass;
-      if (missed) { pillLabel = 'missed'; pillClass = 'status-rejected'; }
-      else if (notYetDue) { pillLabel = 'not due yet'; pillClass = 'status-neutral'; }
-      else if (status === 'done') { pillLabel = 'awaiting approval'; pillClass = 'status-done'; }
-      else { pillLabel = status.replace('_', ' '); pillClass = `status-${status}`; }
 
       // Propose a swap -- only from today's tab (a swap is a "right now"
       // action, same as marking done), and only while it's still mine to
