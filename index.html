@@ -121,12 +121,20 @@
   .status-approved, .status-paid, .status-accepted { background: var(--success); }
   .status-rejected, .status-declined { background: var(--danger); }
 
+  /* Button hierarchy per mockups/components_proposal_2.png's "Quick Actions"
+     gallery: solid (primary CTA) / outlined (secondary, paired alongside a
+     primary) / light-fill (a real but lower-emphasis positive action) /
+     neutral white-bordered (Cancel/Back -- the default, since that's what
+     a bare .pill overwhelmingly means across this app) / solid red (a
+     modal's destructive confirm). */
   button.pill, a.pill {
-    display: inline-block; border: none; border-radius: 999px; padding: 9px 16px;
-    font-size: 0.85rem; font-weight: 700; cursor: pointer; background: var(--panel2); color: var(--text);
+    display: inline-block; border: 1px solid var(--border); border-radius: 999px; padding: 9px 16px;
+    font-size: 0.85rem; font-weight: 700; cursor: pointer; background: var(--panel); color: var(--text);
   }
-  button.pill.primary { background: var(--accent2-fill); color: #fff; }
-  button.pill.danger { background: var(--danger); color: #fff; }
+  button.pill.primary { background: var(--accent2-fill); color: #fff; border-color: var(--accent2-fill); }
+  button.pill.outline { background: var(--panel); color: var(--accent2); border-color: var(--accent2); }
+  button.pill.light { background: var(--panel2); color: var(--accent2); border-color: transparent; }
+  button.pill.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
   button.pill:disabled { opacity: 0.5; cursor: not-allowed; }
   button.pill.small { padding: 6px 12px; font-size: 0.75rem; }
   .install-cta {
@@ -437,6 +445,12 @@
     width: 38px; height: 38px; border-radius: 999px; background: var(--panel); color: var(--accent2);
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
+  /* The single most-used Quick Action (Chore wizard) stands out from the
+     rest as a solid-green primary button, matching mockups/components.png's
+     "Save changes" style -- the other Quick Actions stay on the lighter
+     tint so this one doesn't have to compete with them for attention. */
+  .quick-action-btn.primary { background: var(--accent2-fill); color: #fff; }
+  .quick-action-btn.primary .quick-action-icon { background: rgba(255,255,255,0.2); color: #fff; }
   .avatar-circle {
     width: 40px; height: 40px; border-radius: 999px; background: var(--panel2); color: var(--accent2);
     display: flex; align-items: center; justify-content: center; font-weight: 800; flex-shrink: 0;
@@ -3376,7 +3390,7 @@ function renderAdminDashboard() {
   container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
     el('h2', {}, 'Children'),
     familyNeedsReview.length > 0 ? el('button', {
-      class: 'pill small', onclick: async (event) => {
+      class: 'pill primary small', onclick: async (event) => {
         event.target.disabled = true;
         try { await approveAllChoreLogEntries(familyNeedsReview); } catch (err) { showAppAlert(err.message); }
       },
@@ -3408,14 +3422,14 @@ function renderAdminDashboard() {
 
   container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Quick actions'));
 
-  function quickActionBtn(iconKey, label, onclick) {
-    return el('button', { type: 'button', class: 'quick-action-btn', onclick }, [
+  function quickActionBtn(iconKey, label, onclick, primary = false) {
+    return el('button', { type: 'button', class: `quick-action-btn${primary ? ' primary' : ''}`, onclick }, [
       el('div', { class: 'quick-action-icon' }, iconKey ? svgIcon(iconKey, { size: 18 }) : ''),
       el('span', {}, label),
     ]);
   }
   container.appendChild(el('div', { class: 'quick-action-grid' }, [
-    quickActionBtn('broom', 'Chore wizard', () => openChoreWizard()),
+    quickActionBtn('broom', 'Chore wizard', () => openChoreWizard(), true),
     quickActionBtn('people', 'Manage kids', () => switchTab('kids')),
     quickActionBtn('dollarCircle', 'Adjust money', () => switchTab('kids')),
     quickActionBtn(null, 'View activity', () => switchTab('allactivity')),
@@ -3496,7 +3510,7 @@ function renderKidDetailBody(container, uid) {
   ]));
 
   container.appendChild(el('button', {
-    type: 'button', class: 'pill', style: 'width:100%;margin-bottom:10px;',
+    type: 'button', class: 'pill primary', style: 'width:100%;margin-bottom:10px;',
     onclick: () => openRunWizard(uid),
   }, `Assign chores for ${child.displayName || child.email}`));
 
@@ -3511,7 +3525,7 @@ function renderKidDetailBody(container, uid) {
     container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
       el('h2', {}, 'Chores to review'),
       el('button', {
-        class: 'pill small', onclick: async (event) => {
+        class: 'pill primary small', onclick: async (event) => {
           event.target.disabled = true;
           try { await approveAllChoreLogEntries(needsReview); } catch (err) { showAppAlert(err.message); }
         },
@@ -3618,7 +3632,7 @@ function renderEditableAllowanceCard(child, currency) {
     type: 'number', min: '0', step: '0.01', style: 'max-width:120px;',
     value: ((child.baseWeeklyAllowanceCents || 0) / 100).toFixed(2),
   });
-  const saveBtn = el('button', { type: 'button', class: 'pill small' }, 'Save');
+  const saveBtn = el('button', { type: 'button', class: 'pill primary small' }, 'Save');
   const errorEl = el('p', { class: 'error-text', style: 'margin:4px 0 0;' });
   errorEl.hidden = true;
   saveBtn.addEventListener('click', async () => {
@@ -4442,7 +4456,7 @@ function renderEditAssignmentBody(chore, options = {}) {
     el('option', { value: 'hard' }, 'Hard'),
   ]);
   difficultySelect.value = resolveDifficulty(chore);
-  const saveDifficultyBtn = el('button', { type: 'button', class: 'pill small' }, 'Save');
+  const saveDifficultyBtn = el('button', { type: 'button', class: 'pill primary small' }, 'Save');
   saveDifficultyBtn.addEventListener('click', async () => {
     saveDifficultyBtn.disabled = true;
     try {
@@ -4477,7 +4491,7 @@ function renderEditAssignmentBody(chore, options = {}) {
   modeSelect.addEventListener('change', refreshPool);
   refreshPool();
 
-  const saveAssignmentBtn = el('button', { type: 'button', class: 'pill small', style: 'margin-top:10px;' }, 'Save assignment');
+  const saveAssignmentBtn = el('button', { type: 'button', class: 'pill primary small', style: 'margin-top:10px;' }, 'Save assignment');
   const errorEl = el('p', { class: 'error-text' });
   errorEl.hidden = true;
   saveAssignmentBtn.addEventListener('click', async () => {
@@ -4532,7 +4546,7 @@ function renderActiveChores(container) {
     container.appendChild(el('div', { class: 'row', style: 'align-items:center;' }, [
       el('h2', {}, 'Needs your review'),
       el('button', {
-        class: 'pill small', onclick: async (event) => {
+        class: 'pill primary small', onclick: async (event) => {
           event.target.disabled = true;
           try { await approveAllChoreLogEntries(needsReview); } catch (err) { showAppAlert(err.message); }
         },
@@ -4599,7 +4613,7 @@ function renderActiveChores(container) {
           return btn;
         });
         const saveDaysBtn = el('button', {
-          type: 'button', class: 'pill small',
+          type: 'button', class: 'pill primary small',
           onclick: async () => {
             saveDaysBtn.disabled = true;
             try {
@@ -5573,7 +5587,7 @@ function renderRunWizardStep() {
         el('div', { class: 'muted', style: 'margin-top:6px;' }, `Scope: ${child ? (child.displayName || child.email) : 'Whole family'}`),
       ]),
       el('button', {
-        class: 'pill', style: 'width:100%;margin-top:10px;', type: 'button',
+        class: 'pill outline', style: 'width:100%;margin-top:10px;', type: 'button',
         onclick: () => { closeAdminWizard(); switchTab('managechores'); },
       }, 'View results'),
       el('button', { class: 'pill primary', style: 'width:100%;margin-top:8px;', type: 'button', onclick: closeAdminWizard }, 'Done'),
@@ -5923,7 +5937,7 @@ function renderAddWizardStep() {
         el('div', { class: 'muted' }, `${skipped.join(', ')} -- already assigned to one of these children. Edit the existing one from Manage Chores instead.`),
       ]) : null,
       el('button', {
-        class: 'pill', style: 'width:100%;margin-bottom:8px;', type: 'button',
+        class: 'pill outline', style: 'width:100%;margin-bottom:8px;', type: 'button',
         onclick: () => { addWizard.screen = 'source'; addWizard.step = 0; addWizard.draft = null; renderAdminWizardStep(); },
       }, 'Add another'),
       el('button', { class: 'pill primary', style: 'width:100%;', type: 'button', onclick: closeAdminWizard }, 'Done'),
