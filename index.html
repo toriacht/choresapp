@@ -1342,7 +1342,14 @@ function computeWeekProgressForMember(memberUid) {
       const pending = !satisfied && (mode === 'sharedAny'
         ? state.choreLog.some((e) => e.choreId === chore.id && e.status === 'done' && pool.includes(e.memberUid))
         : state.choreLog.some((e) => e.choreId === chore.id && e.memberUid === memberUid && e.status === 'done'));
-      items.push({ chore, mode, satisfied, pending, executingUid: memberUid, approvedCount, required });
+      // Surfaced for display only (see "This week's chores" on Child
+      // Detail) -- a rejected entry doesn't count toward satisfied/pending
+      // above, but collapsing it into the same "not yet" bucket as "never
+      // attempted" loses the fact that a review just happened.
+      const rejectedEntry = !satisfied && !pending && (mode === 'sharedAny'
+        ? state.choreLog.find((e) => e.choreId === chore.id && e.status === 'rejected' && pool.includes(e.memberUid))
+        : state.choreLog.find((e) => e.choreId === chore.id && e.memberUid === memberUid && e.status === 'rejected'));
+      items.push({ chore, mode, satisfied, pending, rejectedEntry, executingUid: memberUid, approvedCount, required });
     } else {
       const base = resolveBaseAssignee(chore);
       if (base !== memberUid) return;
@@ -1355,7 +1362,10 @@ function computeWeekProgressForMember(memberUid) {
       const pending = !satisfied && state.choreLog.some(
         (e) => e.choreId === chore.id && e.memberUid === executingUid && e.status === 'done'
       );
-      items.push({ chore, mode, satisfied, pending, executingUid, approvedCount, required });
+      const rejectedEntry = !satisfied && !pending && state.choreLog.find(
+        (e) => e.choreId === chore.id && e.memberUid === executingUid && e.status === 'rejected'
+      );
+      items.push({ chore, mode, satisfied, pending, rejectedEntry, executingUid, approvedCount, required });
     }
   });
 
@@ -1763,7 +1773,7 @@ let swRegistration = null;
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js')
     .then(() => navigator.serviceWorker.ready)
-    .then((reg) => { swRegistration = reg; })
+    .then((reg) => { swRegistration = reg; maybeRefreshPushToken(); })
     .catch((err) => console.error('[choresapp] service worker registration failed:', err));
 }
 
@@ -1828,6 +1838,36 @@ function getStoredPushToken() {
 }
 function isPushEnabledLocally() {
   return !!getStoredPushToken();
+}
+
+// FCM tokens can rotate silently (Google's own docs: security refreshes,
+// not just uninstall/reinstall) -- this app only ever fetched one at the
+// moment "Enable" was clicked, so a rotation left it pushing to a dead
+// token forever afterward, with the toggle still showing "on" locally and
+// no error anywhere ("push notifications were on yesterday, off today"
+// with no explanation why). Called once swRegistration+state.user are both
+// ready (from either side, whichever settles last -- see the two call
+// sites); re-fetching and re-registering every app open is cheap and is
+// the standard fix for this class of bug, and registerFcmToken's
+// arrayUnion is already a no-op if the token is unchanged.
+async function maybeRefreshPushToken() {
+  if (!swRegistration || !state.user || !isPushEnabledLocally()) return;
+  if (!(await isMessagingSupported().catch(() => false))) return;
+  if (Notification.permission !== 'granted') return;
+  try {
+    const messaging = getMessaging(app);
+    const token = await getToken(messaging, { vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: swRegistration });
+    if (!token) return;
+    const staleToken = getStoredPushToken();
+    await callRegisterFcmToken({ token });
+    if (staleToken && staleToken !== token) {
+      callUnregisterFcmToken({ token: staleToken }).catch(() => {});
+    }
+    localStorage.setItem(pushTokenStorageKey(), token);
+  } catch (e) {
+    // Best-effort -- the toggle still reflects the last-known state, and
+    // this will simply retry next app open.
+  }
 }
 
 // Foreground messages: the in-app inbox's realtime Firestore listener
@@ -1986,6 +2026,7 @@ async function resolveMembership() {
 
   startFamilySubscriptions();
   updateNavForRole(role);
+  maybeRefreshPushToken();
 
   const onboardingDone = state.family && state.family.settings && state.family.settings.onboardingCompletedAt;
   if (role === 'admin' && !onboardingDone) {
@@ -3564,13 +3605,14 @@ function renderKidDetailBody(container, uid) {
   if (progress.items.length > 0) {
     container.appendChild(el('h2', { style: 'margin-top:16px;' }, "This week's chores"));
     progress.items.forEach((item) => {
-      const pillClass = item.satisfied ? 'status-approved' : item.pending ? 'status-done' : 'status-pending';
-      const pillLabel = item.satisfied ? 'done' : item.pending ? 'awaiting approval' : 'not yet';
+      const pillClass = item.satisfied ? 'status-approved' : item.pending ? 'status-done' : item.rejectedEntry ? 'status-rejected' : 'status-pending';
+      const pillLabel = item.satisfied ? 'done' : item.pending ? 'awaiting approval' : item.rejectedEntry ? 'rejected' : 'not yet';
       container.appendChild(el('div', { class: 'booking-card' }, [
         el('div', { class: 'row' }, [
           el('div', { style: 'font-weight:600;' }, item.chore.name),
           el('span', { class: `status-pill ${pillClass}` }, pillLabel),
         ]),
+        (item.rejectedEntry && item.rejectedEntry.reviewNote) ? el('div', { class: 'muted' }, `You said: ${item.rejectedEntry.reviewNote}`) : null,
       ]));
     });
   }
@@ -4100,20 +4142,32 @@ function renderChoreReviewCard(entry) {
   const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
   actions.appendChild(el('button', {
     class: 'pill primary small',
-    onclick: async () => {
-      const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-      await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
-        status: 'approved', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
-      });
+    onclick: async (event) => {
+      event.target.disabled = true;
+      try {
+        const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+        await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+          status: 'approved', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        event.target.disabled = false;
+        showAppAlert(err.message);
+      }
     },
   }, 'Approve'));
   actions.appendChild(el('button', {
     class: 'pill danger small',
-    onclick: async () => {
-      const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-      await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
-        status: 'rejected', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
-      });
+    onclick: async (event) => {
+      event.target.disabled = true;
+      try {
+        const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+        await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+          status: 'rejected', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        event.target.disabled = false;
+        showAppAlert(err.message);
+      }
     },
   }, 'Reject'));
   card.appendChild(actions);

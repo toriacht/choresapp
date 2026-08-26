@@ -1,35 +1,48 @@
-const CACHE_NAME = 'choresapp-shell-v2';
+const CACHE_NAME = 'choresapp-shell-v3';
 const SHELL_ASSETS = ['./', './index.html', './manifest.json', './favicon.ico', './icon-192.png', './icon-512.png'];
 
-// Background push handling -- only one service worker can control this
-// scope, so FCM's background-message support is grafted onto the same
-// worker that already handles offline shell caching below, rather than
-// registering a second competing one. The in-app notification inbox (a
+// Background push handling -- a raw 'push' listener, not
+// firebase-messaging-compat's onBackgroundMessage. Chrome enforces (via a
+// per-origin budget, which is why this read as "sporadic") that a push
+// event that doesn't result in a shown notification gets a generic
+// fallback one instead -- no icon, no message, just a link to the origin.
+// onBackgroundMessage relies on an async importScripts()+initializeApp()
+// chain and its own payload-shape assumptions; a raw listener that always
+// calls showNotification() synchronously within the event removes any
+// path to that fallback ever firing. The in-app notification inbox (a
 // realtime Firestore listener while the app is open) is the reliable
 // backbone regardless; this only matters while the app/tab is closed.
-importScripts('https://www.gstatic.com/firebasejs/12.18.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/12.18.0/firebase-messaging-compat.js');
-
-firebase.initializeApp({
-  apiKey: 'AIzaSyCITBcYhETNBShiL13zfC1oUbZ1bm6F_1A',
-  authDomain: 'chores-app-9e6a3.firebaseapp.com',
-  projectId: 'chores-app-9e6a3',
-  storageBucket: 'chores-app-9e6a3.firebasestorage.app',
-  messagingSenderId: '870507911406',
-  appId: '1:870507911406:web:d11d5cd64adf8f1e6ebbff',
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try { payload = event.data ? event.data.json() : {}; } catch (e) { payload = {}; }
+  const notification = payload.notification || {};
+  const data = payload.data || {};
+  const title = notification.title || data.title || 'Choresapp';
+  const body = notification.body || data.body || '';
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: './icon-192.png',
+      badge: './icon-192.png',
+      data: { url: './' },
+    })
+  );
 });
 
-// onMessage (foreground) is handled in index.html instead -- this only
-// fires when the tab isn't in focus, which is exactly when a native OS
-// notification is the right way to surface it.
-firebase.messaging().onBackgroundMessage((payload) => {
-  const { title, body } = (payload && payload.notification) || {};
-  if (!title) return;
-  self.registration.showNotification(title, {
-    body: body || '',
-    icon: './icon-192.png',
-    badge: './icon-192.png',
-  });
+// Without this, clicking a background notification does nothing (Chrome's
+// default is a no-op, not "open the app"). Focuses an already-open tab
+// rather than always spawning a new one.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || './';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ('focus' in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(url);
+    })
+  );
 });
 
 self.addEventListener('install', (event) => {
