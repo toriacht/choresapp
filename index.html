@@ -1836,8 +1836,14 @@ function pushTokenStorageKey() {
 function getStoredPushToken() {
   try { return localStorage.getItem(pushTokenStorageKey()); } catch (e) { return null; }
 }
+// Requires OS-level Notification.permission still being 'granted', not
+// just a leftover local token -- Android in particular can revoke an
+// unused/stale notification permission on its own, behind the app's back.
+// Without this check the toggle would keep claiming "on" while nothing
+// could possibly be delivered, with no way for a user to tell why ("was on
+// yesterday, off today" with no explanation).
 function isPushEnabledLocally() {
-  return !!getStoredPushToken();
+  return !!getStoredPushToken() && typeof Notification !== 'undefined' && Notification.permission === 'granted';
 }
 
 // FCM tokens can rotate silently (Google's own docs: security refreshes,
@@ -1874,12 +1880,36 @@ async function maybeRefreshPushToken() {
 // already updates the bell badge/list the instant a notification doc is
 // written, so there's nothing extra to do here while the tab is open --
 // onMessage only exists so FCM doesn't warn about an unhandled foreground
-// message; the OS-level banner (sw.js's onBackgroundMessage) only fires
-// when the tab is NOT in focus anyway.
+// message; the OS-level banner (sw.js's 'push' listener) only fires when
+// the tab/app is not in focus anyway.
+let messagingSupportedCache = null;
 isMessagingSupported().then((supported) => {
+  messagingSupportedCache = supported;
   if (!supported) return;
   onMessage(getMessaging(app), () => {});
-}).catch(() => {});
+}).catch(() => { messagingSupportedCache = false; });
+
+// A plain-language readout of exactly why push is or isn't working right
+// now -- permission and local-registration state are two different things
+// that silently drift apart (see isPushEnabledLocally/maybeRefreshPushToken
+// above), and guessing which one is the problem on a phone you can't
+// inspect directly wastes everyone's time. Always shown, not just when
+// off, so "it says on but nothing arrives" is never a silent state either.
+function pushDiagnosticText() {
+  if (messagingSupportedCache === false || typeof Notification === 'undefined') {
+    return 'Not supported on this browser/device.';
+  }
+  if (Notification.permission === 'denied') {
+    return 'Blocked in your phone/browser\'s site settings -- allow notifications for this site there, then turn this on again.';
+  }
+  if (Notification.permission === 'granted' && getStoredPushToken()) {
+    return 'Registered on this device.';
+  }
+  if (Notification.permission === 'granted' && !getStoredPushToken()) {
+    return 'Permission already granted -- turn the switch on to finish registering this device.';
+  }
+  return null;
+}
 
 // A real on/off switch (reusing the same .theme-switch look as the dark
 // mode toggle), not a link whose label text just changes -- a tap-to-toggle
@@ -1888,8 +1918,11 @@ function renderNotificationSettingsButton(container) {
   const wrap = el('div', { class: 'more-item' });
   const enabled = isPushEnabledLocally();
   const input = el('input', { type: 'checkbox', ...(enabled ? { checked: 'checked' } : {}) });
-  const subEl = el('div', { class: 'muted', style: 'font-size:0.78rem;margin-top:2px;' },
-    enabled ? 'On for this device' : 'Off -- turn on to get alerts outside the app');
+  const diagnostic = pushDiagnosticText();
+  const subEl = el('div', { class: 'muted', style: 'font-size:0.78rem;margin-top:2px;' }, [
+    el('div', {}, enabled ? 'On for this device' : 'Off -- turn on to get alerts outside the app'),
+    diagnostic ? el('div', {}, diagnostic) : null,
+  ]);
   input.addEventListener('change', async () => {
     const turningOn = input.checked;
     input.disabled = true;
