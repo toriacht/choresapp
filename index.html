@@ -946,6 +946,14 @@ function resolveDifficultyWeight(chore) {
   return DIFFICULTY_WEIGHTS[resolveDifficulty(chore)];
 }
 const DIFFICULTY_LABELS = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
+// See ADR-0033 / functions/lib/missedChores.js's isInstanceSatisfied --
+// mirrors the server's "how many approved entries this week does this
+// chore need" client-side for display. 1 for every frequency except
+// 'timesPerWeek', so this is a pure generalization of the old any-single-
+// entry ("some") check used throughout this file.
+function requiredCompletionsForChore(chore) {
+  return chore.frequency === 'timesPerWeek' ? Math.max(1, chore.timesPerWeekCount || 1) : 1;
+}
 // Day-swap counterpart, for an eachMember daily chore (no single base
 // assignee -- every pool member owns their own instance per date).
 function resolveEffectiveAssigneeForDate(choreId, ownerUid, dateId, acceptedDaySwaps) {
@@ -1319,31 +1327,35 @@ function computeWeekProgressForMember(memberUid) {
       // eachMember: usually the member's own entry; if a specific date was
       // day-swapped away, the covering child's entry for that date counts
       // too (matches settlement.js's identical fix).
-      const satisfied = mode === 'sharedAny'
-        ? state.choreLog.some((e) => e.choreId === chore.id && e.status === 'approved' && pool.includes(e.memberUid))
-        : state.choreLog.some((e) => {
+      const required = requiredCompletionsForChore(chore);
+      const approvedCount = mode === 'sharedAny'
+        ? state.choreLog.filter((e) => e.choreId === chore.id && e.status === 'approved' && pool.includes(e.memberUid)).length
+        : state.choreLog.filter((e) => {
             if (e.choreId !== chore.id || e.status !== 'approved') return false;
             if (e.memberUid === memberUid) return true;
             return daySwaps.some((s) => s.choreId === chore.id && s.dateId === e.dateId && s.proposedBy === memberUid && s.targetUid === e.memberUid);
-          });
+          }).length;
+      const satisfied = approvedCount >= required;
       // Marked done by a child but not yet reviewed -- shown as its own
       // "awaiting approval" segment/pill rather than lumped in with either
       // "done" or "not started" (see renderProgressRing/adr for the color).
       const pending = !satisfied && (mode === 'sharedAny'
         ? state.choreLog.some((e) => e.choreId === chore.id && e.status === 'done' && pool.includes(e.memberUid))
         : state.choreLog.some((e) => e.choreId === chore.id && e.memberUid === memberUid && e.status === 'done'));
-      items.push({ chore, mode, satisfied, pending, executingUid: memberUid });
+      items.push({ chore, mode, satisfied, pending, executingUid: memberUid, approvedCount, required });
     } else {
       const base = resolveBaseAssignee(chore);
       if (base !== memberUid) return;
       const executingUid = resolveEffectiveAssignee(chore, swaps);
-      const satisfied = state.choreLog.some(
+      const required = requiredCompletionsForChore(chore);
+      const approvedCount = state.choreLog.filter(
         (e) => e.choreId === chore.id && e.memberUid === executingUid && e.status === 'approved'
-      );
+      ).length;
+      const satisfied = approvedCount >= required;
       const pending = !satisfied && state.choreLog.some(
         (e) => e.choreId === chore.id && e.memberUid === executingUid && e.status === 'done'
       );
-      items.push({ chore, mode, satisfied, pending, executingUid });
+      items.push({ chore, mode, satisfied, pending, executingUid, approvedCount, required });
     }
   });
 
@@ -1391,20 +1403,24 @@ function getMyChoresListItems() {
     if (mode === 'sharedAny' || mode === 'eachMember') {
       const pool = resolvePool(chore, pool0);
       if (!pool.includes(myUid)) return;
-      const satisfied = mode === 'sharedAny'
-        ? state.choreLog.some((e) => e.choreId === chore.id && e.status === 'approved' && pool.includes(e.memberUid))
-        : state.choreLog.some((e) => e.choreId === chore.id && e.memberUid === myUid && e.status === 'approved');
-      items.push({ chore, mode, satisfied, executingUid: myUid, isMyGate: true, iCanExecute: true });
+      const required = requiredCompletionsForChore(chore);
+      const approvedCount = mode === 'sharedAny'
+        ? state.choreLog.filter((e) => e.choreId === chore.id && e.status === 'approved' && pool.includes(e.memberUid)).length
+        : state.choreLog.filter((e) => e.choreId === chore.id && e.memberUid === myUid && e.status === 'approved').length;
+      const satisfied = approvedCount >= required;
+      items.push({ chore, mode, satisfied, executingUid: myUid, isMyGate: true, iCanExecute: true, approvedCount, required });
     } else {
       const base = resolveBaseAssignee(chore);
       const executingUid = resolveEffectiveAssignee(chore, swaps);
       const isMyGate = base === myUid;
       const iCanExecute = executingUid === myUid;
       if (!isMyGate && !iCanExecute) return;
-      const satisfied = state.choreLog.some(
+      const required = requiredCompletionsForChore(chore);
+      const approvedCount = state.choreLog.filter(
         (e) => e.choreId === chore.id && e.memberUid === executingUid && e.status === 'approved'
-      );
-      items.push({ chore, mode, satisfied, executingUid, isMyGate, iCanExecute });
+      ).length;
+      const satisfied = approvedCount >= required;
+      items.push({ chore, mode, satisfied, executingUid, isMyGate, iCanExecute, approvedCount, required });
     }
   });
 
@@ -1424,6 +1440,13 @@ function getDayViewItems(dateId) {
   return getMyChoresListItems().map((item) => {
     const { chore, mode, executingUid, iCanExecute } = item;
     const isDaily = chore.frequency === 'daily';
+    // 'timesPerWeek' (ADR-0033) is also date-scoped for entry lookup (it
+    // can have several entries across the week, one per day it was done --
+    // see choreLog.js's resolveLogEntryId), but unlike 'daily' it has no
+    // fixed per-day due date, so it never counts as missed/not-yet-due on
+    // any specific day -- only the weekly count (item.approvedCount vs
+    // item.required, from getMyChoresListItems) matters.
+    const isTimesPerWeek = chore.frequency === 'timesPerWeek';
     // For an eachMember daily chore, a day-swap can hand THIS specific date
     // off to someone else -- resolve who's actually on the hook for this
     // exact date before looking up the entry (mirrors the backend's
@@ -1433,7 +1456,7 @@ function getDayViewItems(dateId) {
       : executingUid;
     const dayICanExecute = (isDaily && mode === 'eachMember') ? dayExecutingUid === state.user.uid : iCanExecute;
     const swappedAwayToday = (isDaily && mode === 'eachMember') && dayExecutingUid !== executingUid;
-    const entry = isDaily
+    const entry = (isDaily || isTimesPerWeek)
       ? state.choreLog.find((e) => e.choreId === chore.id && e.memberUid === dayExecutingUid && e.dateId === dateId)
       : state.choreLog.find((e) => e.choreId === chore.id && e.memberUid === executingUid);
     const status = entry ? entry.status : 'pending';
@@ -1442,7 +1465,7 @@ function getDayViewItems(dateId) {
     const missed = isDaily && isPastDay && !entry;
     const notYetDue = isDaily && isFutureDay && !entry;
     const actionable = dayICanExecute && dateId === todayDateId && status !== 'done' && status !== 'approved';
-    return { ...item, entry, status, isDaily, missed, notYetDue, actionable, dayExecutingUid, swappedAwayToday };
+    return { ...item, entry, status, isDaily, isTimesPerWeek, missed, notYetDue, actionable, dayExecutingUid, swappedAwayToday };
   });
 }
 
@@ -2799,6 +2822,7 @@ let selectedDashboardDateId = null;
 function renderChores() {
   const container = document.getElementById('page-chores');
   container.innerHTML = '';
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
   const today = new Date();
   const todayDateId = getIsoDateId(today);
   const weekDates = getIsoWeekDates(today);
@@ -2897,7 +2921,7 @@ function renderChores() {
     container.appendChild(el('h2', { style: 'margin-top:16px;' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
 
     catItems.forEach((item) => {
-      const { chore, mode, executingUid, isMyGate, iCanExecute, entry, status, isDaily, missed, notYetDue, actionable, dayExecutingUid, swappedAwayToday } = item;
+      const { chore, mode, executingUid, isMyGate, iCanExecute, entry, status, isDaily, isTimesPerWeek, missed, notYetDue, actionable, dayExecutingUid, swappedAwayToday, approvedCount, required } = item;
       const cardClass = missed ? 'missed'
         : (status === 'approved' || status === 'done') ? 'done'
         : (status === 'rejected') ? 'warn' : '';
@@ -2941,6 +2965,8 @@ function renderChores() {
           (isMyGate && !iCanExecute) ? el('div', { class: 'muted' }, `Swapped to ${memberLabel(executingUid)} this week`) : null,
           (swappedAwayToday && selectedDateId === todayDateId) ? el('div', { class: 'muted' }, `Swapped to ${memberLabel(dayExecutingUid)} today`) : null,
           (status === 'rejected' && entry && entry.reviewNote) ? el('div', { class: 'muted' }, `Rejected: ${entry.reviewNote}`) : null,
+          isTimesPerWeek ? el('div', { class: 'muted' }, `${Math.min(approvedCount, required)} of ${required} done this week`) : null,
+          (chore.frequency === 'occasional' && chore.bonusCents > 0) ? el('div', { class: 'muted', style: 'color:var(--success);' }, `+${formatCents(chore.bonusCents, currency)} when done`) : null,
           isDaily ? renderStreakBadge(chore, executingUid, weekDates, todayDateId) : null,
         ]),
         el('div', { style: 'display:flex;align-items:center;gap:6px;flex-shrink:0;' }, [
@@ -4202,9 +4228,26 @@ function renderFrequencySelect() {
     el('option', { value: 'weekly' }, 'Recurring -- once a week'),
     el('option', { value: 'daily' }, 'Recurring -- every day'),
     el('option', { value: 'custom' }, 'Recurring -- specific days (e.g. Mon/Wed/Fri)'),
+    el('option', { value: 'timesPerWeek' }, 'Recurring -- a few times a week, any days'),
     el('option', { value: 'occasional' }, 'Occasional -- no fixed schedule, never counts as missed'),
     el('option', { value: 'once' }, 'One-off -- this week only, then done'),
   ]);
+}
+
+// Only shown for frequency:'timesPerWeek' (ADR-0033) -- how many days this
+// week it's due, without pinning to which ones (that's 'custom' instead).
+// A closed 2-6 choice, not free text -- 7 would just be 'daily'.
+function renderTimesPerWeekSelect() {
+  const select = el('select', {}, [2, 3, 4, 5, 6].map((n) => el('option', { value: String(n) }, `${n} times a week`)));
+  select.value = '2';
+  return select;
+}
+// Only shown for frequency:'occasional' (ADR-0033) -- an optional bonus
+// paid the moment this chore's completion is approved, no separate claim
+// step (unlike Extra Jobs). Same amount-input shape as extraJobsCatalog's
+// own amount field.
+function renderBonusInput() {
+  return el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'One-off bonus (optional)' });
 }
 
 // Builds the "Add a chore" form -- shared by Manage Chores (no args, pool
@@ -4244,8 +4287,14 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     return btn;
   });
   const scheduledDaysWrap = el('div', { style: 'display:flex;gap:6px;margin-bottom:10px;', hidden: true }, dayButtons);
+  const timesPerWeekSelect = renderTimesPerWeekSelect();
+  const timesPerWeekWrap = el('div', { hidden: true }, [el('label', {}, 'How many times a week?'), attachCustomSelect(timesPerWeekSelect)]);
+  const bonusInput = renderBonusInput();
+  const bonusWrap = el('div', { hidden: true }, bonusInput);
   function updateScheduledDaysVisibility() {
     scheduledDaysWrap.hidden = frequencySelect.value !== 'custom';
+    timesPerWeekWrap.hidden = frequencySelect.value !== 'timesPerWeek';
+    bonusWrap.hidden = frequencySelect.value !== 'occasional';
   }
   frequencySelect.addEventListener('change', updateScheduledDaysVisibility);
   // One-tap default-setter for the common case (category/frequency/mode are
@@ -4331,6 +4380,8 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   form.appendChild(el('label', {}, 'Recurs?'));
   form.appendChild(attachCustomSelect(frequencySelect));
   form.appendChild(scheduledDaysWrap);
+  form.appendChild(timesPerWeekWrap);
+  form.appendChild(bonusWrap);
   form.appendChild(el('label', {}, 'Difficulty'));
   form.appendChild(attachCustomSelect(difficultySelect));
   form.appendChild(el('div', { class: 'muted', style: 'margin:-4px 0 10px;font-size:0.78rem;' },
@@ -4377,6 +4428,8 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       ...(rotation ? { rotation } : {}),
       frequency: frequencySelect.value,
       ...(frequencySelect.value === 'custom' ? { scheduledDays } : {}),
+      ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
+      ...(frequencySelect.value === 'occasional' ? { bonusCents: centsFromMajorUnits(bonusInput.value) } : {}),
       difficulty: difficultySelect.value,
       active: true,
       createdBy: state.user.uid,
@@ -4385,7 +4438,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     });
     nameInput.value = ''; iconInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly';
     categorySelect.value = 'chore'; modeSelect.value = 'fixed'; dailyRequirementCb.checked = false;
-    difficultySelect.value = 'medium';
+    difficultySelect.value = 'medium'; timesPerWeekSelect.value = '2'; bonusInput.value = '';
     dayButtons.forEach((b) => b.classList.remove('primary'));
     if (applyToAllCb) applyToAllCb.checked = false;
     updateModeOptionsForCategory(modeSelect, categorySelect);
@@ -4540,6 +4593,7 @@ function renderEditAssignmentBody(chore, options = {}) {
 }
 
 function renderActiveChores(container) {
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
   container.appendChild(renderChoreForm());
 
   const needsReview = state.choreLog.filter((e) => e.status === 'done');
@@ -4582,6 +4636,12 @@ function renderActiveChores(container) {
         const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
         const days = (chore.scheduledDays || []).slice().sort().map((d) => dayNames[d]).join('/');
         assignedLabel += ` — ${days || 'no days picked'}`;
+      }
+      if (chore.frequency === 'timesPerWeek') {
+        assignedLabel += ` — ${chore.timesPerWeekCount || 1}x a week, any days`;
+      }
+      if (chore.frequency === 'occasional' && chore.bonusCents > 0) {
+        assignedLabel += ` — +${formatCents(chore.bonusCents, currency)} bonus when done`;
       }
       if (mode === 'rotating') assignedLabel += ` · ${DIFFICULTY_LABELS[resolveDifficulty(chore)]}`;
       const card = el('div', { class: 'booking-card' }, [
@@ -4626,6 +4686,41 @@ function renderActiveChores(container) {
         }, 'Save');
         card.appendChild(el('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap;' }, [
           el('label', { style: 'margin:0;' }, 'Days'), ...editDayButtons, saveDaysBtn,
+        ]));
+      }
+      // Edit-in-place, same pattern as the 'custom' days block above (ADR-0033).
+      if (chore.frequency === 'timesPerWeek') {
+        const editTimesSelect = renderTimesPerWeekSelect();
+        editTimesSelect.value = String(chore.timesPerWeekCount || 2);
+        const saveTimesBtn = el('button', {
+          type: 'button', class: 'pill primary small',
+          onclick: async () => {
+            saveTimesBtn.disabled = true;
+            try {
+              const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+              await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { timesPerWeekCount: Number(editTimesSelect.value) });
+            } catch (err) { showAppAlert(err.message); } finally { saveTimesBtn.disabled = false; }
+          },
+        }, 'Save');
+        card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:10px;' }, [
+          el('label', { style: 'margin:0;' }, 'Times/week'), attachCustomSelect(editTimesSelect), saveTimesBtn,
+        ]));
+      }
+      if (chore.frequency === 'occasional') {
+        const editBonusInput = renderBonusInput();
+        if (chore.bonusCents) editBonusInput.value = (chore.bonusCents / 100).toFixed(2);
+        const saveBonusBtn = el('button', {
+          type: 'button', class: 'pill primary small',
+          onclick: async () => {
+            saveBonusBtn.disabled = true;
+            try {
+              const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+              await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { bonusCents: centsFromMajorUnits(editBonusInput.value) });
+            } catch (err) { showAppAlert(err.message); } finally { saveBonusBtn.disabled = false; }
+          },
+        }, 'Save');
+        card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:10px;' }, [
+          el('label', { style: 'margin:0;' }, 'Bonus'), editBonusInput, saveBonusBtn,
         ]));
       }
       // Post-creation editing (ADR-0029) -- difficulty, assignment mode,
@@ -5831,6 +5926,23 @@ function renderAddWizardStep() {
     card.appendChild(el('label', {}, 'Recurs?'));
     card.appendChild(attachCustomSelect(frequencySelect));
 
+    const timesPerWeekSelect = renderTimesPerWeekSelect();
+    if (draft.timesPerWeekCount) timesPerWeekSelect.value = String(draft.timesPerWeekCount);
+    const timesPerWeekWrap = el('div', { hidden: draft.frequency !== 'timesPerWeek' }, [
+      el('label', {}, 'How many times a week?'), attachCustomSelect(timesPerWeekSelect),
+    ]);
+    card.appendChild(timesPerWeekWrap);
+
+    const bonusInput = renderBonusInput();
+    if (draft.bonusCents) bonusInput.value = (draft.bonusCents / 100).toFixed(2);
+    const bonusWrap = el('div', { hidden: draft.frequency !== 'occasional' }, bonusInput);
+    card.appendChild(bonusWrap);
+
+    frequencySelect.addEventListener('change', () => {
+      timesPerWeekWrap.hidden = frequencySelect.value !== 'timesPerWeek';
+      bonusWrap.hidden = frequencySelect.value !== 'occasional';
+    });
+
     let difficultySelect = null;
     if (addWizard.category !== 'dailyTask') {
       difficultySelect = el('select', {}, [
@@ -5861,6 +5973,8 @@ function renderAddWizardStep() {
           addWizard.draft = {
             name: nameInput.value.trim(), icon: iconInput.value.trim() || null, description: descInput.value.trim(),
             frequency: frequencySelect.value, difficulty: difficultySelect ? difficultySelect.value : 'medium', mode: modeSelect.value,
+            ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
+            ...(frequencySelect.value === 'occasional' ? { bonusCents: centsFromMajorUnits(bonusInput.value) } : {}),
           };
           addWizard.screen = 'assignment'; addWizard.step = 1;
           renderAdminWizardStep();
@@ -5907,6 +6021,8 @@ function renderAddWizardStep() {
               category: addWizard.category, assignmentMode: payload.assignmentMode, assignedTo: payload.assignedTo,
               ...(payload.rotation ? { rotation: payload.rotation } : {}),
               frequency: draft.frequency, difficulty: draft.difficulty,
+              ...(draft.frequency === 'timesPerWeek' ? { timesPerWeekCount: draft.timesPerWeekCount } : {}),
+              ...(draft.frequency === 'occasional' ? { bonusCents: draft.bonusCents || 0 } : {}),
               active: true, createdBy: state.user.uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
             });
             addWizard.lastAdded = [draft.name];
