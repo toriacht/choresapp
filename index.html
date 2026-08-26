@@ -445,12 +445,15 @@
     width: 38px; height: 38px; border-radius: 999px; background: var(--panel); color: var(--accent2);
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
-  /* The single most-used Quick Action (Chore wizard) stands out from the
-     rest as a solid-green primary button, matching mockups/components.png's
-     "Save changes" style -- the other Quick Actions stay on the lighter
-     tint so this one doesn't have to compete with them for attention. */
+  /* A real 3-step gradient per mockups/components_proposal_2.png's Quick
+     Actions gallery, not one solid button against three identical flat
+     ones: Chore wizard (most-used) = solid primary; Manage kids/Adjust
+     money (frequent, meaningful) = green-outline secondary; View activity
+     (passive/least-used) = stays on the base light-mint tint. */
   .quick-action-btn.primary { background: var(--accent2-fill); color: #fff; }
   .quick-action-btn.primary .quick-action-icon { background: rgba(255,255,255,0.2); color: #fff; }
+  .quick-action-btn.outline { background: var(--panel); color: var(--text); border: 1px solid var(--accent2); }
+  .quick-action-btn.outline .quick-action-icon { background: var(--panel2); color: var(--accent2); }
   .avatar-circle {
     width: 40px; height: 40px; border-radius: 999px; background: var(--panel2); color: var(--accent2);
     display: flex; align-items: center; justify-content: center; font-weight: 800; flex-shrink: 0;
@@ -3422,16 +3425,16 @@ function renderAdminDashboard() {
 
   container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Quick actions'));
 
-  function quickActionBtn(iconKey, label, onclick, primary = false) {
-    return el('button', { type: 'button', class: `quick-action-btn${primary ? ' primary' : ''}`, onclick }, [
+  function quickActionBtn(iconKey, label, onclick, variant = '') {
+    return el('button', { type: 'button', class: `quick-action-btn${variant ? ` ${variant}` : ''}`, onclick }, [
       el('div', { class: 'quick-action-icon' }, iconKey ? svgIcon(iconKey, { size: 18 }) : ''),
       el('span', {}, label),
     ]);
   }
   container.appendChild(el('div', { class: 'quick-action-grid' }, [
-    quickActionBtn('broom', 'Chore wizard', () => openChoreWizard(), true),
-    quickActionBtn('people', 'Manage kids', () => switchTab('kids')),
-    quickActionBtn('dollarCircle', 'Adjust money', () => switchTab('kids')),
+    quickActionBtn('broom', 'Chore wizard', () => openChoreWizard(), 'primary'),
+    quickActionBtn('people', 'Manage kids', () => switchTab('kids'), 'outline'),
+    quickActionBtn('dollarCircle', 'Adjust money', () => switchTab('kids'), 'outline'),
     quickActionBtn(null, 'View activity', () => switchTab('allactivity')),
   ]));
 }
