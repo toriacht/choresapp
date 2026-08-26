@@ -445,13 +445,11 @@
     width: 38px; height: 38px; border-radius: 999px; background: var(--panel); color: var(--accent2);
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
-  /* A real 3-step gradient per mockups/components_proposal_2.png's Quick
-     Actions gallery, not one solid button against three identical flat
-     ones: Chore wizard (most-used) = solid primary; Manage kids/Adjust
-     money (frequent, meaningful) = green-outline secondary; View activity
-     (passive/least-used) = stays on the base light-mint tint. */
-  .quick-action-btn.primary { background: var(--accent2-fill); color: #fff; }
-  .quick-action-btn.primary .quick-action-icon { background: rgba(255,255,255,0.2); color: #fff; }
+  /* All four Quick Actions share one uniform green-outline treatment --
+     confirmed directly against the deployed app rather than a tiered
+     gradient (an earlier attempt at "most-used = solid, rest = lighter"
+     was explicitly rejected: every item in this list reads as a sibling
+     nav action, not a primary-vs-secondary hierarchy). */
   .quick-action-btn.outline { background: var(--panel); color: var(--text); border: 1px solid var(--accent2); }
   .quick-action-btn.outline .quick-action-icon { background: var(--panel2); color: var(--accent2); }
   .avatar-circle {
@@ -3425,16 +3423,16 @@ function renderAdminDashboard() {
 
   container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Quick actions'));
 
-  function quickActionBtn(iconKey, label, onclick, variant = '') {
-    return el('button', { type: 'button', class: `quick-action-btn${variant ? ` ${variant}` : ''}`, onclick }, [
+  function quickActionBtn(iconKey, label, onclick) {
+    return el('button', { type: 'button', class: 'quick-action-btn outline', onclick }, [
       el('div', { class: 'quick-action-icon' }, iconKey ? svgIcon(iconKey, { size: 18 }) : ''),
       el('span', {}, label),
     ]);
   }
   container.appendChild(el('div', { class: 'quick-action-grid' }, [
-    quickActionBtn('broom', 'Chore wizard', () => openChoreWizard(), 'primary'),
-    quickActionBtn('people', 'Manage kids', () => switchTab('kids'), 'outline'),
-    quickActionBtn('dollarCircle', 'Adjust money', () => switchTab('kids'), 'outline'),
+    quickActionBtn('broom', 'Chore wizard', () => openChoreWizard()),
+    quickActionBtn('people', 'Manage kids', () => switchTab('kids')),
+    quickActionBtn('dollarCircle', 'Adjust money', () => switchTab('kids')),
     quickActionBtn(null, 'View activity', () => switchTab('allactivity')),
   ]));
 }
