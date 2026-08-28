@@ -610,9 +610,6 @@
     </div>
 
     <p class="error-text" id="signInError" hidden></p>
-    <p class="signin-trust-caption" style="justify-content:center;">
-      <button type="button" id="viewAuthLogBtn" class="link-btn" style="font-size:0.75rem;opacity:0.6;">Sign-in trouble? View diagnostics</button>
-    </p>
 
     <div class="trust-divider">Why families trust ChoresApp</div>
     <div class="entry-row" style="max-width:280px;cursor:default;">
@@ -794,7 +791,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js';
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, updatePassword,
-  signOut, onAuthStateChanged, onIdTokenChanged, connectAuthEmulator, setPersistence, browserLocalPersistence,
+  signOut, onAuthStateChanged, connectAuthEmulator, setPersistence, browserLocalPersistence,
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, collection, query, where, orderBy, onSnapshot, connectFirestoreEmulator,
@@ -822,58 +819,16 @@ const firebaseConfig = {
   appId: '1:870507911406:web:d11d5cd64adf8f1e6ebbff',
 };
 
-// TEMPORARY diagnostic trail for the Google sign-in "flash back to the
-// login screen" bug -- a previous fix (generation-tagging + a debounce on
-// onAuthStateChanged) didn't resolve it in the field, and it doesn't
-// reproduce against the Auth emulator's simplified same-origin fake IDP,
-// so real console/network access on an affected device is what's actually
-// needed next. Logs to localStorage (survives a real page reload, unlike
-// console output, in case that's what's actually happening) and is
-// readable via the "Sign-in trouble? View diagnostics" link on the
-// sign-in screen. Remove all of this once the root cause is found.
-function authLog(msg) {
-  try {
-    const key = 'choresAppAuthLog';
-    const existing = JSON.parse(localStorage.getItem(key) || '[]');
-    existing.push(`${new Date().toISOString().slice(11, 23)} ${msg}`);
-    while (existing.length > 80) existing.shift();
-    localStorage.setItem(key, JSON.stringify(existing));
-  } catch (e) { /* ignore */ }
-}
-authLog(`--- page load --- ${location.href} visibility=${document.visibilityState}`);
-document.getElementById('viewAuthLogBtn').addEventListener('click', () => {
-  let log = [];
-  try { log = JSON.parse(localStorage.getItem('choresAppAuthLog') || '[]'); } catch (e) {}
-  if (log.length === 0) { alert('No sign-in diagnostics recorded yet.'); return; }
-  // Tail only, not the whole log -- a mobile alert() box visibly truncates
-  // long messages (confirmed from a field screenshot cutting off right
-  // after the interesting part), and what happened most recently is what
-  // matters for chasing a just-reproduced flash.
-  const tail = log.slice(-30);
-  alert(`Showing last ${tail.length} of ${log.length} entries:\n\n${tail.join('\n')}`);
-});
-
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 // Explicit localStorage-based persistence instead of the SDK default
-// (IndexedDB) -- field diagnostics (see authLog above) caught a real,
-// unprompted onAuthStateChanged(null) firing ~19s after a successful
-// Google sign-in landed on the app screen, consistent with the persisted
-// session silently failing to write/read back. IndexedDB is the more
-// fragile of the two under storage pressure or aggressive power-saving
-// (this app's own test device runs with battery saver always on), so
-// this is a targeted attempt at that failure mode.
+// (IndexedDB) -- IndexedDB is the more fragile of the two under storage
+// pressure or aggressive power-saving (this app's own test device runs
+// with battery saver always on), and a field diagnostic session caught one
+// unexplained spontaneous sign-out a while after a successful login. Low
+// risk either way; localStorage is the more broadly reliable option.
 setPersistence(auth, browserLocalPersistence)
-  .then(() => authLog('setPersistence(browserLocal) OK'))
-  .catch((err) => authLog(`setPersistence ERROR ${err.code} ${err.message}`));
-
-// Diagnostic only, no behavior change -- fires on background ID token
-// refreshes too (unlike onAuthStateChanged, which only fires on sign-in/
-// sign-out), so if the spontaneous sign-out recurs this should show
-// whether a token refresh was attempted/failed right beforehand.
-onIdTokenChanged(auth, (user) => {
-  authLog(`onIdTokenChanged user=${user ? user.uid : 'null'}`);
-});
+  .catch((err) => console.error('[choresapp] setPersistence ERROR:', err.code, err.message));
 const db = getFirestore(app);
 const functions = getFunctions(app);
 const storage = getStorage(app);
@@ -1610,7 +1565,6 @@ const screens = {
   app: document.getElementById('app'),
 };
 function showScreen(name) {
-  authLog(`showScreen(${name})`);
   Object.entries(screens).forEach(([key, node]) => { node.hidden = key !== name; });
 }
 
@@ -1874,7 +1828,6 @@ document.getElementById('notifMarkAllReadBtn').addEventListener('click', async (
 
 document.getElementById('signInBtn').addEventListener('click', async () => {
   document.getElementById('signInError').hidden = true;
-  authLog('signInBtn clicked, calling signInWithPopup');
   // Switch to the branded loading screen (logo only, no form) BEFORE the
   // popup opens, not after it resolves. On an installed Android PWA,
   // opening Google's sign-in briefly backgrounds this page (a Custom Tab),
@@ -1896,9 +1849,7 @@ document.getElementById('signInBtn').addEventListener('click', async () => {
     // and the original popup failure (auth/unauthorized-domain) is now
     // fixed at its actual source -- see docs/adr/adr-0015.
     await signInWithPopup(auth, new GoogleAuthProvider());
-    authLog('signInWithPopup resolved OK');
   } catch (err) {
-    authLog(`signInWithPopup ERROR ${err.code} ${err.message}`);
     console.error('[choresapp] signInWithPopup ERROR:', err.code, err.message);
     showScreen('signIn');
     const errorEl = document.getElementById('signInError');
@@ -2149,39 +2100,27 @@ document.getElementById('createFamilyForm').addEventListener('submit', async (ev
 // ---------------------------------------------------------------------
 // Auth + membership resolution
 // ---------------------------------------------------------------------
-// Popup-based Google sign-in can fire onAuthStateChanged more than once in
-// quick succession around the popup closing (an interleaved/transient event
-// racing the real one) -- seen in the wild as the screen flashing back to
-// the full sign-in form mid-login before settling on the app. authEventGen
-// tags each invocation so a slower, now-superseded one can tell it's stale
-// and bail instead of clobbering a newer invocation's screen.
+// A slower, now-superseded onAuthStateChanged invocation could otherwise
+// clobber whatever screen a newer one already set (e.g. two sign-in
+// attempts in quick succession) -- authEventGen tags each invocation so a
+// stale one can tell and bail instead of overwriting a newer one's result.
 let authEventGen = 0;
 
 onAuthStateChanged(auth, async (user) => {
   const myGen = ++authEventGen;
-  authLog(`onAuthStateChanged fired gen=${myGen} user=${user ? user.uid : 'null'}`);
   clearSubscriptions();
   state.user = user;
   if (!user) {
     state.member = null;
     updateBrandName();
-    // Don't commit to the full interactive sign-in form immediately --
-    // show the branded loading screen and give a newer event (the real
-    // post-sign-in one, if this null is the transient one) a brief window
-    // to supersede this before the form appears.
-    showScreen('loading');
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    if (myGen !== authEventGen) { authLog(`gen=${myGen} stale after null-debounce (current gen=${authEventGen}), not showing signIn`); return; }
     showScreen('signIn');
     return;
   }
   showScreen('loading');
   try {
     await resolveMembership(myGen);
-    authLog(`gen=${myGen} resolveMembership returned normally`);
   } catch (err) {
-    if (myGen !== authEventGen) { authLog(`gen=${myGen} stale after resolveMembership error (current gen=${authEventGen}), suppressing`); return; }
-    authLog(`gen=${myGen} resolveMembership ERROR ${err.code} ${err.message}`);
+    if (myGen !== authEventGen) return;
     console.error('[choresapp] resolveMembership ERROR:', err.code, err.message);
     const errorEl = document.getElementById('signInError');
     errorEl.textContent = `${err.code || ''}: ${err.message}`;
@@ -2217,10 +2156,9 @@ function updateNavForRole(role) {
 // still in flight. Checked after every await so a stale/superseded call
 // bails instead of clobbering whatever a newer one already put on screen.
 async function resolveMembership(myGen = authEventGen) {
-  authLog(`resolveMembership start gen=${myGen}`);
   const isStale = () => myGen !== authEventGen;
   const userFamilySnap = await getDoc(doc(db, `userFamilies/${state.user.uid}`));
-  if (isStale()) { authLog(`resolveMembership gen=${myGen} stale after userFamilies read (current gen=${authEventGen})`); return; }
+  if (isStale()) return;
   if (!userFamilySnap.exists()) {
     showScreen('setup');
     return;
@@ -2231,11 +2169,11 @@ async function resolveMembership(myGen = authEventGen) {
   state.ledgerViewUid = state.user.uid;
 
   const familySnap = await getDoc(doc(db, `families/${familyId}`));
-  if (isStale()) { authLog(`resolveMembership gen=${myGen} stale after family read (current gen=${authEventGen})`); return; }
+  if (isStale()) return;
   state.family = familySnap.exists() ? familySnap.data() : null;
 
   const memberSnap = await getDoc(doc(db, `families/${familyId}/members/${state.user.uid}`));
-  if (isStale()) { authLog(`resolveMembership gen=${myGen} stale after member read (current gen=${authEventGen})`); return; }
+  if (isStale()) return;
   state.member = memberSnap.exists() ? memberSnap.data() : null;
   updateBrandName();
 
