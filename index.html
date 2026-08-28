@@ -794,7 +794,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js';
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, updatePassword,
-  signOut, onAuthStateChanged, connectAuthEmulator,
+  signOut, onAuthStateChanged, onIdTokenChanged, connectAuthEmulator, setPersistence, browserLocalPersistence,
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, collection, query, where, orderBy, onSnapshot, connectFirestoreEmulator,
@@ -844,11 +844,36 @@ authLog(`--- page load --- ${location.href} visibility=${document.visibilityStat
 document.getElementById('viewAuthLogBtn').addEventListener('click', () => {
   let log = [];
   try { log = JSON.parse(localStorage.getItem('choresAppAuthLog') || '[]'); } catch (e) {}
-  alert(log.length ? log.join('\n') : 'No sign-in diagnostics recorded yet.');
+  if (log.length === 0) { alert('No sign-in diagnostics recorded yet.'); return; }
+  // Tail only, not the whole log -- a mobile alert() box visibly truncates
+  // long messages (confirmed from a field screenshot cutting off right
+  // after the interesting part), and what happened most recently is what
+  // matters for chasing a just-reproduced flash.
+  const tail = log.slice(-30);
+  alert(`Showing last ${tail.length} of ${log.length} entries:\n\n${tail.join('\n')}`);
 });
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+// Explicit localStorage-based persistence instead of the SDK default
+// (IndexedDB) -- field diagnostics (see authLog above) caught a real,
+// unprompted onAuthStateChanged(null) firing ~19s after a successful
+// Google sign-in landed on the app screen, consistent with the persisted
+// session silently failing to write/read back. IndexedDB is the more
+// fragile of the two under storage pressure or aggressive power-saving
+// (this app's own test device runs with battery saver always on), so
+// this is a targeted attempt at that failure mode.
+setPersistence(auth, browserLocalPersistence)
+  .then(() => authLog('setPersistence(browserLocal) OK'))
+  .catch((err) => authLog(`setPersistence ERROR ${err.code} ${err.message}`));
+
+// Diagnostic only, no behavior change -- fires on background ID token
+// refreshes too (unlike onAuthStateChanged, which only fires on sign-in/
+// sign-out), so if the spontaneous sign-out recurs this should show
+// whether a token refresh was attempted/failed right beforehand.
+onIdTokenChanged(auth, (user) => {
+  authLog(`onIdTokenChanged user=${user ? user.uid : 'null'}`);
+});
 const db = getFirestore(app);
 const functions = getFunctions(app);
 const storage = getStorage(app);
@@ -1850,6 +1875,17 @@ document.getElementById('notifMarkAllReadBtn').addEventListener('click', async (
 document.getElementById('signInBtn').addEventListener('click', async () => {
   document.getElementById('signInError').hidden = true;
   authLog('signInBtn clicked, calling signInWithPopup');
+  // Switch to the branded loading screen (logo only, no form) BEFORE the
+  // popup opens, not after it resolves. On an installed Android PWA,
+  // opening Google's sign-in briefly backgrounds this page (a Custom Tab),
+  // and on resume Android often paints a cached screenshot of whatever was
+  // on screen right before backgrounding for a moment before the live page
+  // catches up -- field reports show a sub-second flash of the interactive
+  // sign-in form specifically after auth completes, Google-only (password
+  // sign-in never backgrounds the page, so there's nothing to cache). If
+  // the form itself is what's cached, switching away from it first means
+  // there's nothing but the logo to flash.
+  showScreen('loading');
   try {
     // Popup, not redirect: real-world testing found signInWithRedirect's
     // storage round-trip (needed to persist the pending sign-in across the
@@ -1864,6 +1900,7 @@ document.getElementById('signInBtn').addEventListener('click', async () => {
   } catch (err) {
     authLog(`signInWithPopup ERROR ${err.code} ${err.message}`);
     console.error('[choresapp] signInWithPopup ERROR:', err.code, err.message);
+    showScreen('signIn');
     const errorEl = document.getElementById('signInError');
     errorEl.textContent = `${err.code || ''}: ${err.message}`;
     errorEl.hidden = false;
