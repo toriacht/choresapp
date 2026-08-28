@@ -610,6 +610,9 @@
     </div>
 
     <p class="error-text" id="signInError" hidden></p>
+    <p class="signin-trust-caption" style="justify-content:center;">
+      <button type="button" id="viewAuthLogBtn" class="link-btn" style="font-size:0.75rem;opacity:0.6;">Sign-in trouble? View diagnostics</button>
+    </p>
 
     <div class="trust-divider">Why families trust ChoresApp</div>
     <div class="entry-row" style="max-width:280px;cursor:default;">
@@ -818,6 +821,31 @@ const firebaseConfig = {
   messagingSenderId: '870507911406',
   appId: '1:870507911406:web:d11d5cd64adf8f1e6ebbff',
 };
+
+// TEMPORARY diagnostic trail for the Google sign-in "flash back to the
+// login screen" bug -- a previous fix (generation-tagging + a debounce on
+// onAuthStateChanged) didn't resolve it in the field, and it doesn't
+// reproduce against the Auth emulator's simplified same-origin fake IDP,
+// so real console/network access on an affected device is what's actually
+// needed next. Logs to localStorage (survives a real page reload, unlike
+// console output, in case that's what's actually happening) and is
+// readable via the "Sign-in trouble? View diagnostics" link on the
+// sign-in screen. Remove all of this once the root cause is found.
+function authLog(msg) {
+  try {
+    const key = 'choresAppAuthLog';
+    const existing = JSON.parse(localStorage.getItem(key) || '[]');
+    existing.push(`${new Date().toISOString().slice(11, 23)} ${msg}`);
+    while (existing.length > 80) existing.shift();
+    localStorage.setItem(key, JSON.stringify(existing));
+  } catch (e) { /* ignore */ }
+}
+authLog(`--- page load --- ${location.href} visibility=${document.visibilityState}`);
+document.getElementById('viewAuthLogBtn').addEventListener('click', () => {
+  let log = [];
+  try { log = JSON.parse(localStorage.getItem('choresAppAuthLog') || '[]'); } catch (e) {}
+  alert(log.length ? log.join('\n') : 'No sign-in diagnostics recorded yet.');
+});
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -1557,6 +1585,7 @@ const screens = {
   app: document.getElementById('app'),
 };
 function showScreen(name) {
+  authLog(`showScreen(${name})`);
   Object.entries(screens).forEach(([key, node]) => { node.hidden = key !== name; });
 }
 
@@ -1702,6 +1731,64 @@ function showAppConfirm(message, { title = 'Are you sure?', confirmLabel = 'Yes'
   });
 }
 
+// Maps a failed action's error to a message that tells the user what to
+// do next, instead of surfacing a raw SDK string (a bare "Failed to
+// fetch", or an opaque "internal") that doesn't distinguish "you're
+// offline, try again" from "the server rejected this."
+function describeActionError(err) {
+  const code = err && err.code;
+  if (code === 'unavailable' || code === 'functions/unavailable' || code === 'functions/deadline-exceeded') {
+    return "Couldn't reach the server — check your connection and try again.";
+  }
+  if (code === 'permission-denied' || code === 'functions/permission-denied') {
+    return "You don't have permission to do that.";
+  }
+  return (err && err.message) || 'Something went wrong — please try again.';
+}
+
+// Flips `field` on `record` (an object already living inside a state
+// array, e.g. a choreLog entry or extra job) and re-renders immediately,
+// so an approve/reject pill updates the instant it's tapped rather than
+// waiting out the full round trip. A Cloud Function call has no
+// local-cache echo the way a direct Firestore write does, so without this
+// the pill sits frozen for however long that call takes (often 1-2s).
+// `run` performs the actual write; on failure the field is rolled back,
+// the UI re-rendered, and a user-facing error shown.
+async function withOptimisticStatus(record, field, newValue, run) {
+  const previous = record[field];
+  record[field] = newValue;
+  renderCurrentTab();
+  try {
+    await run();
+  } catch (err) {
+    record[field] = previous;
+    renderCurrentTab();
+    showAppAlert(describeActionError(err));
+  }
+}
+
+// Same idea as withOptimisticStatus but for an action (markChoreDone)
+// that creates a choreLog entry rather than flipping a field on one that
+// already exists. Upserts the optimistic entry by id and returns a
+// function that undoes exactly this change, for the caller to invoke on
+// failure. Whenever the real choreLog listener next fires -- whether with
+// our own write's result or an unrelated one -- it replaces state.choreLog
+// wholesale, so the optimistic record is naturally superseded either way.
+function applyOptimisticChoreLogEntry(entry) {
+  const index = state.choreLog.findIndex((e) => e.id === entry.id);
+  const previous = index === -1 ? null : state.choreLog[index];
+  if (index === -1) state.choreLog.push(entry);
+  else state.choreLog[index] = entry;
+  renderCurrentTab();
+  return () => {
+    const revertIndex = state.choreLog.findIndex((e) => e.id === entry.id);
+    if (revertIndex === -1) return;
+    if (previous) state.choreLog[revertIndex] = previous;
+    else state.choreLog.splice(revertIndex, 1);
+    renderCurrentTab();
+  };
+}
+
 // ---------------------------------------------------------------------
 // Notification inbox -- bell icon + badge (always live, via the realtime
 // listener in startFamilySubscriptions) opening a simple read/mark-read
@@ -1762,6 +1849,7 @@ document.getElementById('notifMarkAllReadBtn').addEventListener('click', async (
 
 document.getElementById('signInBtn').addEventListener('click', async () => {
   document.getElementById('signInError').hidden = true;
+  authLog('signInBtn clicked, calling signInWithPopup');
   try {
     // Popup, not redirect: real-world testing found signInWithRedirect's
     // storage round-trip (needed to persist the pending sign-in across the
@@ -1772,7 +1860,9 @@ document.getElementById('signInBtn').addEventListener('click', async () => {
     // and the original popup failure (auth/unauthorized-domain) is now
     // fixed at its actual source -- see docs/adr/adr-0015.
     await signInWithPopup(auth, new GoogleAuthProvider());
+    authLog('signInWithPopup resolved OK');
   } catch (err) {
+    authLog(`signInWithPopup ERROR ${err.code} ${err.message}`);
     console.error('[choresapp] signInWithPopup ERROR:', err.code, err.message);
     const errorEl = document.getElementById('signInError');
     errorEl.textContent = `${err.code || ''}: ${err.message}`;
@@ -2022,19 +2112,39 @@ document.getElementById('createFamilyForm').addEventListener('submit', async (ev
 // ---------------------------------------------------------------------
 // Auth + membership resolution
 // ---------------------------------------------------------------------
+// Popup-based Google sign-in can fire onAuthStateChanged more than once in
+// quick succession around the popup closing (an interleaved/transient event
+// racing the real one) -- seen in the wild as the screen flashing back to
+// the full sign-in form mid-login before settling on the app. authEventGen
+// tags each invocation so a slower, now-superseded one can tell it's stale
+// and bail instead of clobbering a newer invocation's screen.
+let authEventGen = 0;
+
 onAuthStateChanged(auth, async (user) => {
+  const myGen = ++authEventGen;
+  authLog(`onAuthStateChanged fired gen=${myGen} user=${user ? user.uid : 'null'}`);
   clearSubscriptions();
   state.user = user;
   if (!user) {
     state.member = null;
     updateBrandName();
+    // Don't commit to the full interactive sign-in form immediately --
+    // show the branded loading screen and give a newer event (the real
+    // post-sign-in one, if this null is the transient one) a brief window
+    // to supersede this before the form appears.
+    showScreen('loading');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (myGen !== authEventGen) { authLog(`gen=${myGen} stale after null-debounce (current gen=${authEventGen}), not showing signIn`); return; }
     showScreen('signIn');
     return;
   }
   showScreen('loading');
   try {
-    await resolveMembership();
+    await resolveMembership(myGen);
+    authLog(`gen=${myGen} resolveMembership returned normally`);
   } catch (err) {
+    if (myGen !== authEventGen) { authLog(`gen=${myGen} stale after resolveMembership error (current gen=${authEventGen}), suppressing`); return; }
+    authLog(`gen=${myGen} resolveMembership ERROR ${err.code} ${err.message}`);
     console.error('[choresapp] resolveMembership ERROR:', err.code, err.message);
     const errorEl = document.getElementById('signInError');
     errorEl.textContent = `${err.code || ''}: ${err.message}`;
@@ -2063,8 +2173,17 @@ function updateNavForRole(role) {
   if (!tabs.includes(state.currentTab)) state.currentTab = tabs[0];
 }
 
-async function resolveMembership() {
+// myGen: the calling onAuthStateChanged invocation's generation tag (see
+// authEventGen above). Defaults to the current generation for callers
+// outside that handler (e.g. right after creating a new family), which
+// makes this call authoritative unless ANOTHER auth event fires while it's
+// still in flight. Checked after every await so a stale/superseded call
+// bails instead of clobbering whatever a newer one already put on screen.
+async function resolveMembership(myGen = authEventGen) {
+  authLog(`resolveMembership start gen=${myGen}`);
+  const isStale = () => myGen !== authEventGen;
   const userFamilySnap = await getDoc(doc(db, `userFamilies/${state.user.uid}`));
+  if (isStale()) { authLog(`resolveMembership gen=${myGen} stale after userFamilies read (current gen=${authEventGen})`); return; }
   if (!userFamilySnap.exists()) {
     showScreen('setup');
     return;
@@ -2075,9 +2194,11 @@ async function resolveMembership() {
   state.ledgerViewUid = state.user.uid;
 
   const familySnap = await getDoc(doc(db, `families/${familyId}`));
+  if (isStale()) { authLog(`resolveMembership gen=${myGen} stale after family read (current gen=${authEventGen})`); return; }
   state.family = familySnap.exists() ? familySnap.data() : null;
 
   const memberSnap = await getDoc(doc(db, `families/${familyId}/members/${state.user.uid}`));
+  if (isStale()) { authLog(`resolveMembership gen=${myGen} stale after member read (current gen=${authEventGen})`); return; }
   state.member = memberSnap.exists() ? memberSnap.data() : null;
   updateBrandName();
 
@@ -3098,17 +3219,21 @@ function renderChores() {
         const markBtn = el('button', {
           class: 'pill primary small', style: 'margin-top:8px;margin-left:6px;',
           onclick: async () => {
-            markBtn.disabled = true;
+            const weekId = getIsoWeekId(new Date());
+            const dateId = getIsoDateId(new Date());
+            const entryId = resolveLogEntryId({ chore, choreId: chore.id, uid: state.user.uid, weekId, dateId });
+            // Flip the pill to "awaiting approval" right away -- this
+            // re-renders the card, which discards this button (actionable
+            // goes false), so there's no disabled-state to manage here.
+            const revert = applyOptimisticChoreLogEntry({
+              id: entryId, choreId: chore.id, memberUid: state.user.uid, weekId, dateId, status: 'done',
+            });
             try {
-              const weekId = getIsoWeekId(new Date());
-              const dateId = getIsoDateId(new Date());
-              const entryId = resolveLogEntryId({ chore, choreId: chore.id, uid: state.user.uid, weekId, dateId });
               const photoStoragePath = await uploadProof('choreProof', entryId, fileInput.files[0]);
               await callMarkChoreDone({ choreId: chore.id, photoStoragePath });
             } catch (err) {
-              showAppAlert(err.message);
-            } finally {
-              markBtn.disabled = false;
+              revert();
+              showAppAlert(describeActionError(err));
             }
           },
         }, status === 'rejected' ? 'Try again' : 'Mark done');
@@ -3350,15 +3475,11 @@ function renderExtraJobCard(job, currency) {
     const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
     actions.appendChild(el('button', {
       class: 'pill primary small',
-      onclick: async () => {
-        try { await callApproveExtraJob({ jobId: job.id, approve: true }); } catch (err) { showAppAlert(err.message); }
-      },
+      onclick: () => withOptimisticStatus(job, 'status', 'approved', () => callApproveExtraJob({ jobId: job.id, approve: true })),
     }, 'Approve'));
     actions.appendChild(el('button', {
       class: 'pill danger small',
-      onclick: async () => {
-        try { await callApproveExtraJob({ jobId: job.id, approve: false }); } catch (err) { showAppAlert(err.message); }
-      },
+      onclick: () => withOptimisticStatus(job, 'status', 'rejected', () => callApproveExtraJob({ jobId: job.id, approve: false })),
     }, 'Reject'));
     card.appendChild(actions);
   }
@@ -3666,10 +3787,7 @@ function renderKidDetailBody(container, uid) {
     container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
       el('h2', {}, 'Chores to review'),
       el('button', {
-        class: 'pill primary small', onclick: async (event) => {
-          event.target.disabled = true;
-          try { await approveAllChoreLogEntries(needsReview); } catch (err) { showAppAlert(err.message); }
-        },
+        class: 'pill primary small', onclick: () => approveAllChoreLogEntries(needsReview),
       }, `Approve all (${needsReview.length})`),
     ]));
     needsReview.forEach((entry) => container.appendChild(renderChoreReviewCard(entry)));
@@ -4215,33 +4333,21 @@ function renderChoreReviewCard(entry) {
   const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
   actions.appendChild(el('button', {
     class: 'pill primary small',
-    onclick: async (event) => {
-      event.target.disabled = true;
-      try {
-        const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-        await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
-          status: 'approved', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        event.target.disabled = false;
-        showAppAlert(err.message);
-      }
-    },
+    onclick: () => withOptimisticStatus(entry, 'status', 'approved', async () => {
+      const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+        status: 'approved', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+      });
+    }),
   }, 'Approve'));
   actions.appendChild(el('button', {
     class: 'pill danger small',
-    onclick: async (event) => {
-      event.target.disabled = true;
-      try {
-        const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-        await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
-          status: 'rejected', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        event.target.disabled = false;
-        showAppAlert(err.message);
-      }
-    },
+    onclick: () => withOptimisticStatus(entry, 'status', 'rejected', async () => {
+      const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+        status: 'rejected', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+      });
+    }),
   }, 'Reject'));
   card.appendChild(actions);
   return card;
@@ -4255,14 +4361,25 @@ function renderChoreReviewCard(entry) {
 // "Approve all" (Child Detail) and the family-wide one (Admin Dashboard).
 async function approveAllChoreLogEntries(entries) {
   if (entries.length === 0) return;
-  const { writeBatch, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-  const batch = writeBatch(db);
-  entries.forEach((entry) => {
-    batch.update(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
-      status: 'approved', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+  // Same optimistic-then-rollback shape as withOptimisticStatus, just
+  // across a whole batch of entries at once.
+  const previousStatuses = entries.map((entry) => entry.status);
+  entries.forEach((entry) => { entry.status = 'approved'; });
+  renderCurrentTab();
+  try {
+    const { writeBatch, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+    const batch = writeBatch(db);
+    entries.forEach((entry) => {
+      batch.update(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+        status: 'approved', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+      });
     });
-  });
-  await batch.commit();
+    await batch.commit();
+  } catch (err) {
+    entries.forEach((entry, i) => { entry.status = previousStatuses[i]; });
+    renderCurrentTab();
+    showAppAlert(describeActionError(err));
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -4728,10 +4845,7 @@ function renderActiveChores(container) {
     container.appendChild(el('div', { class: 'row', style: 'align-items:center;' }, [
       el('h2', {}, 'Needs your review'),
       el('button', {
-        class: 'pill primary small', onclick: async (event) => {
-          event.target.disabled = true;
-          try { await approveAllChoreLogEntries(needsReview); } catch (err) { showAppAlert(err.message); }
-        },
+        class: 'pill primary small', onclick: () => approveAllChoreLogEntries(needsReview),
       }, `Approve all (${needsReview.length})`),
     ]));
     needsReview.forEach((entry) => container.appendChild(renderChoreReviewCard(entry)));
