@@ -6028,6 +6028,13 @@ function renderAddWizardStep() {
             name: `${chore.name} (copy)`, icon: chore.icon || null, description: chore.description || '',
             frequency: chore.frequency || 'weekly', difficulty: resolveDifficulty(chore),
             mode: resolveAssignmentMode(chore) === 'rotating' && addWizard.category === 'dailyTask' ? 'eachMember' : resolveAssignmentMode(chore),
+            // Tracked so the assignment step below can catch the exact case
+            // this whole flow's name suggests -- duplicating a chore and
+            // saving it unedited, still literally "X (copy)", for the same
+            // kid(s) the original already covers. Cleared the moment the
+            // name is actually changed to something else, since that's a
+            // deliberate new chore, not an accidental redundant copy.
+            duplicateSourceId: chore.id, duplicateSourceName: chore.name,
           };
           addWizard.screen = 'configure'; addWizard.step = 1; renderAdminWizardStep();
         },
@@ -6187,6 +6194,12 @@ function renderAddWizardStep() {
         onclick: () => {
           if (!nameInput.value.trim()) { showAppAlert(`Give this ${addWizardCategoryLabel()} a name first.`); return; }
           addWizard.draft = {
+            // Carried through from the duplicate-pick step, if this draft
+            // came from "Duplicate" rather than "Create custom" -- this
+            // screen replaces the whole draft object, so these would
+            // otherwise be silently dropped before the assignment step's
+            // unedited-copy check ever sees them.
+            duplicateSourceId: addWizard.draft.duplicateSourceId, duplicateSourceName: addWizard.draft.duplicateSourceName,
             name: nameInput.value.trim(), icon: iconInput.value.trim() || null, description: descInput.value.trim(),
             frequency: frequencySelect.value, difficulty: difficultySelect ? difficultySelect.value : 'medium', mode: modeSelect.value,
             ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
@@ -6228,6 +6241,19 @@ function renderAddWizardStep() {
             errorEl.textContent = `"${dup.name}" already exists for one of these children -- edit that one instead of adding a second copy.`;
             errorEl.hidden = false;
             return;
+          }
+          // The name-based check above can't catch a duplicated chore
+          // that's still literally "X (copy)" -- that name never equals
+          // "X", so it never matches. Catch it here instead, by pool
+          // overlap with the actual source chore, whatever its name.
+          if (draft.duplicateSourceId && draft.name.trim() === `${draft.duplicateSourceName} (copy)`) {
+            const source = state.chores.find((c) => c.id === draft.duplicateSourceId && c.active !== false);
+            const sourcePool = source ? resolvePool(source, activeChildUids()) : [];
+            if (source && pool.some((uid) => sourcePool.includes(uid))) {
+              errorEl.textContent = `This is still an unedited copy of "${source.name}" for the same child(ren) -- rename it to something different, or edit "${source.name}" directly instead of duplicating it.`;
+              errorEl.hidden = false;
+              return;
+            }
           }
           try {
             const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
