@@ -971,6 +971,7 @@ const callMarkChoreDone = httpsCallable(functions, 'markChoreDone');
 const callApproveExtraJob = httpsCallable(functions, 'approveExtraJob');
 const callAdjustBalance = httpsCallable(functions, 'adjustBalance');
 const callLogDeduction = httpsCallable(functions, 'logDeduction');
+const callWarnAboutDeduction = httpsCallable(functions, 'warnAboutDeduction');
 const callApproveWeeklyPayout = httpsCallable(functions, 'approveWeeklyPayout');
 const callDeclineWeeklyPayout = httpsCallable(functions, 'declineWeeklyPayout');
 const callRegisterFcmToken = httpsCallable(functions, 'registerFcmToken');
@@ -3937,7 +3938,13 @@ function renderExtras() {
 
     // Log a deduction against a specific child -- quick-pick only, no
     // custom-amount path (the catalog item is the single source of truth
-    // for how much a given infraction costs).
+    // for how much a given infraction costs). Per the app owner: the first
+    // time a given (child, item) pair comes up, offer a one-time "send a
+    // warning" option instead of deducting outright -- no money moves, just
+    // a reminder notification (functions/lib/deductions.js's
+    // warnAboutDeduction). Once used, that pair always goes straight to a
+    // deduction from then on (tracked at
+    // members/{uid}/deductionWarnings/{catalogItemId}).
     const activeDeductions = state.deductionsCatalog.filter((d) => d.active !== false);
     if (activeDeductions.length > 0) {
       const logForm = el('form', { class: 'booking-card' });
@@ -3952,8 +3959,40 @@ function renderExtras() {
       logForm.appendChild(attachCustomSelect(itemSelect));
       const logError = el('p', { class: 'error-text' });
       logError.hidden = true;
+      const warnedNote = el('p', { class: 'muted', style: 'margin:0 0 8px;' }, 'Already warned once for this child.');
+      warnedNote.hidden = true;
+      logForm.appendChild(warnedNote);
       logForm.appendChild(logError);
-      logForm.appendChild(el('button', { class: 'pill danger', type: 'submit' }, 'Log deduction'));
+      const warnBtn = el('button', { type: 'button', class: 'pill' }, 'Send a warning instead');
+      const deductBtn = el('button', { class: 'pill danger', type: 'submit' }, 'Log deduction');
+      logForm.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [warnBtn, deductBtn]));
+
+      let warningCheckToken = 0;
+      async function refreshWarningStatus() {
+        const myToken = ++warningCheckToken;
+        const warningSnap = await getDoc(doc(db, `families/${state.familyId}/members/${childSelect.value}/deductionWarnings/${itemSelect.value}`));
+        if (myToken !== warningCheckToken) return; // a newer selection change already superseded this check
+        const alreadyWarned = warningSnap.exists();
+        warnBtn.hidden = alreadyWarned;
+        warnedNote.hidden = !alreadyWarned;
+      }
+      childSelect.addEventListener('change', refreshWarningStatus);
+      itemSelect.addEventListener('change', refreshWarningStatus);
+      refreshWarningStatus();
+
+      warnBtn.addEventListener('click', async () => {
+        logError.hidden = true;
+        warnBtn.disabled = true;
+        try {
+          await callWarnAboutDeduction({ memberUid: childSelect.value, catalogItemId: itemSelect.value });
+          await refreshWarningStatus();
+        } catch (err) {
+          logError.textContent = err.message;
+          logError.hidden = false;
+        } finally {
+          warnBtn.disabled = false;
+        }
+      });
       logForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         logError.hidden = true;
@@ -6112,6 +6151,12 @@ function renderSettings() {
   container.appendChild(makeExpandable('Hot streak bonus', renderHotStreakBonusBody()));
   container.appendChild(makeExpandable('Family unlock code', renderParentCodeBody()));
   container.appendChild(makeExpandable('Invite a parent', renderAddMemberForm()));
+  // renderExtras()'s admin branch (the extra-jobs/deduction catalogs and
+  // "Log a deduction") has never actually been reachable -- 'extras' was
+  // never in ADMIN_TABS, so there was no nav path to it (a pre-existing
+  // gap, not new). Rather than add a 6th bottom-nav tab and break the
+  // mockup's 5-tab layout, it's reachable from here instead.
+  container.appendChild(renderMoreLink('Extra jobs & deductions', () => switchTab('extras')));
 
   container.appendChild(el('p', { class: 'ca-section' }, 'This device'));
   const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
