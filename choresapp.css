@@ -1,0 +1,360 @@
+/* =========================================================
+   ChoresApp component styles
+   Tokens first, then components. Everything is prefixed .ca-
+   Dark mode: set data-theme="dark" on <html> or any ancestor.
+   ========================================================= */
+
+:root{
+  /* --- brand ------------------------------------------- */
+  --ca-green-900:#0B4A26;   /* deep - child headers, immersive */
+  --ca-green-700:#0F6B34;   /* primary - buttons, app bar */
+  --ca-green-500:#3FBF6A;   /* bright - accents on white only */
+  --ca-mint:#9FE1CB;        /* on-green secondary text */
+
+  /* --- neutrals ---------------------------------------- */
+  --ca-ink:#14181A;
+  --ca-ink-2:#4A544C;
+  --ca-ink-3:#6B756D;       /* metadata, labels */
+  --ca-ink-4:#98A09A;       /* disabled, decoration */
+  --ca-rule:#E4E6E2;
+  --ca-surface:#FFFFFF;
+  --ca-surface-2:#FAFBFA;   /* completed / de-emphasised cards */
+  --ca-bg:#F7F8F6;
+  --ca-wash:#F2F5F2;        /* quiet fills, keypads */
+
+  /* --- semantic ---------------------------------------- */
+  --ca-wait-fg:#8A6100;     /* waiting on someone */
+  --ca-wait-bg:#FDF4E0;
+  --ca-wait-line:#C9A94E;
+  --ca-danger-fg:#A32D2D;   /* destructive ONLY - see usage */
+  --ca-danger-bg:#FCEBEB;
+  --ca-danger-line:#E24B4A;
+  --ca-positive:#0F6B34;
+
+  /* --- child accents ----------------------------------- */
+  --ca-child-1:#5DCAA5;  --ca-child-1-ink:#04342C;
+  --ca-child-2:#F0C46A;  --ca-child-2-ink:#4A3300;
+  --ca-child-3:#8FB8F0;  --ca-child-3-ink:#0B2A52;
+  --ca-child-4:#E8A0A0;  --ca-child-4-ink:#4A1414;
+  --ca-child-5:#C3A6E0;  --ca-child-5-ink:#2E1A47;
+  --ca-child-6:#A8D67A;  --ca-child-6-ink:#213A08;
+
+  /* --- type -------------------------------------------- */
+  --ca-font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --ca-text-xs:11px;
+  --ca-text-sm:12.5px;
+  --ca-text-base:14px;
+  --ca-text-md:15.5px;
+  --ca-text-lg:19px;
+  --ca-text-xl:24px;
+  --ca-text-2xl:30px;
+
+  /* --- space (4px scale) -------------------------------- */
+  --ca-space-1:4px;  --ca-space-2:8px;  --ca-space-3:12px;
+  --ca-space-4:16px; --ca-space-5:20px; --ca-space-6:24px;
+  --ca-space-8:32px;
+
+  /* --- radius ------------------------------------------- */
+  --ca-radius-sm:8px; --ca-radius-md:10px; --ca-radius-lg:13px;
+  --ca-radius-xl:18px; --ca-radius-pill:999px;
+
+  /* --- misc --------------------------------------------- */
+  --ca-hairline:1px solid var(--ca-rule);
+  --ca-focus:0 0 0 3px rgba(15,107,52,.28);
+  --ca-tap:44px;            /* minimum touch target */
+}
+
+[data-theme="dark"]{
+  --ca-green-700:#1B8547;
+  --ca-green-900:#0A3C21;
+  --ca-mint:#8FD9C0;
+  --ca-ink:#ECEFEC;
+  --ca-ink-2:#C2C9C3;
+  --ca-ink-3:#9BA49D;
+  --ca-ink-4:#6E766F;
+  --ca-rule:#2A302C;
+  --ca-surface:#191D1A;
+  --ca-surface-2:#161917;
+  --ca-bg:#101310;
+  --ca-wash:#1F241F;
+  --ca-wait-bg:#2E2712;
+  --ca-wait-fg:#E0C078;
+  --ca-danger-bg:#2E1616;
+  --ca-danger-fg:#E88A8A;
+}
+
+/* =========================================================
+   1. Typography
+   ========================================================= */
+.ca{font-family:var(--ca-font);color:var(--ca-ink);line-height:1.5}
+.ca-title{font-size:var(--ca-text-lg);font-weight:600;letter-spacing:-.01em;margin:0}
+.ca-title--lg{font-size:var(--ca-text-xl)}
+.ca-subtitle{font-size:var(--ca-text-sm);color:var(--ca-ink-3);margin:2px 0 0}
+.ca-section{font-size:var(--ca-text-xs);font-weight:600;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--ca-ink-3);margin:var(--ca-space-4) 0 var(--ca-space-2)}
+.ca-body{font-size:var(--ca-text-base);margin:0}
+.ca-meta{font-size:var(--ca-text-sm);color:var(--ca-ink-3);margin:2px 0 0}
+.ca-amount{font-size:var(--ca-text-base);font-weight:600;font-variant-numeric:tabular-nums}
+.ca-amount--up{color:var(--ca-positive)}
+.ca-amount--down{color:var(--ca-danger-fg)}
+.ca-amount--lg{font-size:var(--ca-text-2xl);letter-spacing:-.02em}
+
+/* =========================================================
+   2. Buttons
+   One primary per screen. Danger is for destructive only.
+   ========================================================= */
+.ca-btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--ca-space-2);
+  font-family:var(--ca-font);font-size:var(--ca-text-base);font-weight:600;
+  min-height:var(--ca-tap);padding:0 var(--ca-space-5);
+  border-radius:var(--ca-radius-md);border:1px solid transparent;
+  background:var(--ca-green-700);color:#fff;cursor:pointer;
+  text-decoration:none;transition:opacity .12s ease,background .12s ease;
+}
+.ca-btn:hover{opacity:.92}
+.ca-btn:focus-visible{outline:none;box-shadow:var(--ca-focus)}
+.ca-btn:active{opacity:.84}
+.ca-btn[disabled],.ca-btn[aria-disabled="true"]{
+  background:var(--ca-wash);color:var(--ca-ink-4);cursor:not-allowed;opacity:1}
+
+.ca-btn--secondary{background:transparent;color:var(--ca-ink-2);border-color:var(--ca-rule);font-weight:500}
+.ca-btn--secondary:hover{background:var(--ca-wash);opacity:1}
+.ca-btn--quiet{background:transparent;color:var(--ca-green-700);border-color:transparent;padding:0 var(--ca-space-2)}
+.ca-btn--quiet:hover{background:var(--ca-wash);opacity:1}
+.ca-btn--danger{background:transparent;color:var(--ca-danger-fg);border-color:var(--ca-danger-line)}
+.ca-btn--danger:hover{background:var(--ca-danger-bg);opacity:1}
+.ca-btn--sm{min-height:34px;font-size:var(--ca-text-sm);padding:0 var(--ca-space-3);border-radius:var(--ca-radius-sm)}
+.ca-btn--block{display:flex;width:100%}
+.ca-btn--loading{color:transparent;position:relative;pointer-events:none}
+.ca-btn--loading::after{
+  content:"";position:absolute;width:16px;height:16px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.4);border-top-color:#fff;animation:ca-spin .7s linear infinite}
+@keyframes ca-spin{to{transform:rotate(360deg)}}
+
+.ca-btn-row{display:flex;gap:var(--ca-space-2)}
+.ca-btn-row>.ca-btn{flex:1}
+
+/* =========================================================
+   3. Form controls
+   ========================================================= */
+.ca-field{margin-bottom:var(--ca-space-4)}
+.ca-label{display:block;font-size:var(--ca-text-xs);font-weight:600;
+  color:var(--ca-ink-3);margin-bottom:var(--ca-space-1)}
+.ca-input,.ca-select,.ca-textarea{
+  width:100%;font-family:var(--ca-font);font-size:var(--ca-text-base);color:var(--ca-ink);
+  background:var(--ca-surface);border:1px solid var(--ca-rule);
+  border-radius:var(--ca-radius-md);padding:11px 13px;min-height:var(--ca-tap)}
+.ca-input::placeholder,.ca-textarea::placeholder{color:var(--ca-ink-4)}
+.ca-input:focus,.ca-select:focus,.ca-textarea:focus{
+  outline:none;border-color:var(--ca-green-700);box-shadow:var(--ca-focus)}
+.ca-textarea{min-height:80px;resize:vertical}
+.ca-select{appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,var(--ca-ink-3) 50%),
+                   linear-gradient(135deg,var(--ca-ink-3) 50%,transparent 50%);
+  background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:36px}
+.ca-help{font-size:var(--ca-text-xs);color:var(--ca-ink-3);margin:var(--ca-space-1) 0 0;line-height:1.5}
+.ca-input--error{border-color:var(--ca-danger-line)}
+.ca-error{font-size:var(--ca-text-xs);color:var(--ca-danger-fg);margin:var(--ca-space-1) 0 0}
+
+/* checkbox + radio */
+.ca-choice{display:flex;align-items:flex-start;gap:var(--ca-space-3);
+  font-size:var(--ca-text-base);min-height:var(--ca-tap);padding:var(--ca-space-2) 0;cursor:pointer}
+.ca-choice input{appearance:none;margin:0;flex-shrink:0;width:22px;height:22px;
+  border:2px solid var(--ca-ink-4);background:var(--ca-surface);cursor:pointer}
+.ca-choice input[type=checkbox]{border-radius:6px}
+.ca-choice input[type=radio]{border-radius:50%}
+.ca-choice input:checked{background:var(--ca-green-700);border-color:var(--ca-green-700)}
+.ca-choice input[type=checkbox]:checked{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 13l4 4L19 7'/%3E%3C/svg%3E");
+  background-size:15px;background-position:center;background-repeat:no-repeat}
+.ca-choice input[type=radio]:checked{box-shadow:inset 0 0 0 4px var(--ca-surface)}
+.ca-choice input:focus-visible{outline:none;box-shadow:var(--ca-focus)}
+
+/* switch */
+.ca-switch{appearance:none;margin:0;width:44px;height:26px;border-radius:var(--ca-radius-pill);
+  background:var(--ca-ink-4);position:relative;cursor:pointer;transition:background .15s ease;flex-shrink:0}
+.ca-switch::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;
+  border-radius:50%;background:#fff;transition:transform .15s ease}
+.ca-switch:checked{background:var(--ca-green-700)}
+.ca-switch:checked::after{transform:translateX(18px)}
+.ca-switch:focus-visible{outline:none;box-shadow:var(--ca-focus)}
+
+/* slider */
+.ca-slider{appearance:none;width:100%;height:26px;background:transparent;cursor:pointer;margin:0}
+.ca-slider::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--ca-wash)}
+.ca-slider::-webkit-slider-thumb{appearance:none;width:26px;height:26px;border-radius:50%;
+  background:var(--ca-green-700);border:3px solid var(--ca-surface);margin-top:-10px}
+.ca-slider::-moz-range-track{height:6px;border-radius:3px;background:var(--ca-wash)}
+.ca-slider::-moz-range-thumb{width:20px;height:20px;border-radius:50%;
+  background:var(--ca-green-700);border:3px solid var(--ca-surface)}
+.ca-slider:focus-visible::-webkit-slider-thumb{box-shadow:var(--ca-focus)}
+.ca-slider-row{display:flex;align-items:center;gap:var(--ca-space-3)}
+.ca-slider-value{font-size:var(--ca-text-base);font-weight:600;font-variant-numeric:tabular-nums;
+  min-width:56px;text-align:right}
+
+/* segmented control */
+.ca-seg{display:flex;background:var(--ca-wash);border-radius:var(--ca-radius-md);padding:3px;gap:2px}
+.ca-seg button{flex:1;appearance:none;border:none;background:transparent;cursor:pointer;
+  font-family:var(--ca-font);font-size:var(--ca-text-sm);color:var(--ca-ink-3);
+  padding:9px 0;border-radius:var(--ca-radius-sm);min-height:38px}
+.ca-seg button[aria-selected="true"]{background:var(--ca-surface);color:var(--ca-green-700);font-weight:600}
+.ca-seg button:focus-visible{outline:none;box-shadow:var(--ca-focus)}
+
+/* PIN entry */
+.ca-pin{display:flex;gap:var(--ca-space-2);justify-content:center}
+.ca-pin-dot{width:13px;height:13px;border-radius:50%;border:1px solid var(--ca-ink-4)}
+.ca-pin-dot[data-filled]{background:var(--ca-green-700);border-color:var(--ca-green-700)}
+.ca-pin-dot[data-error]{border-color:var(--ca-danger-line);background:transparent}
+.ca-keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--ca-space-2)}
+.ca-key{appearance:none;border:none;background:var(--ca-wash);border-radius:var(--ca-radius-lg);
+  font-family:var(--ca-font);font-size:22px;color:var(--ca-ink);min-height:52px;cursor:pointer}
+.ca-key:active{background:var(--ca-rule)}
+.ca-key--blank{background:transparent;cursor:default}
+
+/* =========================================================
+   4. Cards, lists, rows
+   ========================================================= */
+.ca-card{background:var(--ca-surface);border:var(--ca-hairline);
+  border-radius:var(--ca-radius-lg);padding:var(--ca-space-3);margin-bottom:var(--ca-space-2)}
+.ca-card--waiting{border-left:3px solid var(--ca-wait-line)}
+.ca-card--muted{background:var(--ca-surface-2)}
+.ca-card--muted .ca-title,.ca-card--muted .ca-body{color:var(--ca-ink-3)}
+.ca-card--quiet{background:var(--ca-wash);border-color:transparent}
+.ca-row{display:flex;align-items:center;gap:var(--ca-space-3)}
+.ca-row__grow{flex:1;min-width:0}
+.ca-row__end{margin-left:auto;text-align:right}
+
+.ca-list{background:var(--ca-surface);border:var(--ca-hairline);
+  border-radius:var(--ca-radius-lg);overflow:hidden}
+.ca-list-row{display:flex;align-items:center;gap:var(--ca-space-3);
+  padding:var(--ca-space-3);border-bottom:var(--ca-hairline);
+  font-size:var(--ca-text-base);min-height:var(--ca-tap)}
+.ca-list-row:last-child{border-bottom:none}
+.ca-list-row__value{margin-left:auto;color:var(--ca-ink-3);font-size:var(--ca-text-sm)}
+
+/* =========================================================
+   5. Status
+   Never use red for a state a child can reach.
+   ========================================================= */
+.ca-badge{display:inline-flex;align-items:center;gap:5px;
+  font-size:var(--ca-text-xs);font-weight:600;letter-spacing:.03em;
+  padding:3px 8px;border-radius:var(--ca-radius-sm);
+  background:var(--ca-wash);color:var(--ca-ink-3)}
+.ca-badge--waiting{background:var(--ca-wait-bg);color:var(--ca-wait-fg)}
+.ca-badge--redo{background:var(--ca-wait-bg);color:var(--ca-wait-fg)}
+.ca-badge--done{background:var(--ca-wash);color:var(--ca-positive)}
+.ca-badge--idle{background:transparent;color:var(--ca-ink-4)}
+
+.ca-tick{width:24px;height:24px;border-radius:50%;border:2px solid var(--ca-ink-4);
+  background:transparent;flex-shrink:0;cursor:pointer;padding:0}
+.ca-tick--done{border-color:var(--ca-green-700);background:var(--ca-green-700);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 13l4 4L19 7'/%3E%3C/svg%3E");
+  background-size:15px;background-position:center;background-repeat:no-repeat}
+.ca-tick--waiting{border-color:var(--ca-wait-line);border-style:dashed}
+.ca-tick--idle{border-style:dashed;border-color:var(--ca-ink-4);opacity:.6}
+
+.ca-progress{height:6px;background:var(--ca-wash);border-radius:3px;overflow:hidden}
+.ca-progress>span{display:block;height:100%;background:var(--ca-green-700);border-radius:3px}
+
+.ca-avatar{width:34px;height:34px;border-radius:50%;display:inline-flex;
+  align-items:center;justify-content:center;font-weight:600;font-size:var(--ca-text-base);flex-shrink:0}
+.ca-avatar--lg{width:44px;height:44px;font-size:var(--ca-text-md)}
+
+/* =========================================================
+   6. Navigation
+   ========================================================= */
+.ca-appbar{background:var(--ca-green-700);color:#fff;padding:var(--ca-space-3) var(--ca-space-4) var(--ca-space-4)}
+.ca-appbar--deep{background:var(--ca-green-900)}
+.ca-appbar .ca-title{color:#fff}
+.ca-appbar .ca-subtitle{color:var(--ca-mint)}
+.ca-appbar__row{display:flex;align-items:center;justify-content:space-between;gap:var(--ca-space-3)}
+.ca-appbar__action{width:36px;height:36px;border-radius:50%;border:none;cursor:pointer;
+  background:rgba(255,255,255,.16);color:#fff;display:inline-flex;
+  align-items:center;justify-content:center;position:relative}
+.ca-appbar__badge{position:absolute;top:-2px;right:-2px;min-width:16px;height:16px;padding:0 4px;
+  border-radius:var(--ca-radius-pill);background:var(--ca-danger-line);color:#fff;
+  font-size:9.5px;font-weight:600;display:flex;align-items:center;justify-content:center}
+.ca-lockup{display:flex;align-items:center;gap:var(--ca-space-2);margin-bottom:var(--ca-space-3)}
+.ca-lockup span{font-size:var(--ca-text-base);font-weight:600;letter-spacing:-.01em}
+
+.ca-tabbar{display:flex;background:var(--ca-surface);border-top:var(--ca-hairline);
+  padding:var(--ca-space-2) 0 var(--ca-space-3)}
+.ca-tabbar a{flex:1;text-align:center;text-decoration:none;color:var(--ca-ink-3);
+  font-size:10px;min-height:var(--ca-tap);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:2px}
+.ca-tabbar a[aria-current]{color:var(--ca-green-700);font-weight:600}
+
+/* =========================================================
+   7. Feedback
+   ========================================================= */
+.ca-toast{display:flex;align-items:center;gap:var(--ca-space-3);
+  background:var(--ca-ink);color:#fff;border-radius:var(--ca-radius-lg);
+  padding:var(--ca-space-3) var(--ca-space-4);font-size:var(--ca-text-base);
+  max-width:420px;box-shadow:0 4px 20px rgba(0,0,0,.16)}
+.ca-toast__icon{flex-shrink:0;display:flex}
+.ca-toast__text{flex:1;min-width:0}
+.ca-toast__action{appearance:none;background:none;border:none;cursor:pointer;
+  color:var(--ca-mint);font-family:var(--ca-font);font-size:var(--ca-text-base);
+  font-weight:600;padding:var(--ca-space-1) var(--ca-space-2);flex-shrink:0}
+.ca-toast--success .ca-toast__icon{color:#7FE0A8}
+.ca-toast--waiting .ca-toast__icon{color:#F0CE7E}
+.ca-toast--danger .ca-toast__icon{color:#F2A0A0}
+
+.ca-sheet{background:var(--ca-surface);border-radius:var(--ca-radius-xl) var(--ca-radius-xl) 0 0;
+  padding:var(--ca-space-4)}
+.ca-sheet__grip{width:32px;height:4px;border-radius:2px;background:var(--ca-rule);
+  margin:0 auto var(--ca-space-4)}
+.ca-scrim{background:rgba(11,74,38,.5)}
+
+.ca-empty{text-align:center;padding:var(--ca-space-6) var(--ca-space-4)}
+.ca-empty__icon{font-size:26px;color:var(--ca-green-700)}
+.ca-empty__title{font-size:var(--ca-text-md);font-weight:600;margin:var(--ca-space-3) 0 0}
+.ca-empty__body{font-size:var(--ca-text-sm);color:var(--ca-ink-3);margin:var(--ca-space-2) 0 0;
+  line-height:1.6;max-width:32ch;margin-inline:auto}
+
+/* =========================================================
+   8. Accessibility
+   ========================================================= */
+.ca-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms !important;transition-duration:.01ms !important}
+}
+
+/* =========================================================
+   9. App-specific additions
+   Not part of the vendored mockups/rebrand/choresapp.css -- the sign-in
+   "bold canvas" hero has no equivalent in the component doc (.ca-appbar
+   is the compact in-app header, a different job), so it's built here from
+   the same tokens rather than left as one-off inline styles. Kept in this
+   file (not index.html's own <style>) so all of the rebrand's CSS stays
+   in one place; re-syncing from the source mockup should leave this
+   section alone.
+   ========================================================= */
+.ca-signin-hero{background:var(--ca-green-700);color:#fff;
+  padding:var(--ca-space-8) var(--ca-space-4) var(--ca-space-6);text-align:center}
+.ca-signin-hero .ca-lockup{justify-content:center;margin-bottom:var(--ca-space-4)}
+.ca-signin-hero .ca-lockup span{font-size:var(--ca-text-md);color:#fff}
+.ca-signin-headline{font-size:var(--ca-text-2xl);font-weight:600;line-height:1.2;
+  margin:0;letter-spacing:-.02em}
+.ca-signin-body{max-width:360px;margin:0 auto;
+  padding:var(--ca-space-6) var(--ca-space-4) var(--ca-space-8)}
+.ca-signin-trust{display:flex;align-items:center;justify-content:center;gap:6px;
+  font-size:var(--ca-text-xs);color:var(--ca-ink-3);margin-top:var(--ca-space-4)}
+.ca-signin-link-row{text-align:center;font-size:var(--ca-text-sm);color:var(--ca-ink-3);
+  margin-top:var(--ca-space-3)}
+.ca-signin-link-row a,.ca-link{
+  background:none;border:none;padding:0;font:inherit;color:var(--ca-green-700);
+  font-weight:600;cursor:pointer}
+.ca-link:hover{text-decoration:underline}
+.ca-signin-avatar-row{display:flex;align-items:center;gap:var(--ca-space-3);
+  justify-content:center;margin-bottom:var(--ca-space-5)}
+
+/* PIN-step "back" chevron -- reuses the appbar's own action-button sizing
+   token (--ca-tap-adjacent) informally via a fixed 36px, matching
+   .ca-appbar__action's own dimensions for visual consistency without
+   pulling in the whole component. */
+.ca-back-btn{width:36px;height:36px;border-radius:50%;border:none;cursor:pointer;
+  background:rgba(255,255,255,.16);color:#fff;display:inline-flex;
+  align-items:center;justify-content:center;font-size:19px;margin-bottom:var(--ca-space-3)}

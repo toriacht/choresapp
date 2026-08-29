@@ -4,10 +4,16 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Family Chores</title>
-<meta name="theme-color" content="#1b7a43" />
+<meta name="theme-color" content="#0F6B34" />
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="favicon.ico" />
 <link rel="apple-touch-icon" href="icon-192.png" />
+<!-- Rebrand design system (mockups/rebrand/choresapp.css) -- .ca- prefixed
+     tokens/components, scoped to the auth screens for now (see the
+     rebrand plan); the rest of this file's existing styling is untouched
+     until the later restyle phases. -->
+<link rel="stylesheet" href="choresapp.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -570,69 +576,170 @@
     <p>Loading&hellip;</p>
   </div>
 
-  <div id="signInScreen" class="center-screen" hidden>
-    <img src="icon-512.png" alt="" width="88" height="88" style="border-radius:20px;" />
-    <div class="wordmark">Chores<span class="wordmark-accent">App</span></div>
-    <h1 style="margin:0;">Family Chores</h1>
-    <p>Track chores, allowances, and extra jobs together.</p>
-
-    <div class="mode-tabs" style="width:100%;max-width:280px;margin-bottom:0;">
-      <button type="button" class="mode-tab-btn active add" id="signInModeParentBtn"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Parent sign-in</button>
-      <button type="button" class="mode-tab-btn" id="signInModeKidBtn"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Kid sign-in</button>
-    </div>
-
-    <div id="parentSignIn" style="width:100%;max-width:280px;">
-      <button class="pill primary google-btn" id="signInBtn">
-        <span class="google-g-badge">G</span> Sign in with Google
-      </button>
-      <p class="signin-trust-caption"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 2.6v5.4c0 4.4-3 7.7-7 9-4-1.3-7-4.6-7-9V5.6z"/><path d="M8.7 12l2.1 2.1L15.3 10"/></svg> Parents manage chores, allowances and approvals.</p>
-    </div>
-
-    <form id="kidSignInForm" hidden style="width:100%;max-width:280px;text-align:left;">
-      <div class="field">
-        <label for="kidUsernameInput">Username</label>
-        <input id="kidUsernameInput" type="text" placeholder="e.g. alice" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="username" required />
+  <div id="signInScreen" class="ca" hidden style="min-height:100vh;background:var(--ca-surface);">
+    <div class="ca-signin-hero">
+      <div class="ca-lockup">
+        <svg width="26" height="26" viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M33 8 h5 v8 h-5 Z" fill="#FFFFFF"/>
+          <path d="M24 5.2 L44 21 V37.5 a4.2 4.2 0 0 1-4.2 4.2 H8.2 A4.2 4.2 0 0 1 4 37.5 V21 Z" fill="#FFFFFF"/>
+          <g transform="rotate(-18 24 27)">
+            <rect x="21.8" y="9" width="4.4" height="18" rx="2.2" fill="var(--ca-green-700)"/>
+            <path d="M17,29.5 Q17,25.5 24,25.5 Q31,25.5 31,29.5 L32,36 Q32,37.5 30.2,38 L25,40 L24,36.5 L23,40 L17.8,38 Q16,37.5 16,36 Z" fill="var(--ca-green-700)"/>
+          </g>
+        </svg>
+        <span>ChoresApp</span>
       </div>
-      <div class="field">
-        <label for="kidPasswordInput">Password</label>
-        <div style="display:flex;gap:8px;">
-          <input id="kidPasswordInput" type="password" autocomplete="current-password" required style="margin-bottom:0;" />
-          <button type="button" class="pill small" id="toggleKidPasswordBtn" style="flex:none;">Show</button>
+      <p class="ca-signin-headline">Family chores,<br>made simple</p>
+    </div>
+
+    <div class="ca-signin-body">
+      <div class="ca-seg" role="tablist" style="margin-bottom:var(--ca-space-5);">
+        <button type="button" role="tab" aria-selected="true" id="signInModeParentBtn">Parent</button>
+        <button type="button" role="tab" aria-selected="false" id="signInModeKidBtn">Kid</button>
+      </div>
+
+      <!-- ============ Parent ============ -->
+      <div id="parentSignIn">
+        <button class="ca-btn ca-btn--block" id="signInBtn">
+          <i class="ti ti-brand-google"></i> Sign in with Google
+        </button>
+
+        <div style="display:flex;align-items:center;gap:10px;margin:var(--ca-space-4) 0;">
+          <span style="flex:1;height:1px;background:var(--ca-rule);"></span>
+          <span style="font-size:var(--ca-text-xs);color:var(--ca-ink-3);">or</span>
+          <span style="flex:1;height:1px;background:var(--ca-rule);"></span>
         </div>
-      </div>
-      <button class="pill primary" type="submit" style="width:100%;">Sign in</button>
-    </form>
-    <div id="kidSignInHelp" hidden style="width:100%;max-width:280px;">
-      <button type="button" class="pill" id="kidInviteHelpBtn" style="width:100%;"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="8" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg> Ask your parent to invite you</button>
-      <p class="signin-trust-caption" style="justify-content:center;margin-top:12px;">
-        <button type="button" id="kidNeedHelpBtn" class="link-btn"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.7 2.7 0 015.2.9c0 1.8-2.7 2.4-2.7 2.4"/><path d="M12 16.2h.01"/></svg> Need help signing in?</button>
-      </p>
-    </div>
 
-    <p class="error-text" id="signInError" hidden></p>
+        <div class="ca-seg" role="tablist" style="margin-bottom:var(--ca-space-4);">
+          <button type="button" role="tab" aria-selected="true" id="parentEmailModeSignInBtn">Sign in</button>
+          <button type="button" role="tab" aria-selected="false" id="parentEmailModeSignUpBtn">Sign up</button>
+        </div>
+        <form id="parentEmailAuthForm">
+          <div class="ca-field" id="parentDisplayNameField" hidden>
+            <label class="ca-label" for="parentDisplayNameInput">Your name</label>
+            <input class="ca-input" id="parentDisplayNameInput" type="text" autocomplete="name" />
+          </div>
+          <div class="ca-field">
+            <label class="ca-label" for="parentEmailInput">Email</label>
+            <input class="ca-input" id="parentEmailInput" type="email" placeholder="name@example.com" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="email" required />
+          </div>
+          <div class="ca-field">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;">
+              <label class="ca-label" for="parentPasswordInput" style="margin-bottom:4px;">Password</label>
+              <button type="button" id="parentForgotPasswordBtn" class="ca-link" style="font-size:var(--ca-text-xs);font-weight:600;">Forgot?</button>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <input class="ca-input" id="parentPasswordInput" type="password" autocomplete="current-password" required style="margin-bottom:0;" />
+              <button type="button" class="ca-btn ca-btn--secondary ca-btn--sm" id="toggleParentPasswordBtn" style="flex:none;">Show</button>
+            </div>
+          </div>
+          <button class="ca-btn ca-btn--block" type="submit" id="parentEmailAuthSubmitBtn">Sign in</button>
+        </form>
 
-    <div class="trust-divider">Why families trust ChoresApp</div>
-    <div class="entry-row" style="max-width:280px;cursor:default;">
-      <div class="entry-row-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;"><path d="M12 3l7 2.6v5.4c0 4.4-3 7.7-7 9-4-1.3-7-4.6-7-9V5.6z"/><path d="M8.7 12l2.1 2.1L15.3 10"/></svg></div>
-      <div>
-        <div class="entry-row-title">Private family data</div>
-        <div class="entry-row-sub">Your data stays within your family.</div>
+        <p class="ca-signin-trust"><i class="ti ti-shield-check"></i> Parents manage chores, allowances and approvals.</p>
       </div>
-      <span class="entry-row-chevron">›</span>
-    </div>
-    <div class="entry-row" style="max-width:280px;cursor:default;">
-      <div class="entry-row-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;"><rect x="6.5" y="2.5" width="11" height="19" rx="2"/><path d="M11 18h2"/></svg></div>
-      <div>
-        <div class="entry-row-title">Works on phone or desktop</div>
-        <div class="entry-row-sub">Use ChoresApp anywhere, anytime.</div>
+
+      <!-- ============ Kid: step 1, username ============ -->
+      <form id="kidUsernameStep" hidden>
+        <div class="ca-field">
+          <label class="ca-label" for="kidUsernameInput">Your username</label>
+          <input class="ca-input" id="kidUsernameInput" type="text" placeholder="e.g. saoirse" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="username" required />
+        </div>
+        <button class="ca-btn ca-btn--block" type="submit">Next</button>
+        <p class="ca-signin-trust">Forgotten your username or PIN? Ask a parent to reset it for you.</p>
+      </form>
+
+      <!-- ============ Kid: step 2, PIN ============ -->
+      <div id="kidPinStep" hidden>
+        <button type="button" class="ca-btn ca-btn--quiet ca-btn--sm" id="kidPinBackBtn" style="margin-bottom:var(--ca-space-3);"><i class="ti ti-arrow-left"></i> Back</button>
+        <div class="ca-signin-avatar-row">
+          <span class="ca-avatar ca-avatar--lg" id="kidPinAvatar" style="background:var(--ca-child-1);color:var(--ca-child-1-ink);"></span>
+          <div style="text-align:left;">
+            <p class="ca-title" id="kidPinGreeting" style="margin:0;">Hi</p>
+            <p class="ca-meta" style="margin:0;">Enter your PIN</p>
+          </div>
+        </div>
+        <div class="ca-pin" id="kidPinDots" style="margin-bottom:var(--ca-space-2);">
+          <span class="ca-pin-dot"></span><span class="ca-pin-dot"></span><span class="ca-pin-dot"></span><span class="ca-pin-dot"></span>
+        </div>
+        <p class="ca-error" id="kidPinError" hidden style="text-align:center;"></p>
+        <p class="ca-meta" id="kidPinAttemptsNote" hidden style="text-align:center;"></p>
+        <div class="ca-keypad" id="kidKeypad" style="margin-top:var(--ca-space-4);">
+          <button type="button" class="ca-key" data-digit="1">1</button><button type="button" class="ca-key" data-digit="2">2</button><button type="button" class="ca-key" data-digit="3">3</button>
+          <button type="button" class="ca-key" data-digit="4">4</button><button type="button" class="ca-key" data-digit="5">5</button><button type="button" class="ca-key" data-digit="6">6</button>
+          <button type="button" class="ca-key" data-digit="7">7</button><button type="button" class="ca-key" data-digit="8">8</button><button type="button" class="ca-key" data-digit="9">9</button>
+          <span class="ca-key ca-key--blank"></span><button type="button" class="ca-key" data-digit="0">0</button>
+          <button type="button" class="ca-key ca-key--blank" id="kidPinBackspaceBtn" aria-label="Delete"><i class="ti ti-backspace"></i></button>
+        </div>
+        <p class="ca-signin-trust">Forgotten it? <button type="button" id="kidPinForgotBtn" class="ca-link" style="font-size:inherit;">Ask a parent</button></p>
       </div>
-      <span class="entry-row-chevron">›</span>
+
+      <!-- ============ Kid: password step (credentialType:'password' kids
+           -- older accounts, or a parent explicitly switched this child
+           off PIN from their profile) ============ -->
+      <form id="kidPasswordStep" hidden>
+        <button type="button" class="ca-btn ca-btn--quiet ca-btn--sm" id="kidPasswordBackBtn" style="margin-bottom:var(--ca-space-3);"><i class="ti ti-arrow-left"></i> Back</button>
+        <div class="ca-signin-avatar-row">
+          <span class="ca-avatar ca-avatar--lg" id="kidPasswordAvatar" style="background:var(--ca-child-1);color:var(--ca-child-1-ink);"></span>
+          <div style="text-align:left;">
+            <p class="ca-title" id="kidPasswordGreeting" style="margin:0;">Hi</p>
+            <p class="ca-meta" style="margin:0;">Enter your password</p>
+          </div>
+        </div>
+        <div class="ca-field">
+          <div style="display:flex;gap:8px;">
+            <input class="ca-input" id="kidPasswordInput" type="password" autocomplete="current-password" required style="margin-bottom:0;" />
+            <button type="button" class="ca-btn ca-btn--secondary ca-btn--sm" id="toggleKidPasswordBtn" style="flex:none;">Show</button>
+          </div>
+        </div>
+        <button class="ca-btn ca-btn--block" type="submit">Sign in</button>
+        <p class="ca-signin-trust">Forgotten it? Ask a parent to reset it for you.</p>
+      </form>
+
+      <!-- ============ Kid: locked out ============ -->
+      <div id="kidLockedStep" hidden style="text-align:center;">
+        <div style="width:52px;height:52px;border-radius:50%;background:var(--ca-wash);display:flex;align-items:center;justify-content:center;margin:0 auto var(--ca-space-4);">
+          <i class="ti ti-lock" style="font-size:24px;color:var(--ca-ink-3);"></i>
+        </div>
+        <p class="ca-title ca-title--lg">Let's get a parent</p>
+        <p class="ca-body" style="color:var(--ca-ink-3);margin:var(--ca-space-2) 0 var(--ca-space-5);">That PIN didn't match after a few tries, so we've paused sign-in. Nothing is broken and none of your jobs are lost.</p>
+        <button type="button" class="ca-btn ca-btn--block" id="kidLetParentKnowBtn" style="margin-bottom:var(--ca-space-2);">Let a parent know</button>
+        <button type="button" class="ca-btn ca-btn--secondary ca-btn--block" id="kidParentHereBtn">A parent is here now</button>
+      </div>
+
+      <!-- ============ Kid: unlock with parent code ============ -->
+      <form id="kidUnlockCodeStep" hidden>
+        <button type="button" class="ca-btn ca-btn--quiet ca-btn--sm" id="kidUnlockBackBtn" style="margin-bottom:var(--ca-space-3);"><i class="ti ti-arrow-left"></i> Back</button>
+        <p class="ca-body" style="color:var(--ca-ink-3);">A parent can find the 6-digit code in their own ChoresApp, under Settings &gt; Family.</p>
+        <div class="ca-field">
+          <label class="ca-label" for="kidUnlockCodeInput">6-digit code</label>
+          <input class="ca-input" id="kidUnlockCodeInput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" style="letter-spacing:6px;text-align:center;font-size:20px;" required />
+        </div>
+        <label class="ca-choice" style="padding:0 0 var(--ca-space-2);">
+          <input type="checkbox" id="kidUnlockSetNewPinCheckbox" />
+          <span>Set a new PIN while I'm at it</span>
+        </label>
+        <div class="ca-field" id="kidUnlockNewPinField" hidden>
+          <label class="ca-label" for="kidUnlockNewPinInput">New 4-digit PIN</label>
+          <input class="ca-input" id="kidUnlockNewPinInput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" style="letter-spacing:6px;text-align:center;font-size:20px;" />
+        </div>
+        <button class="ca-btn ca-btn--block" type="submit">Unlock</button>
+      </form>
+
+      <div id="kidSignInHelp" hidden>
+        <button type="button" class="ca-btn ca-btn--secondary ca-btn--block" id="kidInviteHelpBtn"><i class="ti ti-users"></i> Ask your parent to invite you</button>
+        <p class="ca-signin-trust"><button type="button" id="kidNeedHelpBtn" class="ca-link" style="font-size:inherit;">Need help signing in?</button></p>
+      </div>
+
+      <p class="ca-error" id="signInError" hidden style="text-align:center;margin-top:var(--ca-space-3);"></p>
+
+      <p class="ca-signin-trust" style="margin-top:var(--ca-space-6);"><i class="ti ti-shield-lock"></i> Your family's data stays private.</p>
     </div>
   </div>
 
   <div id="setupScreen" class="center-screen" hidden>
     <h1>Almost there</h1>
-    <p>This Google account isn't set up in any family yet. Ask your family admin to add your email, or set up a brand-new family below.</p>
+    <p>This account isn't set up in any family yet. Ask your family admin to add your email, or set up a brand-new family below.</p>
     <form id="createFamilyForm" style="width:100%;max-width:280px;text-align:left;">
       <div class="field">
         <label for="familyNameInput">Family name</label>
@@ -791,6 +898,8 @@ import {
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js';
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, updatePassword,
+  createUserWithEmailAndPassword, sendPasswordResetEmail, updateProfile,
+  signInWithCustomToken, sendEmailVerification,
   signOut, onAuthStateChanged, connectAuthEmulator, setPersistence, browserLocalPersistence,
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js';
 import {
@@ -854,6 +963,16 @@ const callProposeChoreSwap = httpsCallable(functions, 'proposeChoreSwap');
 const callAcceptChoreSwap = httpsCallable(functions, 'acceptChoreSwap');
 const callDeclineChoreSwap = httpsCallable(functions, 'declineChoreSwap');
 const callCancelChoreSwap = httpsCallable(functions, 'cancelChoreSwap');
+const callLookupKidDisplayName = httpsCallable(functions, 'lookupKidDisplayName');
+const callSignInWithPin = httpsCallable(functions, 'signInWithPin');
+const callRequestParentUnlock = httpsCallable(functions, 'requestParentUnlock');
+const callGetParentCode = httpsCallable(functions, 'getParentCode');
+const callUnlockWithParentCode = httpsCallable(functions, 'unlockWithParentCode');
+const callApproveUnlockRequest = httpsCallable(functions, 'approveUnlockRequest');
+const callCheckEmailSignInMethod = httpsCallable(functions, 'checkEmailSignInMethod');
+const callClaimInviteIfVerified = httpsCallable(functions, 'claimInviteIfVerified');
+const callCheckPendingInvite = httpsCallable(functions, 'checkPendingInvite');
+const callSwitchChildCredential = httpsCallable(functions, 'switchChildCredential');
 
 // ---- Same ISO-week algorithm as functions/lib/choreLog.js:getIsoWeekId,
 // duplicated here (not shared code -- this is a zero-build static frontend)
@@ -1568,27 +1687,119 @@ function showScreen(name) {
   Object.entries(screens).forEach(([key, node]) => { node.hidden = key !== name; });
 }
 
+// Generic error-message mapper shared by every auth flow below (parent
+// Firebase Auth errors, and Cloud Function HttpsErrors from the PIN/
+// parent-code/parentAuth callables). A functions/ error's message is
+// already the human-written string a callable threw (see kidAuth.js/
+// parentCode.js/parentAuth.js) -- surfaced as-is, no code prefix.
+function describeParentAuthError(err) {
+  if (err.code && err.code.startsWith('functions/')) return err.message;
+  if (err.code === 'auth/email-already-in-use') return 'An account already exists for that email -- try signing in instead.';
+  if (err.code === 'auth/weak-password') return 'Password must be at least 6 characters.';
+  if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') return 'Wrong email or password.';
+  if (err.code === 'auth/invalid-email') return 'That email address doesn\'t look right.';
+  return `${err.code || ''}: ${err.message}`;
+}
+
+// ---------------------------------------------------------------------
+// Parent / Kid segmented toggle
+// ---------------------------------------------------------------------
+const KID_STEPS = ['kidUsernameStep', 'kidPinStep', 'kidPasswordStep', 'kidLockedStep', 'kidUnlockCodeStep'];
+function showKidStep(step) {
+  KID_STEPS.forEach((s) => { document.getElementById(s).hidden = s !== step; });
+  document.getElementById('kidSignInHelp').hidden = step !== 'kidUsernameStep';
+  document.getElementById('signInError').hidden = true;
+}
 document.getElementById('signInModeParentBtn').addEventListener('click', () => {
-  document.getElementById('signInModeParentBtn').classList.add('active', 'add');
-  document.getElementById('signInModeKidBtn').classList.remove('active', 'add');
+  document.getElementById('signInModeParentBtn').setAttribute('aria-selected', 'true');
+  document.getElementById('signInModeKidBtn').setAttribute('aria-selected', 'false');
   document.getElementById('parentSignIn').hidden = false;
-  document.getElementById('kidSignInForm').hidden = true;
+  KID_STEPS.forEach((s) => { document.getElementById(s).hidden = true; });
   document.getElementById('kidSignInHelp').hidden = true;
+  document.getElementById('signInError').hidden = true;
 });
 document.getElementById('signInModeKidBtn').addEventListener('click', () => {
-  document.getElementById('signInModeKidBtn').classList.add('active', 'add');
-  document.getElementById('signInModeParentBtn').classList.remove('active', 'add');
+  document.getElementById('signInModeKidBtn').setAttribute('aria-selected', 'true');
+  document.getElementById('signInModeParentBtn').setAttribute('aria-selected', 'false');
   document.getElementById('parentSignIn').hidden = true;
-  document.getElementById('kidSignInForm').hidden = false;
-  document.getElementById('kidSignInHelp').hidden = false;
+  showKidStep('kidUsernameStep');
 });
 document.getElementById('kidInviteHelpBtn').addEventListener('click', () => {
   showAppAlert("Kid accounts are set up by a parent, not self-signup -- ask a parent to add you from their Kids tab (Admin Dashboard → Kids → + Add another child).");
 });
 document.getElementById('kidNeedHelpBtn').addEventListener('click', () => {
-  showAppAlert("Ask your parent for the username and password they set up for you. They can also change your password for you from their Kids tab if you've forgotten it.");
+  showAppAlert("Ask your parent for your username and PIN. They can reset either for you anytime from their Kids tab.");
 });
 
+// ---------------------------------------------------------------------
+// Kid sign-in -- username, then a PIN keypad (functions/lib/kidAuth.js:
+// signInWithPin mints a Firebase custom token; there's no client-side
+// Firebase Auth credential for a PIN account at all, see addFamilyMember's
+// child branch). A small deterministic hash of the username picks one of
+// the 6 child accent colors for the greeting avatar -- purely decorative,
+// nothing is actually stored per-child yet.
+function hashStringToInt(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i += 1) { hash = (hash * 31 + str.charCodeAt(i)) | 0; }
+  return hash;
+}
+let kidCurrentUsername = '';
+let kidPinDigits = [];
+function renderKidPinDots() {
+  document.querySelectorAll('#kidPinDots .ca-pin-dot').forEach((dot, i) => {
+    if (i < kidPinDigits.length) dot.setAttribute('data-filled', ''); else dot.removeAttribute('data-filled');
+  });
+}
+
+function setKidGreeting(prefix, avatarId, greetingId, displayName) {
+  document.getElementById(greetingId).textContent = `Hi ${displayName}`;
+  const avatarEl = document.getElementById(avatarId);
+  avatarEl.textContent = displayName.charAt(0).toUpperCase();
+  const colorIdx = (Math.abs(hashStringToInt(kidCurrentUsername)) % 6) + 1;
+  avatarEl.style.background = `var(--ca-child-${colorIdx})`;
+  avatarEl.style.color = `var(--ca-child-${colorIdx}-ink)`;
+}
+
+document.getElementById('kidUsernameStep').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const username = document.getElementById('kidUsernameInput').value.trim();
+  if (!username) return;
+  kidCurrentUsername = username;
+
+  let displayName = username;
+  let credentialType = 'pin';
+  try {
+    const result = await callLookupKidDisplayName({ username });
+    if (result.data.found) {
+      displayName = result.data.displayName;
+      credentialType = result.data.credentialType;
+    }
+  } catch (err) {
+    // Non-fatal -- falls back to the raw username and the PIN step (the
+    // more common case going forward); a password-only kid whose lookup
+    // happened to fail here can still get in by retrying.
+  }
+
+  if (credentialType === 'password') {
+    setKidGreeting('kidPassword', 'kidPasswordAvatar', 'kidPasswordGreeting', displayName);
+    document.getElementById('kidPasswordInput').value = '';
+    showKidStep('kidPasswordStep');
+    return;
+  }
+
+  setKidGreeting('kidPin', 'kidPinAvatar', 'kidPinGreeting', displayName);
+  kidPinDigits = [];
+  renderKidPinDots();
+  document.getElementById('kidPinError').hidden = true;
+  document.getElementById('kidPinAttemptsNote').hidden = true;
+  showKidStep('kidPinStep');
+});
+document.getElementById('kidPinBackBtn').addEventListener('click', () => showKidStep('kidUsernameStep'));
+document.getElementById('kidPinForgotBtn').addEventListener('click', () => {
+  showAppAlert("Ask your parent to reset your PIN from their Kids tab.");
+});
+
+document.getElementById('kidPasswordBackBtn').addEventListener('click', () => showKidStep('kidUsernameStep'));
 document.getElementById('toggleKidPasswordBtn').addEventListener('click', () => {
   const input = document.getElementById('kidPasswordInput');
   const btn = document.getElementById('toggleKidPasswordBtn');
@@ -1596,20 +1807,211 @@ document.getElementById('toggleKidPasswordBtn').addEventListener('click', () => 
   input.type = showing ? 'password' : 'text';
   btn.textContent = showing ? 'Show' : 'Hide';
 });
-
-document.getElementById('kidSignInForm').addEventListener('submit', async (event) => {
+document.getElementById('kidPasswordStep').addEventListener('submit', async (event) => {
   event.preventDefault();
   const errorEl = document.getElementById('signInError');
   errorEl.hidden = true;
-  const username = document.getElementById('kidUsernameInput').value;
   const password = document.getElementById('kidPasswordInput').value;
   try {
-    await signInWithEmailAndPassword(auth, usernameToSyntheticEmail(username), password);
+    await signInWithEmailAndPassword(auth, usernameToSyntheticEmail(kidCurrentUsername), password);
   } catch (err) {
-    console.error('[choresapp] kid sign-in ERROR:', err.code, err.message);
+    console.error('[choresapp] kid password sign-in ERROR:', err.code, err.message);
     errorEl.textContent = err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found'
       ? 'Wrong username or password.'
-      : `${err.code || ''}: ${err.message}`;
+      : describeParentAuthError(err);
+    errorEl.hidden = false;
+  }
+});
+
+async function submitKidPin() {
+  const errorEl = document.getElementById('kidPinError');
+  const attemptsEl = document.getElementById('kidPinAttemptsNote');
+  errorEl.hidden = true;
+  attemptsEl.hidden = true;
+  const pin = kidPinDigits.join('');
+  try {
+    const result = await callSignInWithPin({ username: kidCurrentUsername, pin });
+    if (result.data.ok) {
+      await signInWithCustomToken(auth, result.data.customToken);
+      return;
+    }
+    kidPinDigits = [];
+    renderKidPinDots();
+    if (result.data.lockedOut) {
+      showKidStep('kidLockedStep');
+      return;
+    }
+    errorEl.textContent = "That PIN isn't right. Have another go.";
+    errorEl.hidden = false;
+    if (typeof result.data.attemptsRemaining === 'number' && result.data.attemptsRemaining <= 3) {
+      attemptsEl.textContent = `${result.data.attemptsRemaining} ${result.data.attemptsRemaining === 1 ? 'try' : 'tries'} left`;
+      attemptsEl.hidden = false;
+    }
+  } catch (err) {
+    console.error('[choresapp] signInWithPin ERROR:', err.code, err.message);
+    kidPinDigits = [];
+    renderKidPinDots();
+    errorEl.textContent = describeParentAuthError(err);
+    errorEl.hidden = false;
+  }
+}
+document.getElementById('kidKeypad').addEventListener('click', (event) => {
+  const digitBtn = event.target.closest('.ca-key[data-digit]');
+  if (digitBtn) {
+    if (kidPinDigits.length >= 4) return;
+    kidPinDigits.push(digitBtn.dataset.digit);
+    renderKidPinDots();
+    if (kidPinDigits.length === 4) submitKidPin();
+    return;
+  }
+  if (event.target.closest('#kidPinBackspaceBtn')) {
+    kidPinDigits.pop();
+    renderKidPinDots();
+  }
+});
+
+// ---------------------------------------------------------------------
+// Kid locked out -- two exits, per the source doc: notify a parent
+// remotely, or hand the device to one already in the room.
+// ---------------------------------------------------------------------
+document.getElementById('kidLetParentKnowBtn').addEventListener('click', async (event) => {
+  event.target.disabled = true;
+  try {
+    await callRequestParentUnlock({ username: kidCurrentUsername, reason: 'Wrong PIN entered too many times.' });
+    showAppAlert('A parent has been notified. Ask them to unlock you, or come back once they have.');
+  } catch (err) {
+    showAppAlert(describeParentAuthError(err));
+  } finally {
+    event.target.disabled = false;
+  }
+});
+document.getElementById('kidParentHereBtn').addEventListener('click', () => {
+  document.getElementById('kidUnlockCodeInput').value = '';
+  document.getElementById('kidUnlockSetNewPinCheckbox').checked = false;
+  document.getElementById('kidUnlockNewPinField').hidden = true;
+  document.getElementById('kidUnlockNewPinInput').value = '';
+  showKidStep('kidUnlockCodeStep');
+});
+document.getElementById('kidUnlockBackBtn').addEventListener('click', () => showKidStep('kidLockedStep'));
+document.getElementById('kidUnlockSetNewPinCheckbox').addEventListener('change', (event) => {
+  document.getElementById('kidUnlockNewPinField').hidden = !event.target.checked;
+});
+document.getElementById('kidUnlockCodeStep').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const errorEl = document.getElementById('signInError');
+  errorEl.hidden = true;
+  const code = document.getElementById('kidUnlockCodeInput').value.trim();
+  const setNewPin = document.getElementById('kidUnlockSetNewPinCheckbox').checked;
+  const newPin = setNewPin ? document.getElementById('kidUnlockNewPinInput').value.trim() : undefined;
+  if (setNewPin && !/^\d{4}$/.test(newPin || '')) {
+    errorEl.textContent = 'New PIN must be 4 digits.';
+    errorEl.hidden = false;
+    return;
+  }
+  try {
+    const result = await callUnlockWithParentCode({ username: kidCurrentUsername, code, newPin });
+    await signInWithCustomToken(auth, result.data.customToken);
+  } catch (err) {
+    console.error('[choresapp] unlockWithParentCode ERROR:', err.code, err.message);
+    errorEl.textContent = describeParentAuthError(err);
+    errorEl.hidden = false;
+  }
+});
+
+// ---------------------------------------------------------------------
+// Parent email/password auth (sign-up or sign-in) -- Google stays the
+// primary path, this is a peer alternative. A password sign-up account has
+// emailVerified: false, so onUserCreate (see functions/lib/onUserCreate.js)
+// will never match it against an existing admin invite by itself --
+// claimInviteIfVerified (called speculatively below, a safe no-op if
+// there's nothing to claim yet) is the other half, once the address is
+// actually verified.
+document.getElementById('toggleParentPasswordBtn').addEventListener('click', () => {
+  const input = document.getElementById('parentPasswordInput');
+  const btn = document.getElementById('toggleParentPasswordBtn');
+  const showing = input.type === 'text';
+  input.type = showing ? 'password' : 'text';
+  btn.textContent = showing ? 'Show' : 'Hide';
+});
+
+let parentEmailAuthMode = 'signIn';
+function setParentEmailAuthMode(mode) {
+  parentEmailAuthMode = mode;
+  document.getElementById('parentEmailModeSignInBtn').setAttribute('aria-selected', String(mode === 'signIn'));
+  document.getElementById('parentEmailModeSignUpBtn').setAttribute('aria-selected', String(mode === 'signUp'));
+  document.getElementById('parentDisplayNameField').hidden = mode !== 'signUp';
+  document.getElementById('parentDisplayNameInput').required = mode === 'signUp';
+  document.getElementById('parentPasswordInput').autocomplete = mode === 'signUp' ? 'new-password' : 'current-password';
+  document.getElementById('parentEmailAuthSubmitBtn').textContent = mode === 'signUp' ? 'Sign up' : 'Sign in';
+  document.getElementById('signInError').hidden = true;
+}
+document.getElementById('parentEmailModeSignInBtn').addEventListener('click', () => setParentEmailAuthMode('signIn'));
+document.getElementById('parentEmailModeSignUpBtn').addEventListener('click', () => setParentEmailAuthMode('signUp'));
+
+document.getElementById('parentEmailAuthForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const errorEl = document.getElementById('signInError');
+  errorEl.hidden = true;
+  const email = document.getElementById('parentEmailInput').value.trim();
+  const password = document.getElementById('parentPasswordInput').value;
+  try {
+    if (parentEmailAuthMode === 'signUp') {
+      // Catches "you already have a Google account" before attempting a
+      // signup that Firebase would reject anyway (auth/email-already-in-use)
+      // -- with a clearer message than that generic error gives.
+      try {
+        const check = (await callCheckEmailSignInMethod({ email })).data;
+        if (check.exists && check.hasGoogle) {
+          errorEl.textContent = 'An account already exists for that email, signed in with Google -- use the Google button above instead.';
+          errorEl.hidden = false;
+          return;
+        }
+      } catch (err) { /* non-fatal -- fall through, createUserWithEmailAndPassword still guards this */ }
+
+      const displayName = document.getElementById('parentDisplayNameInput').value.trim();
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      if (displayName) await updateProfile(cred.user, { displayName });
+      try { await sendEmailVerification(cred.user); } catch (err) { /* non-fatal */ }
+      try { await callClaimInviteIfVerified(); } catch (err) { /* no-op if unverified or no pending invite */ }
+    } else {
+      await signInWithEmailAndPassword(auth, email, password);
+    }
+  } catch (err) {
+    console.error('[choresapp] parent email auth ERROR:', err.code, err.message);
+    errorEl.textContent = describeParentAuthError(err);
+    errorEl.hidden = false;
+  }
+});
+
+document.getElementById('parentForgotPasswordBtn').addEventListener('click', async () => {
+  const email = document.getElementById('parentEmailInput').value.trim();
+  const errorEl = document.getElementById('signInError');
+  errorEl.hidden = true;
+  if (!email) {
+    errorEl.textContent = 'Enter your email above first, then tap "Forgot?" again.';
+    errorEl.hidden = false;
+    return;
+  }
+  try {
+    // Catches "this account has no password" before mailing a link that
+    // would go nowhere -- a small accepted enumeration trade-off (see
+    // mockups/rebrand/choresapp-auth-design.html's "Trade-off accepted").
+    const check = (await callCheckEmailSignInMethod({ email })).data;
+    if (check.exists && check.hasGoogle && !check.hasPassword) {
+      showAppAlert(`${email} signs in with Google, so there's nothing to reset -- use the Google button above instead.`);
+      return;
+    }
+    await sendPasswordResetEmail(auth, email);
+    showAppAlert(`If an account exists for ${email}, a password reset link is on its way.`);
+  } catch (err) {
+    console.error('[choresapp] password reset ERROR:', err.code, err.message);
+    // Deliberately as vague as the success message above about whether the
+    // account exists -- auth/user-not-found is the one code worth
+    // softening here, everything else (invalid-email, rate-limited, etc.)
+    // is fine to surface plainly.
+    errorEl.textContent = err.code === 'auth/user-not-found'
+      ? `If an account exists for ${email}, a password reset link is on its way.`
+      : describeParentAuthError(err);
     errorEl.hidden = false;
   }
 });
@@ -1803,14 +2205,43 @@ function renderNotifModalBody() {
     return;
   }
   state.notifications.forEach((n) => {
-    body.appendChild(el('div', {
+    const item = el('div', {
       class: `notif-item ${n.read ? '' : 'unread'}`,
-      onclick: () => { if (!n.read) markNotifRead(n.id); },
+      onclick: (event) => {
+        // The Unlock button below is inside this same row -- don't let its
+        // click bubble up and immediately mark-as-read-and-nothing-else.
+        if (event.target.closest('.notif-unlock-btn')) return;
+        if (!n.read) markNotifRead(n.id);
+      },
     }, [
       el('div', { class: 'notif-item-title' }, n.title || ''),
       n.body ? el('div', { class: 'notif-item-body' }, n.body) : null,
       el('div', { class: 'notif-item-time' }, formatNotifTime(n.createdAt)),
-    ]));
+    ]);
+    // requestParentUnlock (functions/lib/kidAuth.js) sets relatedId to the
+    // locked-out child's uid -- one tap clears the lockout only (no PIN
+    // change, that's a deliberate change rather than a permission, see
+    // approveUnlockRequest). role !== 'admin' children never see this type
+    // of notification themselves since notifyAdmins only fans out to admins.
+    if (n.type === 'unlock_request' && n.relatedId) {
+      const unlockBtn = el('button', {
+        type: 'button', class: 'pill primary small notif-unlock-btn', style: 'margin-top:6px;',
+        onclick: async (event) => {
+          event.stopPropagation();
+          event.target.disabled = true;
+          try {
+            await callApproveUnlockRequest({ uid: n.relatedId });
+            if (!n.read) await markNotifRead(n.id);
+            event.target.textContent = 'Unlocked';
+          } catch (err) {
+            event.target.disabled = false;
+            showAppAlert(err.message);
+          }
+        },
+      }, 'Unlock');
+      item.appendChild(unlockBtn);
+    }
+    body.appendChild(item);
   });
 }
 
@@ -2089,7 +2520,13 @@ document.getElementById('createFamilyForm').addEventListener('submit', async (ev
   const errorEl = document.getElementById('setupError');
   errorEl.hidden = true;
   try {
-    await callCreateFamilyAndAdmin({ familyName });
+    // Explicit, not left to the callable's own request.auth.token.name
+    // fallback -- that claim comes from the ID token, which Google
+    // populates automatically but a password account's updateProfile()
+    // call doesn't (that updates the user record, not the already-issued
+    // token's claims, until it next refreshes). state.user.displayName is
+    // the live client-side value either way.
+    await callCreateFamilyAndAdmin({ familyName, displayName: state.user.displayName || undefined });
     await resolveMembership();
   } catch (err) {
     errorEl.textContent = err.message;
@@ -2113,6 +2550,10 @@ onAuthStateChanged(auth, async (user) => {
   if (!user) {
     state.member = null;
     updateBrandName();
+    // Reset to Sign in, not whatever mode was last left on (e.g. someone
+    // signs up, later signs out -- landing back here should default to
+    // returning-user intent, same as the Parent/Kid tab already does).
+    setParentEmailAuthMode('signIn');
     showScreen('signIn');
     return;
   }
@@ -3751,6 +4192,7 @@ function renderKidDetailBody(container, uid) {
     onclick: () => openRunWizard(uid),
   }, `Assign chores for ${child.displayName || child.email}`));
 
+  container.appendChild(makeExpandable('+ Sign-in method', renderCredentialManagementForm(child, uid)));
   container.appendChild(renderEditableAllowanceCard(child, currency));
   container.appendChild(makeExpandable(
     `+ Add a chore or daily task for ${child.displayName || child.email}`,
@@ -4223,7 +4665,18 @@ function renderAddMemberForm() {
   const roleSelect = el('select', {}, [el('option', { value: 'child' }, 'Child'), el('option', { value: 'admin' }, 'Admin')]);
   const emailInput = el('input', { type: 'email', placeholder: 'Email', required: true });
   const usernameInput = el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', required: true, hidden: true });
-  const passwordInput = el('input', { type: 'text', placeholder: 'Password (min. 6 characters)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', minlength: '6', required: true, hidden: true });
+  // PIN is the default credential for a new child (per the rebrand's auth
+  // design) -- password stays available as an explicit choice, same
+  // callable either way (addFamilyMember's credentialType param).
+  const credentialSelect = el('select', {}, [el('option', { value: 'pin' }, 'PIN (4 digits)'), el('option', { value: 'password' }, 'Password')]);
+  const credentialLabel = el('label', {}, 'Sign-in method');
+  const pinInput = el('input', {
+    type: 'text', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '4',
+    placeholder: '4-digit PIN', autocomplete: 'off',
+  });
+  const generatePinBtn = el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;' }, 'Generate a PIN');
+  generatePinBtn.addEventListener('click', () => { pinInput.value = String(Math.floor(1000 + Math.random() * 9000)); });
+  const passwordInput = el('input', { type: 'text', placeholder: 'Password (min. 6 characters)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', minlength: '6', hidden: true });
   const generatePasswordBtn = el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;', hidden: true }, 'Generate a password');
   generatePasswordBtn.addEventListener('click', () => { passwordInput.value = generateSimplePassword(); });
   const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
@@ -4235,17 +4688,32 @@ function renderAddMemberForm() {
     emailInput.required = !isChild;
     usernameInput.hidden = !isChild;
     usernameInput.required = isChild;
-    passwordInput.hidden = !isChild;
-    passwordInput.required = isChild;
-    generatePasswordBtn.hidden = !isChild;
+    credentialLabel.hidden = !isChild;
+    credentialSelect.hidden = !isChild;
+    updateFieldsForCredential();
+  }
+  function updateFieldsForCredential() {
+    const isChild = roleSelect.value === 'child';
+    const isPin = credentialSelect.value === 'pin';
+    pinInput.hidden = !isChild || !isPin;
+    pinInput.required = isChild && isPin;
+    generatePinBtn.hidden = !isChild || !isPin;
+    passwordInput.hidden = !isChild || isPin;
+    passwordInput.required = isChild && !isPin;
+    generatePasswordBtn.hidden = !isChild || isPin;
   }
   roleSelect.addEventListener('change', updateFieldsForRole);
+  credentialSelect.addEventListener('change', updateFieldsForCredential);
   updateFieldsForRole();
 
   form.appendChild(el('label', {}, 'Role'));
   form.appendChild(attachCustomSelect(roleSelect));
   form.appendChild(emailInput);
   form.appendChild(usernameInput);
+  form.appendChild(credentialLabel);
+  form.appendChild(attachCustomSelect(credentialSelect));
+  form.appendChild(pinInput);
+  form.appendChild(generatePinBtn);
   form.appendChild(passwordInput);
   form.appendChild(generatePasswordBtn);
   form.appendChild(nameInput);
@@ -4263,17 +4731,23 @@ function renderAddMemberForm() {
     errorEl.hidden = true;
     successEl.hidden = true;
     const enteredEmail = emailInput.hidden ? '' : emailInput.value.trim();
+    const isChild = roleSelect.value === 'child';
+    const isPin = isChild && credentialSelect.value === 'pin';
     try {
       const result = await callAddFamilyMember({
         email: emailInput.hidden ? undefined : enteredEmail,
         username: usernameInput.hidden ? undefined : usernameInput.value.trim(),
-        password: passwordInput.hidden ? undefined : passwordInput.value,
+        credentialType: isChild ? credentialSelect.value : undefined,
+        pin: isPin ? pinInput.value.trim() : undefined,
+        password: (isChild && !isPin) ? passwordInput.value : undefined,
         displayName: nameInput.value.trim(),
         role: roleSelect.value, baseWeeklyAllowanceCents: centsFromMajorUnits(allowanceInput.value),
       });
-      emailInput.value = ''; usernameInput.value = ''; passwordInput.value = ''; nameInput.value = ''; allowanceInput.value = '';
+      emailInput.value = ''; usernameInput.value = ''; pinInput.value = ''; passwordInput.value = ''; nameInput.value = ''; allowanceInput.value = '';
       if (result.data.mode === 'created') {
-        successEl.textContent = `Added "${result.data.username}" -- they can sign in now with the username and password you set.`;
+        successEl.textContent = isPin
+          ? `Added "${result.data.username}" -- they can sign in now with the username and PIN you set.`
+          : `Added "${result.data.username}" -- they can sign in now with the username and password you set.`;
         successEl.hidden = false;
       } else {
         showCredentialModal({ title: 'Invite created' });
@@ -4284,6 +4758,88 @@ function renderAddMemberForm() {
     }
   });
   return form;
+}
+
+// Per-child PIN/password switch, from the Kids tab -- "the choice sits
+// where a parent has context (a kid getting older, or getting their own
+// phone), not mid-onboarding" per the rebrand's auth design. Always signs
+// the child out everywhere (switchChildCredential revokes their refresh
+// tokens), stated up front before the admin confirms.
+function renderCredentialManagementForm(child, uid) {
+  const wrap = el('div', {});
+  const currentType = child.credentialType === 'pin' ? 'pin' : 'password';
+  wrap.appendChild(el('p', { class: 'muted', style: 'margin:0 0 10px;' },
+    `Currently signs in with a ${currentType === 'pin' ? 'PIN' : 'password'}.`));
+
+  const credentialSelect = el('select', {}, [
+    el('option', { value: 'pin' }, 'PIN (4 digits)'),
+    el('option', { value: 'password' }, 'Password'),
+  ]);
+  credentialSelect.value = currentType;
+  const pinInput = el('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '4', placeholder: 'New 4-digit PIN', autocomplete: 'off' });
+  const generatePinBtn = el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;' }, 'Generate a PIN');
+  generatePinBtn.addEventListener('click', () => { pinInput.value = String(Math.floor(1000 + Math.random() * 9000)); });
+  const passwordInput = el('input', { type: 'text', placeholder: 'New password (min. 6 characters)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', minlength: '6', hidden: true });
+  const generatePasswordBtn = el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;', hidden: true }, 'Generate a password');
+  generatePasswordBtn.addEventListener('click', () => { passwordInput.value = generateSimplePassword(); });
+
+  function updateFields() {
+    const isPin = credentialSelect.value === 'pin';
+    pinInput.hidden = !isPin;
+    generatePinBtn.hidden = !isPin;
+    passwordInput.hidden = isPin;
+    generatePasswordBtn.hidden = isPin;
+  }
+  credentialSelect.addEventListener('change', updateFields);
+  updateFields();
+
+  wrap.appendChild(el('label', {}, 'Sign-in method'));
+  wrap.appendChild(attachCustomSelect(credentialSelect));
+  wrap.appendChild(pinInput);
+  wrap.appendChild(generatePinBtn);
+  wrap.appendChild(passwordInput);
+  wrap.appendChild(generatePasswordBtn);
+
+  const errorEl = el('p', { class: 'error-text', style: 'margin:0 0 8px;' });
+  errorEl.hidden = true;
+  wrap.appendChild(errorEl);
+  const successEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' });
+  successEl.hidden = true;
+  wrap.appendChild(successEl);
+
+  wrap.appendChild(el('button', {
+    type: 'button', class: 'pill primary', style: 'width:100%;',
+    onclick: async (event) => {
+      errorEl.hidden = true;
+      successEl.hidden = true;
+      const isPin = credentialSelect.value === 'pin';
+      const label = isPin ? 'a PIN' : 'a password';
+      const confirmed = await showAppConfirm(
+        `This signs ${child.displayName || 'them'} out everywhere -- they'll need to sign back in with ${label} next time. Continue?`,
+        { title: 'Change sign-in method?', confirmLabel: 'Change it', danger: true }
+      );
+      if (!confirmed) return;
+      event.target.disabled = true;
+      try {
+        await callSwitchChildCredential({
+          uid,
+          credentialType: credentialSelect.value,
+          pin: isPin ? pinInput.value.trim() : undefined,
+          password: isPin ? undefined : passwordInput.value,
+        });
+        pinInput.value = ''; passwordInput.value = '';
+        successEl.textContent = `Done -- ${child.displayName || 'they'} now sign in with ${label}.`;
+        successEl.hidden = false;
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      } finally {
+        event.target.disabled = false;
+      }
+    },
+  }, 'Save'));
+
+  return wrap;
 }
 
 // Approve/reject card for one "done, awaiting review" chore-log entry --
@@ -5164,6 +5720,90 @@ function renderHotStreakBonusBody() {
   return wrap;
 }
 
+// The rotating 6-digit parent unlock code (functions/lib/parentCode.js) --
+// read aloud to unlock a locked-out kid, reset a PIN, or approve a payout
+// on their device, per mockups/rebrand/choresapp-auth-design.html. Not
+// revealed automatically on render (unlike the rest of Settings' eagerly-
+// built expandable sections) -- a deliberate reveal tap, so the code isn't
+// sitting on screen just from opening Settings for something else.
+function renderParentCodeBody() {
+  const wrap = el('div', {});
+  wrap.appendChild(el('div', { class: 'muted', style: 'margin-bottom:10px;' },
+    "Read this out to unlock a kid, reset a PIN, or approve a payout on their device. Never share it with the kids."));
+
+  const codeBox = el('div', {
+    style: 'font-size:1.8rem;font-weight:700;letter-spacing:0.3rem;text-align:center;'
+      + 'padding:16px;background:var(--panel2);border-radius:10px;margin-bottom:8px;',
+    hidden: true,
+  });
+  wrap.appendChild(codeBox);
+  const countdownEl = el('div', { class: 'muted', style: 'text-align:center;margin-bottom:10px;', hidden: true });
+  wrap.appendChild(countdownEl);
+  const errorEl = el('p', { class: 'error-text' });
+  errorEl.hidden = true;
+  wrap.appendChild(errorEl);
+  const showBtn = el('button', { type: 'button', class: 'pill primary' }, 'Show code');
+  wrap.appendChild(showBtn);
+
+  let countdownInterval = null;
+  let expiresAtMs = null;
+  function stopCountdown() {
+    if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+  }
+  function tickCountdown() {
+    // Settings isn't torn down on tab switch the way screens are (see
+    // showScreen) -- this is the interval's own way to stop itself once
+    // nobody's looking, rather than ticking forever in the background.
+    if (state.currentTab !== 'settings') { stopCountdown(); return; }
+    const remaining = Math.max(0, Math.round((expiresAtMs - Date.now()) / 1000));
+    countdownEl.textContent = remaining > 0 ? `New code in ${remaining}s` : 'Refreshing…';
+    if (remaining <= 0) { stopCountdown(); fetchCode(); }
+  }
+  async function fetchCode() {
+    errorEl.hidden = true;
+    try {
+      const result = await callGetParentCode();
+      codeBox.textContent = result.data.code;
+      codeBox.hidden = false;
+      countdownEl.hidden = false;
+      expiresAtMs = result.data.expiresAt;
+      stopCountdown();
+      tickCountdown();
+      countdownInterval = setInterval(tickCountdown, 1000);
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    }
+  }
+  showBtn.addEventListener('click', () => { showBtn.hidden = true; fetchCode(); });
+
+  const usageWrap = el('div', { style: 'margin-top:14px;' });
+  wrap.appendChild(usageWrap);
+  (async () => {
+    try {
+      const { collection: fsCollection, getDocs, query, orderBy, limit } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      const usageQuery = query(
+        fsCollection(db, `families/${state.familyId}/parentCode/current/usageLog`),
+        orderBy('usedAt', 'desc'), limit(5)
+      );
+      const snap = await getDocs(usageQuery);
+      if (snap.empty) return;
+      usageWrap.appendChild(el('div', { class: 'muted', style: 'font-weight:600;margin-bottom:4px;' }, 'Recent uses'));
+      snap.docs.forEach((d) => {
+        const entry = d.data();
+        const who = memberLabel(entry.targetUid);
+        const when = entry.usedAt && typeof entry.usedAt.toDate === 'function' ? entry.usedAt.toDate().toLocaleString() : '';
+        const actionLabel = entry.action === 'pin_reset' ? 'PIN reset' : 'Unlocked';
+        usageWrap.appendChild(el('div', { class: 'muted', style: 'font-size:0.8rem;' }, `${actionLabel} — ${who} — ${when}`));
+      });
+    } catch (err) {
+      // Non-fatal -- the code itself still works without the log loading.
+    }
+  })();
+
+  return wrap;
+}
+
 function renderSettings() {
   const container = document.getElementById('page-settings');
   container.innerHTML = '';
@@ -5198,6 +5838,7 @@ function renderSettings() {
 
   container.appendChild(makeExpandable('Hot streak bonus', renderHotStreakBonusBody()));
 
+  container.appendChild(makeExpandable('Family unlock code', renderParentCodeBody()));
   renderNotificationSettingsButton(container);
   container.appendChild(makeExpandable('Invite family member', renderAddMemberForm()));
   container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; renderWizardStep(); }));
@@ -5286,17 +5927,35 @@ function renderWizardStep() {
     card.appendChild(el('h1', {}, isAdminStep ? 'Add other admins' : 'Add your kids'));
     card.appendChild(el('p', {}, isAdminStep
       ? 'Optional -- add another parent/guardian who should also manage the app.'
-      : 'Pick a username and password for each child -- no email needed. They\'ll sign in with these directly.'));
+      : 'Pick a username and a 4-digit PIN for each child -- no email needed. They\'ll sign in with these directly.'));
 
     const emailInput = isAdminStep ? el('input', { type: 'email', placeholder: 'Email' }) : null;
     const usernameInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
-    const passwordInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Password (min. 6 characters)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', minlength: '6' });
-    const generatePasswordBtn = isAdminStep ? null : el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;' }, 'Generate a password');
+    const credentialLabel = isAdminStep ? null : el('label', {}, 'Sign-in method');
+    const credentialSelect = isAdminStep ? null : el('select', {}, [el('option', { value: 'pin' }, 'PIN (4 digits)'), el('option', { value: 'password' }, 'Password')]);
+    const pinInput = isAdminStep ? null : el('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '4', placeholder: '4-digit PIN', autocomplete: 'off' });
+    const generatePinBtn = isAdminStep ? null : el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;' }, 'Generate a PIN');
+    if (generatePinBtn) generatePinBtn.addEventListener('click', () => { pinInput.value = String(Math.floor(1000 + Math.random() * 9000)); });
+    const passwordInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Password (min. 6 characters)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', minlength: '6', hidden: true });
+    const generatePasswordBtn = isAdminStep ? null : el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;', hidden: true }, 'Generate a password');
     if (generatePasswordBtn) generatePasswordBtn.addEventListener('click', () => { passwordInput.value = generateSimplePassword(); });
+    function updateWizardCredentialFields() {
+      if (isAdminStep) return;
+      const isPin = credentialSelect.value === 'pin';
+      pinInput.hidden = !isPin;
+      generatePinBtn.hidden = !isPin;
+      passwordInput.hidden = isPin;
+      generatePasswordBtn.hidden = isPin;
+    }
+    if (credentialSelect) credentialSelect.addEventListener('change', updateWizardCredentialFields);
     const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
     const allowanceInput = isAdminStep ? null : el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Weekly allowance (e.g. 25)' });
     if (emailInput) card.appendChild(emailInput);
     if (usernameInput) card.appendChild(usernameInput);
+    if (credentialLabel) card.appendChild(credentialLabel);
+    if (credentialSelect) card.appendChild(attachCustomSelect(credentialSelect));
+    if (pinInput) card.appendChild(pinInput);
+    if (generatePinBtn) card.appendChild(generatePinBtn);
     if (passwordInput) card.appendChild(passwordInput);
     if (generatePasswordBtn) card.appendChild(generatePasswordBtn);
     card.appendChild(nameInput);
@@ -5314,20 +5973,26 @@ function renderWizardStep() {
         successEl.hidden = true;
         if (isAdminStep && !emailInput.value.trim()) return;
         if (!isAdminStep && !usernameInput.value.trim()) return;
+        const isPin = !isAdminStep && credentialSelect.value === 'pin';
         try {
           const result = await callAddFamilyMember({
             email: emailInput ? emailInput.value.trim() : undefined,
             username: usernameInput ? usernameInput.value.trim() : undefined,
-            password: passwordInput ? passwordInput.value : undefined,
+            credentialType: isAdminStep ? undefined : credentialSelect.value,
+            pin: isPin ? pinInput.value.trim() : undefined,
+            password: (!isAdminStep && !isPin) ? passwordInput.value : undefined,
             displayName: nameInput.value.trim(), role: roleLabel,
             baseWeeklyAllowanceCents: allowanceInput ? centsFromMajorUnits(allowanceInput.value) : 0,
           });
           if (emailInput) emailInput.value = '';
           if (usernameInput) usernameInput.value = '';
+          if (pinInput) pinInput.value = '';
           if (passwordInput) passwordInput.value = '';
           nameInput.value = ''; if (allowanceInput) allowanceInput.value = '';
           if (result.data.mode === 'created') {
-            successEl.textContent = `Added "${result.data.username}" -- they can sign in now with the username and password you set.`;
+            successEl.textContent = isPin
+              ? `Added "${result.data.username}" -- they can sign in now with the username and PIN you set.`
+              : `Added "${result.data.username}" -- they can sign in now with the username and password you set.`;
             successEl.hidden = false;
           } else {
             showCredentialModal({ title: 'Invite created' });

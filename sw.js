@@ -1,5 +1,5 @@
-const CACHE_NAME = 'choresapp-shell-v3';
-const SHELL_ASSETS = ['./', './index.html', './manifest.json', './favicon.ico', './icon-192.png', './icon-512.png'];
+const CACHE_NAME = 'choresapp-shell-v4';
+const SHELL_ASSETS = ['./', './index.html', './choresapp.css', './manifest.json', './favicon.ico', './icon-192.png', './icon-512.png'];
 
 // Background push handling -- a raw 'push' listener, not
 // firebase-messaging-compat's onBackgroundMessage. Chrome enforces (via a
