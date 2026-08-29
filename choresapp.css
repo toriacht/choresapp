@@ -333,7 +333,8 @@
    section alone.
    ========================================================= */
 .ca-signin-hero{background:var(--ca-green-700);color:#fff;
-  padding:var(--ca-space-8) var(--ca-space-4) var(--ca-space-6);text-align:center}
+  padding:var(--ca-space-8) var(--ca-space-4) var(--ca-space-6);text-align:center;
+  border-radius:0 0 var(--ca-radius-xl) var(--ca-radius-xl)}
 .ca-signin-hero .ca-lockup{justify-content:center;margin-bottom:var(--ca-space-4)}
 .ca-signin-hero .ca-lockup span{font-size:var(--ca-text-md);color:#fff}
 .ca-signin-headline{font-size:var(--ca-text-2xl);font-weight:600;line-height:1.2;
