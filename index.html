@@ -59,6 +59,20 @@
   h2 { font-size: 1rem; font-weight: 700; margin: 0 0 10px; }
   .app-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
   .brand { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  /* Green header rule, per mockups/rebrand/choresapp-parent-restyle.html's
+     diagnosis table: "Green header block carrying the lockup and page
+     title" replaces the old white bar with the parent's name in caps
+     above it (the name moves to Settings, where renderSettings now shows
+     it). Negative margin cancels body's own 16px padding so it reads as
+     the top edge of the screen, like every header in the mockup phone
+     frames, rather than a card floating inset like .ca-signin-hero. */
+  .app-header.ca-appbar {
+    margin: -16px -16px 16px; align-items: flex-start;
+    border-radius: 0 0 var(--ca-radius-lg) var(--ca-radius-lg);
+  }
+  .app-header.ca-appbar #pageTitle { color: #fff; }
+  .app-header.ca-appbar #pageSubtitle { color: var(--ca-mint); font-size: 0.78rem; margin: 2px 0 0; }
+  .app-header.ca-appbar .install-cta { background: rgba(255,255,255,.16); color: #fff; border-color: transparent; }
 
   .booking-card {
     background: var(--panel); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px;
@@ -792,14 +806,18 @@
     </div>
   </div>
 
-  <div id="notifModal" class="modal-overlay" hidden>
-    <div class="modal-card" style="min-height:0;max-height:80vh;display:flex;flex-direction:column;">
-      <div class="row" style="margin-bottom:10px;">
-        <h1 style="font-size:1.15rem;">Notifications</h1>
-        <button class="pill small" id="notifMarkAllReadBtn">Mark all read</button>
+  <!-- Bottom sheet, not a centered dialog with a big green Close button --
+       per mockups/rebrand/choresapp-parent-restyle.html's Screen 4: "As a
+       sheet, dismissal is a swipe [approximated here as tap-outside] and
+       the content gets the emphasis." -->
+  <div id="notifModal" class="modal-overlay" style="align-items:flex-end;padding:0;" hidden>
+    <div class="ca-sheet" style="width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;margin:0 auto;">
+      <div class="ca-sheet__grip"></div>
+      <div style="display:flex;align-items:center;margin-bottom:var(--ca-space-3);">
+        <p class="ca-title" style="flex:1;">Notifications</p>
+        <button type="button" class="ca-link" id="notifMarkAllReadBtn" style="font-size:var(--ca-text-sm);">Mark all read</button>
       </div>
       <div id="notifModalBody" style="overflow-y:auto;flex:1;"></div>
-      <button class="pill primary" id="notifModalDoneBtn" style="width:100%;margin-top:10px;">Close</button>
     </div>
   </div>
 
@@ -818,16 +836,16 @@
   </div>
 
   <div id="app" hidden>
-    <div class="app-header">
+    <div class="app-header ca-appbar">
       <div>
-        <div class="brand" id="brandName">Family Chores</div>
-        <h1 id="pageTitle">Dashboard</h1>
+        <h1 id="pageTitle" style="font-size:1.25rem;">Dashboard</h1>
+        <p id="pageSubtitle" hidden></p>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
         <button id="installBtn" class="install-cta" style="display:none;"></button>
-        <button class="bell-btn" id="notifBellBtn" aria-label="Notifications">
-          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-          <span id="notifBadge" class="notif-badge" hidden>0</span>
+        <button class="ca-appbar__action" id="notifBellBtn" aria-label="Notifications">
+          <i class="ti ti-bell" style="font-size:16px;"></i>
+          <span id="notifBadge" class="ca-appbar__badge" hidden>0</span>
         </button>
       </div>
     </div>
@@ -869,7 +887,7 @@
     <nav class="bottom-nav" id="adminNav" hidden>
       <button type="button" class="nav-btn active" data-tab="admindashboard">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
-        <span>Dashboard</span>
+        <span>Home</span>
       </button>
       <button type="button" class="nav-btn" data-tab="kids">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="3"/><circle cx="17" cy="8" r="2.3"/><path d="M3 21v-2a5 5 0 015-5h2a5 5 0 015 5v2"/><path d="M15.5 13.2A4.2 4.2 0 0121 17v1.5"/></svg>
@@ -881,7 +899,7 @@
       </button>
       <button type="button" class="nav-btn" data-tab="allactivity">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
-        <span>Activity</span>
+        <span>Money</span>
       </button>
       <button type="button" class="nav-btn" data-tab="settings">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
@@ -1120,6 +1138,30 @@ function formatCents(cents, currency) {
   } catch (e) {
     return `${value.toFixed(2)}`;
   }
+}
+
+// A true minus sign (U+2212), not the ASCII hyphen Intl's own negative
+// currency formatting uses -- "small, but it's a money screen" per
+// mockups/rebrand/choresapp-parent-restyle.html's Money screen notes.
+function formatSignedCents(cents, currency) {
+  const amount = cents || 0;
+  return `${amount < 0 ? '−' : '+'}${formatCents(Math.abs(amount), currency)}`;
+}
+
+// Human labels for ledger transaction types -- "manual adjustment" said
+// nothing (every row carried it, so it added no information); Extra job
+// and Deduction distinguish the two things actually happening. Same doc,
+// Money screen notes.
+function ledgerTypeLabel(tx) {
+  const LEDGER_TYPE_LABELS = {
+    weekly_payout: 'Weekly allowance', streak_bonus: 'Hot streak bonus',
+    extra_job_credit: 'Extra job', chore_bonus: 'Bonus',
+    missed_chore_reversal: 'Late completion credit',
+    deduction: 'Deduction', missed_chore_deduction: 'Missed chore',
+  };
+  if (LEDGER_TYPE_LABELS[tx.type]) return LEDGER_TYPE_LABELS[tx.type];
+  if (tx.type === 'manual_adjustment') return tx.amountCents >= 0 ? 'Extra job' : 'Deduction';
+  return tx.type.replace(/_/g, ' ');
 }
 
 // The bare currency symbol alone (e.g. '€'), for UI that shows it as its
@@ -1390,7 +1432,7 @@ const CHILD_TABS = ['dashboard', 'chores', 'extras', 'earnings', 'more'];
 const ADMIN_TABS = ['admindashboard', 'kids', 'managechores', 'allactivity', 'settings'];
 const TITLES = {
   dashboard: 'Dashboard', chores: 'Chores', extras: 'Extras', earnings: 'Earnings', more: 'More',
-  admindashboard: 'Admin Dashboard', kids: 'Kids', managechores: 'Manage Chores', allactivity: 'All Activity', settings: 'Settings',
+  admindashboard: 'Admin Dashboard', kids: 'Kids', managechores: 'Chores', allactivity: 'Money', settings: 'Settings',
 };
 
 const state = {
@@ -1761,6 +1803,18 @@ function hashStringToInt(str) {
   let hash = 0;
   for (let i = 0; i < str.length; i += 1) { hash = (hash * 31 + str.charCodeAt(i)) | 0; }
   return hash;
+}
+// One of the 6 --ca-child-N accents, deterministic by uid so it's stable
+// across sessions/renders without needing to store a colour field anywhere
+// -- same hash the kid PIN sign-in screen already uses for its own avatar
+// (see setKidGreeting), just keyed on uid instead of username so it works
+// for password-mode kids too. Per
+// mockups/rebrand/choresapp-parent-restyle.html: "The avatar colour chosen
+// when they were added becomes that child's accent everywhere... the one
+// place a colour other than green earns its place, because telling one
+// child's rows from another's is a real job."
+function childColorIdx(uid) {
+  return (Math.abs(hashStringToInt(uid || '')) % 6) + 1;
 }
 let kidCurrentUsername = '';
 let kidPinDigits = [];
@@ -2216,41 +2270,91 @@ async function markNotifRead(notifId) {
   await updateDoc(fsDoc(db, `families/${state.familyId}/members/${state.user.uid}/notifications/${notifId}`), { read: true });
 }
 
+// Collapses consecutive chore_marked_done notifications from the same
+// child on the same day into one group -- per
+// mockups/rebrand/choresapp-parent-restyle.html's "biggest single win":
+// "A child ticking off four chores in one sitting currently produces four
+// separate entries, all reading 'Needs your review', which buries
+// anything genuinely different -- like a payout waiting." The notification
+// doc itself only carries a pre-built title/body/relatedId (the choreLog
+// entry id), not a structured memberUid -- resolved here via state.choreLog
+// so grouping needs no backend/data-model change.
+function groupNotifications(list) {
+  const groups = [];
+  list.forEach((n) => {
+    if (n.type === 'chore_marked_done') {
+      const entry = state.choreLog.find((e) => e.id === n.relatedId);
+      const memberUid = entry ? entry.memberUid : null;
+      const dayKey = n.createdAt && typeof n.createdAt.toDate === 'function' ? getIsoDateId(n.createdAt.toDate()) : null;
+      const prev = groups[groups.length - 1];
+      if (prev && prev.type === 'chore_marked_done' && prev.memberUid === memberUid && prev.dayKey === dayKey) {
+        prev.items.push(n);
+        return;
+      }
+      groups.push({ type: 'chore_marked_done', memberUid, dayKey, items: [n] });
+      return;
+    }
+    groups.push({ type: 'single', items: [n] });
+  });
+  return groups;
+}
+
 function renderNotifModalBody() {
   const body = document.getElementById('notifModalBody');
   body.innerHTML = '';
   if (state.notifications.length === 0) {
-    body.appendChild(el('div', { class: 'empty-state' }, 'No notifications yet.'));
+    body.appendChild(el('div', { class: 'ca-empty' }, [
+      el('span', { class: 'ca-empty__icon' }, el('i', { class: 'ti ti-bell-off' })),
+      el('p', { class: 'ca-empty__title' }, 'No notifications yet'),
+    ]));
     return;
   }
-  state.notifications.forEach((n) => {
+  groupNotifications(state.notifications).forEach((group) => {
+    const anyUnread = group.items.some((n) => !n.read);
+    const markGroupRead = () => group.items.forEach((n) => { if (!n.read) markNotifRead(n.id); });
+
+    let title, bodyText;
+    if (group.type === 'chore_marked_done' && group.items.length > 1) {
+      const names = group.items.map((n) => {
+        const entry = state.choreLog.find((e) => e.id === n.relatedId);
+        const chore = entry && state.chores.find((c) => c.id === entry.choreId);
+        return chore ? chore.name : null;
+      }).filter(Boolean);
+      const shown = names.slice(0, 2).join(', ');
+      const rest = names.length - 2;
+      title = `${memberLabel(group.memberUid) || 'A child'} marked ${group.items.length} chores done`;
+      bodyText = rest > 0 ? `${shown} and ${rest} more` : shown;
+    } else {
+      title = group.items[0].title || '';
+      bodyText = group.items[0].body || '';
+    }
+
     const item = el('div', {
-      class: `notif-item ${n.read ? '' : 'unread'}`,
+      class: `ca-card ${anyUnread ? 'ca-card--waiting' : ''}`, style: 'cursor:pointer;',
       onclick: (event) => {
-        // The Unlock button below is inside this same row -- don't let its
-        // click bubble up and immediately mark-as-read-and-nothing-else.
         if (event.target.closest('.notif-unlock-btn')) return;
-        if (!n.read) markNotifRead(n.id);
+        markGroupRead();
       },
     }, [
-      el('div', { class: 'notif-item-title' }, n.title || ''),
-      n.body ? el('div', { class: 'notif-item-body' }, n.body) : null,
-      el('div', { class: 'notif-item-time' }, formatNotifTime(n.createdAt)),
+      el('p', { class: 'ca-title' }, title),
+      bodyText ? el('p', { class: 'ca-meta' }, bodyText) : null,
+      el('p', { class: 'ca-meta' }, formatNotifTime(group.items[0].createdAt)),
     ]);
     // requestParentUnlock (functions/lib/kidAuth.js) sets relatedId to the
     // locked-out child's uid -- one tap clears the lockout only (no PIN
     // change, that's a deliberate change rather than a permission, see
     // approveUnlockRequest). role !== 'admin' children never see this type
     // of notification themselves since notifyAdmins only fans out to admins.
-    if (n.type === 'unlock_request' && n.relatedId) {
+    const n = group.items[0];
+    if (group.type === 'single' && n.type === 'unlock_request' && n.relatedId) {
       const unlockBtn = el('button', {
-        type: 'button', class: 'pill primary small notif-unlock-btn', style: 'margin-top:6px;',
+        type: 'button', class: 'ca-btn ca-btn--sm notif-unlock-btn', style: 'margin-top:var(--ca-space-2);',
         onclick: async (event) => {
           event.stopPropagation();
           event.target.disabled = true;
           try {
             await callApproveUnlockRequest({ uid: n.relatedId });
-            if (!n.read) await markNotifRead(n.id);
+            markGroupRead();
             event.target.textContent = 'Unlocked';
           } catch (err) {
             event.target.disabled = false;
@@ -2268,8 +2372,8 @@ document.getElementById('notifBellBtn').addEventListener('click', () => {
   renderNotifModalBody();
   document.getElementById('notifModal').hidden = false;
 });
-document.getElementById('notifModalDoneBtn').addEventListener('click', () => {
-  document.getElementById('notifModal').hidden = true;
+document.getElementById('notifModal').addEventListener('click', (event) => {
+  if (event.target.id === 'notifModal') document.getElementById('notifModal').hidden = true;
 });
 document.getElementById('notifMarkAllReadBtn').addEventListener('click', async () => {
   const unread = state.notifications.filter((n) => !n.read);
@@ -2568,7 +2672,6 @@ onAuthStateChanged(auth, async (user) => {
   state.user = user;
   if (!user) {
     state.member = null;
-    updateBrandName();
     // Reset to Sign in, not whatever mode was last left on (e.g. someone
     // signs up, later signs out -- landing back here should default to
     // returning-user intent, same as the Parent/Kid tab already does).
@@ -2588,19 +2691,6 @@ onAuthStateChanged(auth, async (user) => {
     showScreen('signIn');
   }
 });
-
-// The header's eyebrow line reads "Family Chores" only until we know who's
-// signed in -- once state.member/state.user resolve, it names the actual
-// person on every screen (not just Dashboard) so a shared device makes it
-// obvious whose view is showing, especially with kids swapping in and out.
-function updateBrandName() {
-  const brandEl = document.getElementById('brandName');
-  if (!brandEl) return;
-  const name = (state.member && state.member.displayName)
-    || (state.user && (state.user.displayName || state.user.email))
-    || 'Family Chores';
-  brandEl.textContent = name;
-}
 
 function updateNavForRole(role) {
   document.getElementById('childNav').hidden = role !== 'child';
@@ -2635,7 +2725,6 @@ async function resolveMembership(myGen = authEventGen) {
   const memberSnap = await getDoc(doc(db, `families/${familyId}/members/${state.user.uid}`));
   if (isStale()) return;
   state.member = memberSnap.exists() ? memberSnap.data() : null;
-  updateBrandName();
 
   startFamilySubscriptions();
   updateNavForRole(role);
@@ -2763,7 +2852,6 @@ function startFamilySubscriptions() {
     state.members = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
     const me = state.members.find((m) => m.uid === state.user.uid);
     if (me) state.member = me;
-    updateBrandName();
     renderCurrentTab();
   }));
 
@@ -2830,10 +2918,29 @@ function subscribeLedger(memberUid) {
 // ---------------------------------------------------------------------
 // Tab navigation (bottom nav + swipe, mirrors the sibling project)
 // ---------------------------------------------------------------------
+// Admin Dashboard gets the family name + today's date instead of a generic
+// "Admin Dashboard" label -- per mockups/rebrand/choresapp-parent-restyle.html:
+// "Nobody thinks of themselves as an administrator of their own family."
+// Every other tab just gets its plain title; called from both switchTab
+// (on navigation) and renderCurrentTab (so the family name fills in the
+// instant its snapshot arrives, even if the tab was already showing).
+function updatePageHeader(tab) {
+  const titleEl = document.getElementById('pageTitle');
+  const subtitleEl = document.getElementById('pageSubtitle');
+  if (tab === 'admindashboard') {
+    titleEl.textContent = (state.family && state.family.name) || 'Your family';
+    subtitleEl.textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+    subtitleEl.hidden = false;
+  } else {
+    titleEl.textContent = TITLES[tab] || 'Dashboard';
+    subtitleEl.hidden = true;
+  }
+}
+
 function switchTab(tab) {
   state.currentTab = tab;
   localStorage.setItem('choresAppTab', tab);
-  document.getElementById('pageTitle').textContent = TITLES[tab] || 'Dashboard';
+  updatePageHeader(tab);
   document.querySelectorAll('.tab-page').forEach((section) => {
     section.hidden = section.dataset.page !== tab;
   });
@@ -2859,7 +2966,47 @@ function openKid(uid) {
 document.body.addEventListener('click', (event) => {
   const btn = event.target.closest('.nav-btn');
   if (btn && !btn.hidden && !btn.closest('[hidden]')) switchTab(btn.dataset.tab);
+
+  // Overflow ("kebab") menus (see renderKebabMenu) -- handled through this
+  // same already-existing delegated listener rather than a new one per
+  // menu, since a per-render document-level listener would pile up
+  // indefinitely across re-renders (container.innerHTML='' clears the
+  // button/menu nodes themselves, but not a listener attached to document).
+  const kebabBtn = event.target.closest('.kebab-trigger');
+  if (kebabBtn) {
+    const menu = kebabBtn.nextElementSibling;
+    const wasHidden = menu.hidden;
+    document.querySelectorAll('.kebab-menu').forEach((m) => { m.hidden = true; });
+    menu.hidden = !wasHidden;
+    return;
+  }
+  if (!event.target.closest('.kebab-menu')) {
+    document.querySelectorAll('.kebab-menu').forEach((m) => { m.hidden = true; });
+  }
 });
+
+// A row's rare actions (currently just Deactivate/Reactivate) tucked behind
+// a dots button instead of permanently occupying prime position on every
+// row -- per mockups/rebrand/choresapp-parent-restyle.html's diagnosis
+// table ("Deactivate: permanent top-right position on every row, for a
+// rare action" -> "Into an overflow menu"). Open/close is handled by the
+// single delegated body click listener above, not a listener here.
+function renderKebabMenu(items) {
+  const btn = el('button', {
+    type: 'button', class: 'kebab-trigger',
+    style: 'width:30px;height:30px;border:none;background:transparent;color:var(--ca-ink-4);'
+      + 'display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;',
+  }, el('i', { class: 'ti ti-dots', style: 'font-size:17px;' }));
+  const menu = el('div', {
+    class: 'ca-list kebab-menu', hidden: true,
+    style: 'position:absolute;right:0;top:34px;z-index:20;min-width:170px;box-shadow:0 4px 20px rgba(0,0,0,.16);',
+  }, items.map((item) => el('button', {
+    type: 'button', class: 'ca-list-row',
+    style: `width:100%;border:none;background:none;cursor:pointer;text-align:left;font:inherit;${item.danger ? 'color:var(--ca-danger-fg);' : 'color:inherit;'}`,
+    onclick: () => item.onclick(),
+  }, item.label)));
+  return el('div', { style: 'position:relative;flex-shrink:0;' }, [btn, menu]);
+}
 
 // One delegated listener handles both left/right gestures app-wide: on
 // every tab except Chores, a swipe moves between bottom-nav tabs; on
@@ -2907,6 +3054,7 @@ document.addEventListener('touchend', (e) => {
 
 function renderCurrentTab() {
   if (screens.app.hidden) return;
+  updatePageHeader(state.currentTab);
   const renderers = {
     dashboard: renderDashboard, chores: renderChores, extras: renderExtras,
     earnings: renderEarnings, more: renderMore,
@@ -3845,30 +3993,33 @@ function renderExtras() {
 // above and the per-child filtered view on Child Detail. Approve/reject
 // buttons only render for an admin viewing a still-'proposed' job.
 function renderExtraJobCard(job, currency) {
-  const card = el('div', { class: 'booking-card' }, [
-    el('div', { class: 'row' }, [
-      el('div', {}, [
-        el('div', { style: 'font-weight:600;' }, job.description),
-        el('div', { class: 'muted' }, `${memberLabel(job.proposedBy)} · ${formatCents(job.amountCents, currency)}`),
+  const isWaiting = job.status === 'proposed';
+  const badgeClass = job.status === 'proposed' ? 'ca-badge--waiting' : job.status === 'paid' ? 'ca-badge--done' : 'ca-badge--idle';
+  const card = el('div', { class: `ca-card ${isWaiting && state.role === 'admin' ? 'ca-card--waiting' : ''}` }, [
+    el('div', { class: 'ca-row' }, [
+      el('div', { class: 'ca-row__grow' }, [
+        el('p', { class: 'ca-title' }, job.description),
+        el('p', { class: 'ca-meta' }, `${memberLabel(job.proposedBy)} · ${formatCents(job.amountCents, currency)}`),
         // "Earn it back" context (mockups/earn-it-back-mock.png) -- lets an
         // admin see, right on the approval card, which deduction this is
-        // meant to offset, without a separate ledger lookup.
-        job.relatedDeductionLedgerId ? el('div', { class: 'muted', style: 'font-size:0.78rem;color:var(--danger);' },
+        // meant to offset, without a separate ledger lookup. Amber, not
+        // red -- this is context, not a warning.
+        job.relatedDeductionLedgerId ? el('p', { class: 'ca-meta', style: 'color:var(--ca-wait-fg);' },
           `To earn back: ${job.relatedDeductionNote || 'a deduction'} (-${formatCents(job.relatedDeductionAmountCents || 0, currency)})`) : null,
       ]),
-      el('span', { class: `status-pill status-${job.status}` }, job.status),
+      el('span', { class: `ca-badge ${badgeClass}` }, job.status),
     ]),
   ]);
   if (state.role === 'admin' && job.status === 'proposed') {
-    const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
+    const actions = el('div', { class: 'ca-btn-row', style: 'margin-top:var(--ca-space-3);' });
     actions.appendChild(el('button', {
-      class: 'pill primary small',
+      type: 'button', class: 'ca-btn ca-btn--sm',
       onclick: () => withOptimisticStatus(job, 'status', 'approved', () => callApproveExtraJob({ jobId: job.id, approve: true })),
     }, 'Approve'));
     actions.appendChild(el('button', {
-      class: 'pill danger small',
+      type: 'button', class: 'ca-btn ca-btn--sm ca-btn--secondary',
       onclick: () => withOptimisticStatus(job, 'status', 'rejected', () => callApproveExtraJob({ jobId: job.id, approve: false })),
-    }, 'Reject'));
+    }, 'Send back'));
     card.appendChild(actions);
   }
   return card;
@@ -4002,125 +4153,124 @@ function renderMore() {
 // ---------------------------------------------------------------------
 // Admin Dashboard tab
 // ---------------------------------------------------------------------
+// Admin Home -- rebuilt per mockups/rebrand/choresapp-parent-restyle.html's
+// Screen 5: "The dashboard currently opens with four statistics, and none
+// of them is what a parent came to do... The thing a parent actually needs
+// is: is anything waiting on me?" That question now opens the screen;
+// the four old stat tiles collapse into one "This week" strip at the
+// bottom, and Quick actions is dropped entirely since three of its four
+// cards just duplicated the bottom nav (the fourth, the chore wizard,
+// moves to the Chores tab -- see renderActiveChores).
 function renderAdminDashboard() {
   const container = document.getElementById('page-admindashboard');
   container.innerHTML = '';
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
-
-  container.appendChild(el('div', { class: 'booking-card' }, [
-    el('div', { class: 'row', style: 'align-items:center;' }, [
-      el('div', {}, [
-        el('div', { class: 'muted' }, 'Family overview'),
-        el('div', { style: 'font-weight:700;' }, (state.family && state.family.name) || 'Your family'),
-        el('div', { class: 'muted' }, `${state.members.length} members`),
-      ]),
-      el('div', { class: 'entry-row-icon' }, svgIcon('people', { size: 20 })),
-    ]),
-  ]));
-
-  const totalInCirculation = state.members.reduce((sum, m) => sum + (m.balanceCents || 0), 0);
-  const weeklyBudget = state.members.filter((m) => m.role === 'child').reduce((sum, m) => sum + (m.baseWeeklyAllowanceCents || 0), 0);
   const children = state.members.filter((m) => m.role === 'child' && m.active !== false);
-  let totalDone = 0, totalItems = 0;
-  children.forEach((c) => {
-    const p = computeWeekProgressForMember(c.uid);
-    totalDone += p.done; totalItems += p.total;
-  });
-  const weekPct = totalItems === 0 ? 100 : Math.round((totalDone / totalItems) * 100);
 
-  container.appendChild(el('div', { class: 'stat-grid' }, [
-    el('div', { class: 'stat-tile' }, [
-      el('div', { class: 'stat-value' }, formatCents(totalInCirculation, currency)),
-      el('div', { class: 'stat-label' }, 'Total in circulation'),
-    ]),
-    el('div', { class: 'stat-tile' }, [
-      el('div', { class: 'stat-value' }, formatCents(weeklyBudget, currency)),
-      el('div', { class: 'stat-label' }, 'Weekly allowance budget'),
-    ]),
-    el('div', { class: 'stat-tile' }, [
-      el('div', { class: 'stat-value' }, `${weekPct}%`),
-      el('div', { class: 'stat-label' }, `This week: ${totalDone}/${totalItems} done`),
-    ]),
-    el('div', { class: 'stat-tile' }, [
-      el('div', { class: 'stat-value' }, String(state.chores.filter((c) => c.active !== false).length)),
-      el('div', { class: 'stat-label' }, 'Active chores'),
-    ]),
-  ]));
-
-  // Hot Streak Bonus summary (mockups/hot-streak-bonus-mock.png, ADR-0027)
-  // -- shows whichever child currently has one enabled (preferring the
-  // child last edited in Settings, so it stays consistent with where "Edit
-  // settings" lands); a one-tap entry point, the actual config lives
-  // entirely in Settings > Hot streak bonus.
-  const hotStreakChildren = state.members.filter((m) => m.role === 'child' && m.active !== false && m.hotStreakBonus && m.hotStreakBonus.enabled);
-  const hotStreakChild = hotStreakChildren.find((c) => c.uid === state.hotStreakSettingsChildUid) || hotStreakChildren[0] || null;
-  container.appendChild(el('div', { class: 'booking-card', style: 'cursor:pointer;margin-top:10px;', onclick: () => switchTab('settings') }, [
-    el('div', { class: 'row', style: 'align-items:center;' }, [
-      el('div', { style: 'display:flex;align-items:center;gap:12px;' }, [
-        el('div', { class: 'balance-tile-icon' }, svgIcon('flame', { size: 20 })),
-        hotStreakChild
-          ? el('div', {}, [
-              el('div', { style: 'font-weight:700;' }, 'Hot streak bonus'),
-              el('div', { class: 'muted' }, `${formatCents(hotStreakChild.hotStreakBonus.amountCents, currency)} weekly bonus`),
-              el('div', { class: 'muted' }, `${(hotStreakChild.hotStreakBonus.taskChoreIds || []).length} daily task${(hotStreakChild.hotStreakBonus.taskChoreIds || []).length === 1 ? '' : 's'} included`),
-            ])
-          : el('div', {}, [
-              el('div', { style: 'font-weight:700;' }, 'Hot streak bonus'),
-              el('div', { class: 'muted' }, 'Not set up yet'),
-            ]),
-      ]),
-      el('span', { class: 'muted', style: 'font-size:0.82rem;flex-shrink:0;' }, 'Edit settings ›'),
-    ]),
-  ]));
-
+  // ---- Waiting on you ----
   const familyNeedsReview = state.choreLog.filter((e) => e.status === 'done');
-  container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
-    el('h2', {}, 'Children'),
-    familyNeedsReview.length > 0 ? el('button', {
-      class: 'pill primary small', onclick: async (event) => {
-        event.target.disabled = true;
-        try { await approveAllChoreLogEntries(familyNeedsReview); } catch (err) { showAppAlert(err.message); }
-      },
-    }, `Approve all (${familyNeedsReview.length})`) : null,
-  ]));
-  if (children.length === 0) {
-    container.appendChild(el('div', { class: 'empty-state' }, 'No children added yet.'));
+  const pendingPayouts = state.payouts.filter((p) => p.status === 'pending');
+  const waitingCards = [];
+
+  if (familyNeedsReview.length > 0) {
+    const perChild = children
+      .map((c) => ({ c, count: familyNeedsReview.filter((e) => e.memberUid === c.uid).length }))
+      .filter((x) => x.count > 0);
+    waitingCards.push(el('div', {
+      class: 'ca-card ca-card--waiting', style: 'cursor:pointer;', onclick: () => switchTab('managechores'),
+    }, el('div', { class: 'ca-row' }, [
+      el('div', { class: 'ca-row__grow' }, [
+        el('p', { class: 'ca-title' }, `${familyNeedsReview.length} chore${familyNeedsReview.length === 1 ? '' : 's'} to review`),
+        el('p', { class: 'ca-meta' }, perChild.map((x) => `${memberLabel(x.c.uid)} ${x.count}`).join(' · ')),
+      ]),
+      el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);margin-top:3px;' }),
+    ])));
   }
+  if (pendingPayouts.length > 0) {
+    const total = pendingPayouts.reduce((s, p) => s + p.totalAmountCents, 0);
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const payoutDay = dayNames[(state.family && state.family.settings && state.family.settings.payoutDayOfWeek) ?? 5];
+    waitingCards.push(el('div', {
+      class: 'ca-card ca-card--waiting', style: 'cursor:pointer;', onclick: () => switchTab('kids'),
+    }, el('div', { class: 'ca-row' }, [
+      el('div', { class: 'ca-row__grow' }, [
+        el('p', { class: 'ca-title' }, "This week's payout"),
+        el('p', { class: 'ca-meta' }, `${formatCents(total, currency)} to ${pendingPayouts.length === 1 ? memberLabel(pendingPayouts[0].memberUid) : `${pendingPayouts.length} kids`} · ${payoutDay}`),
+      ]),
+      el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);margin-top:3px;' }),
+    ])));
+  }
+  if (waitingCards.length > 0) {
+    container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:0;' }, 'Waiting on you'));
+    waitingCards.forEach((c) => container.appendChild(c));
+  } else {
+    container.appendChild(el('div', { class: 'ca-card ca-card--quiet', style: 'text-align:center;' },
+      el('p', { class: 'ca-body', style: 'color:var(--ca-ink-3);' }, "Nothing waiting on you right now.")));
+  }
+
+  // ---- Kids ----
+  container.appendChild(el('p', { class: 'ca-section' }, 'Kids'));
+  if (children.length === 0) {
+    container.appendChild(el('div', { class: 'ca-empty' }, [
+      el('span', { class: 'ca-empty__icon' }, el('i', { class: 'ti ti-users' })),
+      el('p', { class: 'ca-empty__title' }, 'No children added yet'),
+    ]));
+  }
+  let totalDone = 0, totalItems = 0;
   children.forEach((child) => {
     const progress = computeWeekProgressForMember(child.uid);
-    const attentionCount = computeChildAttentionCount(child.uid);
-    container.appendChild(el('div', { class: 'booking-card', style: 'cursor:pointer;', onclick: () => openKid(child.uid) }, [
-      el('div', { class: 'row' }, [
-        el('div', { style: 'display:flex;align-items:center;gap:10px;' }, [
-          el('div', { class: 'avatar-circle' }, (child.displayName || child.email || '?').charAt(0).toUpperCase()),
-          el('div', {}, [
-            el('div', { style: 'font-weight:700;' }, child.displayName || child.email),
-            el('div', { class: 'muted' }, `${formatCents(child.balanceCents || 0, currency)} · ${progress.done}/${progress.total} done this week`),
-            attentionCount > 0 ? el('span', { class: 'status-pill status-done', style: 'margin-top:6px;display:inline-block;' }, `${attentionCount} to review`) : null,
-          ]),
-        ]),
-        renderProgressRing({
-          approvedCount: progress.done, pendingCount: progress.pendingCount, total: progress.total,
-          label: pctLabel(progress.done, progress.total), small: true,
-        }),
+    totalDone += progress.done; totalItems += progress.total;
+    const colorIdx = childColorIdx(child.uid);
+    container.appendChild(el('div', {
+      class: 'ca-card', style: 'cursor:pointer;', onclick: () => openKid(child.uid),
+    }, el('div', { class: 'ca-row' }, [
+      el('span', {
+        class: 'ca-avatar', style: `background:var(--ca-child-${colorIdx});color:var(--ca-child-${colorIdx}-ink);`,
+      }, (child.displayName || child.email || '?').charAt(0).toUpperCase()),
+      el('div', { class: 'ca-row__grow' }, [
+        el('p', { class: 'ca-title' }, child.displayName || child.email),
+        el('p', { class: 'ca-meta' }, `${progress.done} of ${progress.total} done this week`),
+        el('div', { class: 'ca-progress', style: 'margin-top:6px;' },
+          el('span', { style: `width:${progress.total === 0 ? 0 : Math.round((progress.done / progress.total) * 100)}%` })),
       ]),
-    ]));
+      el('p', { style: 'margin:0;font-weight:600;flex-shrink:0;' }, formatCents(child.balanceCents || 0, currency)),
+    ])));
   });
 
-  container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Quick actions'));
+  // ---- This week strip ----
+  const totalInCirculation = state.members.reduce((sum, m) => sum + (m.balanceCents || 0), 0);
+  const weeklyBudget = state.members.filter((m) => m.role === 'child').reduce((sum, m) => sum + (m.baseWeeklyAllowanceCents || 0), 0);
+  container.appendChild(el('p', { class: 'ca-section' }, 'This week'));
+  container.appendChild(el('div', { class: 'ca-card' }, el('div', { style: 'display:flex;text-align:center;' }, [
+    el('div', { style: 'flex:1;' }, [
+      el('p', { style: 'margin:0;font-size:var(--ca-text-lg);font-weight:600;' }, formatCents(totalInCirculation, currency)),
+      el('p', { class: 'ca-meta' }, 'Kids are holding'),
+    ]),
+    el('div', { style: 'flex:1;border-left:var(--ca-hairline);border-right:var(--ca-hairline);' }, [
+      el('p', { style: 'margin:0;font-size:var(--ca-text-lg);font-weight:600;' }, `${totalDone}/${totalItems}`),
+      el('p', { class: 'ca-meta' }, 'Chores done'),
+    ]),
+    el('div', { style: 'flex:1;' }, [
+      el('p', { style: 'margin:0;font-size:var(--ca-text-lg);font-weight:600;' }, formatCents(weeklyBudget, currency)),
+      el('p', { class: 'ca-meta' }, 'Weekly total'),
+    ]),
+  ])));
 
-  function quickActionBtn(iconKey, label, onclick) {
-    return el('button', { type: 'button', class: 'quick-action-btn outline', onclick }, [
-      el('div', { class: 'quick-action-icon' }, iconKey ? svgIcon(iconKey, { size: 18 }) : ''),
-      el('span', {}, label),
-    ]);
+  // ---- Hot streak bonus: a quiet line, not a nagging card (mockup: "'Not
+  // set up yet' in a full card will sit there permanently for anyone who
+  // doesn't want the feature") ----
+  const hotStreakChildren = state.members.filter((m) => m.role === 'child' && m.active !== false && m.hotStreakBonus && m.hotStreakBonus.enabled);
+  if (hotStreakChildren.length === 0) {
+    container.appendChild(el('button', {
+      type: 'button', class: 'ca-btn ca-btn--secondary ca-btn--block', style: 'margin-top:var(--ca-space-2);',
+      onclick: () => switchTab('settings'),
+    }, 'Set up hot streak bonus'));
+  } else {
+    const hotStreakChild = hotStreakChildren.find((c) => c.uid === state.hotStreakSettingsChildUid) || hotStreakChildren[0];
+    container.appendChild(el('p', {
+      class: 'ca-meta', style: 'text-align:center;margin-top:var(--ca-space-2);cursor:pointer;', onclick: () => switchTab('settings'),
+    }, [el('i', { class: 'ti ti-flame' }), ` Hot streak bonus on for ${memberLabel(hotStreakChild.uid)} · Edit in Settings`]));
   }
-  container.appendChild(el('div', { class: 'quick-action-grid' }, [
-    quickActionBtn('broom', 'Chore wizard', () => openChoreWizard()),
-    quickActionBtn('people', 'Manage kids', () => switchTab('kids')),
-    quickActionBtn('dollarCircle', 'Adjust money', () => switchTab('kids')),
-    quickActionBtn(null, 'View activity', () => switchTab('allactivity')),
-  ]));
 }
 
 // Sum of things awaiting an admin's action for one child: chores marked
@@ -4160,12 +4310,18 @@ function renderKids() {
   const chipRow = el('div', { class: 'day-tabs' });
   children.forEach((child) => {
     const attentionCount = computeChildAttentionCount(child.uid);
+    const colorIdx = childColorIdx(child.uid);
     chipRow.appendChild(el('button', {
       type: 'button',
       class: `day-chip${child.uid === selectedKidUid ? ' active' : ''}`,
       onclick: () => { selectedKidUid = child.uid; renderKids(); },
     }, [
-      el('div', { class: 'day-chip-date' }, child.displayName || child.email),
+      el('div', { class: 'day-chip-date' }, [
+        el('span', {
+          style: `display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:var(--ca-child-${colorIdx});`,
+        }),
+        child.displayName || child.email,
+      ]),
       attentionCount > 0 ? el('div', { class: 'day-chip-label' }, `${attentionCount} to review`) : null,
     ]));
   });
@@ -4185,21 +4341,21 @@ function renderKidDetailBody(container, uid) {
   }
 
   const progress = computeWeekProgressForMember(uid);
-  container.appendChild(el('div', { class: 'booking-card' }, [
-    el('div', { style: 'font-weight:700;font-size:1.1rem;' }, child.displayName || child.email),
-    el('div', { class: 'muted' }, formatCents(child.balanceCents || 0, currency)),
-    el('div', { style: 'margin-top:8px;' }, [
-      renderProgressRing({
-        approvedCount: progress.done, pendingCount: progress.pendingCount, total: progress.total,
-        label: pctLabel(progress.done, progress.total), sub: `${progress.done}/${progress.total} this week`,
-      }),
+  const colorIdx = childColorIdx(uid);
+  // The donut goes -- per mockups/rebrand/choresapp-parent-restyle.html's
+  // Screen 6: "62% and '8/13 this week' say the same thing twice, and a
+  // ring that size for a number this simple is a lot of screen. It becomes
+  // one line under the child's name."
+  container.appendChild(el('div', { class: 'ca-card' }, el('div', { class: 'ca-row' }, [
+    el('span', {
+      class: 'ca-avatar ca-avatar--lg', style: `background:var(--ca-child-${colorIdx});color:var(--ca-child-${colorIdx}-ink);`,
+    }, (child.displayName || child.email || '?').charAt(0).toUpperCase()),
+    el('div', { class: 'ca-row__grow' }, [
+      el('p', { class: 'ca-title' }, child.displayName || child.email),
+      el('p', { class: 'ca-meta' }, `${formatCents(child.balanceCents || 0, currency)} · ${progress.done} of ${progress.total} done this week`),
     ]),
-  ]));
-
-  container.appendChild(el('button', {
-    type: 'button', class: 'pill primary', style: 'width:100%;margin-bottom:10px;',
-    onclick: () => openRunWizard(uid),
-  }, `Assign chores for ${child.displayName || child.email}`));
+    renderKebabMenu([{ label: `Assign chores for ${child.displayName || child.email}`, onclick: () => openRunWizard(uid) }]),
+  ])));
 
   container.appendChild(makeExpandable('+ Sign-in method', renderCredentialManagementForm(child, uid)));
   container.appendChild(renderEditableAllowanceCard(child, currency));
@@ -4208,101 +4364,131 @@ function renderKidDetailBody(container, uid) {
     renderChoreForm({ presetChildUid: uid })
   ));
 
+  // One list grouped by state -- Waiting on you, Still to do, Done -- not a
+  // separate "Chores to review" queue plus a flat "This week's chores"
+  // list underneath (which repeated the same waiting entries in both
+  // places). Per the doc: "The five outstanding chores are now the first
+  // thing visible rather than the last. Completed work collapses."
   const needsReview = state.choreLog.filter((e) => e.status === 'done' && e.memberUid === uid);
-  if (needsReview.length > 0) {
-    container.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
-      el('h2', {}, 'Chores to review'),
-      el('button', {
-        class: 'pill primary small', onclick: () => approveAllChoreLogEntries(needsReview),
-      }, `Approve all (${needsReview.length})`),
-    ]));
-    needsReview.forEach((entry) => container.appendChild(renderChoreReviewCard(entry)));
-  }
+  const stillToDo = progress.items.filter((item) => !item.satisfied && !item.pending);
+  const done = progress.items.filter((item) => item.satisfied);
+  if (needsReview.length > 0 || progress.items.length > 0) {
+    container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:var(--ca-space-5);' }, `Waiting on you · ${needsReview.length}`));
+    if (needsReview.length > 0) {
+      needsReview.forEach((entry) => container.appendChild(renderChoreReviewCard(entry)));
+    } else {
+      container.appendChild(el('p', { class: 'ca-meta' }, 'Nothing waiting.'));
+    }
 
-  if (progress.items.length > 0) {
-    container.appendChild(el('h2', { style: 'margin-top:16px;' }, "This week's chores"));
-    progress.items.forEach((item) => {
-      const pillClass = item.satisfied ? 'status-approved' : item.pending ? 'status-done' : item.rejectedEntry ? 'status-rejected' : 'status-pending';
-      const pillLabel = item.satisfied ? 'done' : item.pending ? 'awaiting approval' : item.rejectedEntry ? 'rejected' : 'not yet';
-      container.appendChild(el('div', { class: 'booking-card' }, [
-        el('div', { class: 'row' }, [
-          el('div', { style: 'font-weight:600;' }, item.chore.name),
-          el('span', { class: `status-pill ${pillClass}` }, pillLabel),
-        ]),
-        (item.rejectedEntry && item.rejectedEntry.reviewNote) ? el('div', { class: 'muted' }, `You said: ${item.rejectedEntry.reviewNote}`) : null,
-      ]));
-    });
+    if (stillToDo.length > 0) {
+      container.appendChild(el('p', { class: 'ca-section' }, `Still to do · ${stillToDo.length}`));
+      stillToDo.forEach((item) => {
+        const card = el('div', { class: 'ca-card' }, el('div', { class: 'ca-row' }, [
+          el('i', { class: `ti ${item.rejectedEntry ? 'ti-refresh' : 'ti-circle'}`, style: 'color:var(--ca-ink-4);font-size:15px;' }),
+          el('div', { class: 'ca-row__grow' }, [
+            el('p', { class: 'ca-title' }, item.chore.name),
+            item.rejectedEntry && item.rejectedEntry.reviewNote
+              ? el('p', { class: 'ca-meta' }, `You said: ${item.rejectedEntry.reviewNote}`)
+              : (item.rejectedEntry ? el('span', { class: 'ca-badge ca-badge--redo' }, 'sent back') : null),
+          ]),
+        ]));
+        container.appendChild(card);
+      });
+    }
+
+    if (done.length > 0) {
+      container.appendChild(el('p', { class: 'ca-section' }, `Done · ${done.length}`));
+      const doneShowLimit = 2;
+      let doneExpanded = false;
+      const doneWrap = el('div', {});
+      function renderDoneWrap() {
+        doneWrap.innerHTML = '';
+        const visible = doneExpanded ? done : done.slice(0, doneShowLimit);
+        visible.forEach((item) => {
+          doneWrap.appendChild(el('div', { class: 'ca-card ca-card--muted' }, el('div', { class: 'ca-row' }, [
+            el('i', { class: 'ti ti-circle-check', style: 'color:var(--ca-positive);font-size:15px;' }),
+            el('p', { class: 'ca-title', style: 'color:var(--ca-ink-3);font-weight:500;' }, item.chore.name),
+          ])));
+        });
+        if (!doneExpanded && done.length > doneShowLimit) {
+          doneWrap.appendChild(el('p', { style: 'text-align:center;margin:var(--ca-space-2) 0 0;' },
+            el('button', {
+              type: 'button', class: 'ca-link', style: 'font-size:var(--ca-text-sm);',
+              onclick: () => { doneExpanded = true; renderDoneWrap(); },
+            }, `Show ${done.length - doneShowLimit} more`)));
+        }
+      }
+      renderDoneWrap();
+      container.appendChild(doneWrap);
+    }
   }
 
   const suggestedJobs = state.extraJobs.filter((j) => j.proposedBy === uid && j.status === 'proposed');
   if (suggestedJobs.length > 0) {
-    container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Extra jobs suggested'));
+    container.appendChild(el('p', { class: 'ca-section' }, 'Extra jobs suggested'));
     suggestedJobs.forEach((job) => container.appendChild(renderExtraJobCard(job, currency)));
   }
 
-  container.appendChild(el('button', {
-    type: 'button', class: 'entry-row', onclick: () => openAdjustMoneyModal(child),
-  }, [
-    el('div', { class: 'entry-row-icon' }, svgIcon('dollarCircle', { size: 20 })),
-    el('div', {}, [
-      el('div', { class: 'entry-row-title' }, 'Adjust money'),
-      el('div', { class: 'entry-row-sub' }, 'Add money or deduct for a reason'),
+  container.appendChild(el('div', {
+    class: 'ca-card', style: 'cursor:pointer;margin-top:var(--ca-space-4);', onclick: () => openAdjustMoneyModal(child),
+  }, el('div', { class: 'ca-row' }, [
+    el('i', { class: 'ti ti-coin', style: 'font-size:17px;color:var(--ca-green-700);' }),
+    el('div', { class: 'ca-row__grow' }, [
+      el('p', { class: 'ca-title' }, 'Adjust money'),
+      el('p', { class: 'ca-meta' }, 'Add money or deduct for a reason'),
     ]),
-    el('span', { class: 'entry-row-chevron' }, '›'),
-  ]));
+    el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);' }),
+  ])));
 
-  container.appendChild(el('h2', { style: 'margin-top:16px;' }, "This week's payout"));
+  container.appendChild(el('p', { class: 'ca-section' }, "This week's payout"));
   const payout = state.payouts.find((p) => p.memberUid === uid);
   if (!payout) {
-    container.appendChild(el('div', { class: 'empty-state' }, 'Not settled yet.'));
+    container.appendChild(el('p', { class: 'ca-meta' }, 'Not settled yet.'));
   } else {
-    const lines = (payout.actions || []).map((a) => el('div', { class: 'row' }, [
-      el('div', { class: 'muted' }, a.note || a.type.replace(/_/g, ' ')),
-      el('div', { class: `amount ${a.amountCents >= 0 ? 'positive' : 'negative'}` }, `${a.amountCents >= 0 ? '+' : ''}${formatCents(a.amountCents, currency)}`),
+    const lines = (payout.actions || []).map((a) => el('div', { class: 'ca-row', style: 'font-size:var(--ca-text-sm);color:var(--ca-ink-3);' }, [
+      el('span', { class: 'ca-row__grow' }, a.note || ledgerTypeLabel(a)),
+      el('span', {}, formatSignedCents(a.amountCents, currency)),
     ]));
-    const card = el('div', { class: 'booking-card' }, [
+    const card = el('div', { class: 'ca-card' }, [
       ...lines,
-      el('div', { class: 'row', style: 'margin-top:8px;font-weight:700;' }, [
-        el('div', {}, 'Total'),
-        el('div', { class: `amount ${payout.totalAmountCents >= 0 ? 'positive' : 'negative'}` }, formatCents(payout.totalAmountCents, currency)),
+      el('div', { class: 'ca-row', style: 'margin-top:var(--ca-space-2);padding-top:var(--ca-space-2);border-top:var(--ca-hairline);font-weight:700;' }, [
+        el('span', { class: 'ca-row__grow' }, 'Total'),
+        el('span', {}, formatCents(payout.totalAmountCents, currency)),
       ]),
     ]);
     if (payout.status === 'pending') {
-      const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
+      const actions = el('div', { class: 'ca-btn-row', style: 'margin-top:var(--ca-space-3);' });
       actions.appendChild(el('button', {
-        class: 'pill primary small',
+        type: 'button', class: 'ca-btn ca-btn--sm',
         onclick: async () => {
           try { await callApproveWeeklyPayout({ payoutId: payout.id }); } catch (err) { showAppAlert(err.message); }
         },
       }, 'Approve'));
       actions.appendChild(el('button', {
-        class: 'pill danger small',
+        type: 'button', class: 'ca-btn ca-btn--sm ca-btn--secondary',
         onclick: async () => {
           try { await callDeclineWeeklyPayout({ payoutId: payout.id }); } catch (err) { showAppAlert(err.message); }
         },
       }, 'Decline'));
       card.appendChild(actions);
     } else {
-      card.appendChild(el('span', { class: `status-pill status-${payout.status}` }, payout.status));
+      card.appendChild(el('span', { class: 'ca-badge ca-badge--done', style: 'margin-top:var(--ca-space-2);' }, payout.status));
     }
     container.appendChild(card);
   }
 
-  container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Recent activity'));
+  container.appendChild(el('p', { class: 'ca-section' }, 'Recent activity'));
   if (state.ledger.length === 0) {
-    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
+    container.appendChild(el('p', { class: 'ca-meta' }, 'No transactions yet.'));
   } else {
     state.ledger.forEach((tx) => {
-      const positive = tx.amountCents >= 0;
-      container.appendChild(el('div', { class: 'booking-card' }, [
-        el('div', { class: 'row' }, [
-          el('div', {}, [
-            el('div', {}, tx.note || tx.type),
-            el('div', { class: 'muted' }, tx.type.replace(/_/g, ' ')),
-          ]),
-          el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
+      container.appendChild(el('div', { class: 'ca-card' }, el('div', { class: 'ca-row' }, [
+        el('div', { class: 'ca-row__grow' }, [
+          el('p', { class: 'ca-title' }, tx.note || ledgerTypeLabel(tx)),
+          el('p', { class: 'ca-meta' }, tx.createdBy ? `Added by ${memberLabel(tx.createdBy)}` : ledgerTypeLabel(tx)),
         ]),
-      ]));
+        el('p', { style: `margin:0;font-weight:600;color:${tx.amountCents >= 0 ? 'var(--ca-positive)' : 'var(--ca-danger-fg)'};` }, formatSignedCents(tx.amountCents, currency)),
+      ])));
     });
   }
 }
@@ -4854,25 +5040,34 @@ function renderCredentialManagementForm(child, uid) {
 // Approve/reject card for one "done, awaiting review" chore-log entry --
 // shared by the global "Needs your review" queue below and the per-child
 // filtered view on Child Detail.
+// Shared by Manage Chores' family-wide queue and the Kids tab's per-child
+// one -- per mockups/rebrand/choresapp-parent-restyle.html's diagnosis
+// table: the accent strip (.ca-card--waiting) now means only "waiting on
+// you" (this is the one card type that gets it), the badge is amber and
+// lower-case rather than shouting blue caps, and Reject becomes "Send
+// back" -- rejecting is nearly always "not finished yet," not a verdict
+// that the child lied, and Send back names what actually happens while
+// leaving the door open. Approve leads as the primary button; Send back is
+// a quiet outline, not a second button competing for the same weight.
 function renderChoreReviewCard(entry) {
   const chore = state.chores.find((c) => c.id === entry.choreId);
-  const card = el('div', { class: 'booking-card warn' }, [
-    el('div', { class: 'row' }, [
-      el('div', {}, [
-        el('div', { style: 'font-weight:600;' }, chore ? chore.name : entry.choreId),
-        el('div', { class: 'muted' }, memberLabel(entry.memberUid)),
+  const card = el('div', { class: 'ca-card ca-card--waiting' }, [
+    el('div', { class: 'ca-row' }, [
+      el('div', { class: 'ca-row__grow' }, [
+        el('p', { class: 'ca-title' }, chore ? chore.name : entry.choreId),
+        el('p', { class: 'ca-meta' }, memberLabel(entry.memberUid)),
       ]),
-      el('span', { class: 'status-pill status-done' }, 'awaiting review'),
+      el('span', { class: 'ca-badge ca-badge--waiting' }, 'awaiting review'),
     ]),
   ]);
   if (entry.photoStoragePath) {
-    const slot = el('div', { class: 'muted' });
-    card.appendChild(el('button', { class: 'pill small', onclick: () => viewProof(entry.photoStoragePath, slot) }, 'View photo'));
+    const slot = el('div', { class: 'ca-meta' });
+    card.appendChild(el('button', { type: 'button', class: 'ca-btn ca-btn--sm ca-btn--secondary', style: 'margin-top:var(--ca-space-2);', onclick: () => viewProof(entry.photoStoragePath, slot) }, 'View photo'));
     card.appendChild(slot);
   }
-  const actions = el('div', { style: 'margin-top:8px;display:flex;gap:8px;' });
+  const actions = el('div', { class: 'ca-btn-row', style: 'margin-top:var(--ca-space-3);' });
   actions.appendChild(el('button', {
-    class: 'pill primary small',
+    type: 'button', class: 'ca-btn ca-btn--sm',
     onclick: () => withOptimisticStatus(entry, 'status', 'approved', async () => {
       const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
       await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
@@ -4881,14 +5076,14 @@ function renderChoreReviewCard(entry) {
     }),
   }, 'Approve'));
   actions.appendChild(el('button', {
-    class: 'pill danger small',
+    type: 'button', class: 'ca-btn ca-btn--sm ca-btn--secondary',
     onclick: () => withOptimisticStatus(entry, 'status', 'rejected', async () => {
       const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
       await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
         status: 'rejected', reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
       });
     }),
-  }, 'Reject'));
+  }, 'Send back'));
   card.appendChild(actions);
   return card;
 }
@@ -5378,28 +5573,64 @@ function renderEditAssignmentBody(chore, options = {}) {
 
 function renderActiveChores(container) {
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
-  container.appendChild(renderChoreForm());
 
+  // Review queue first, not the add-a-chore form -- per
+  // mockups/rebrand/choresapp-parent-restyle.html's Screen 1: "The review
+  // queue is the thing a parent opens the app to do... In the current
+  // build the form sits permanently at the top of the tab, pushing the
+  // queue below the fold." The form moves behind a button below.
   const needsReview = state.choreLog.filter((e) => e.status === 'done');
   if (needsReview.length > 0) {
-    container.appendChild(el('div', { class: 'row', style: 'align-items:center;' }, [
-      el('h2', {}, 'Needs your review'),
-      el('button', {
-        class: 'pill primary small', onclick: () => approveAllChoreLogEntries(needsReview),
-      }, `Approve all (${needsReview.length})`),
-    ]));
+    container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:0;' }, `Waiting on you · ${needsReview.length}`));
     needsReview.forEach((entry) => container.appendChild(renderChoreReviewCard(entry)));
+    // "Approve both" when it's exactly two, same reasoning as the mockup's
+    // own copy note -- naming the number is more reassuring than a generic
+    // bulk action, and it sits below the queue so it can't be hit before
+    // reading what's being approved.
+    container.appendChild(el('button', {
+      type: 'button', class: 'ca-btn ca-btn--secondary ca-btn--block', style: 'margin-bottom:var(--ca-space-4);',
+      onclick: () => approveAllChoreLogEntries(needsReview),
+    }, needsReview.length === 2 ? 'Approve both' : `Approve all (${needsReview.length})`));
   }
 
+  let addChoreOpen = false;
+  const addChoreWrap = el('div', {});
+  function renderAddChoreWrap() {
+    addChoreWrap.innerHTML = '';
+    if (!addChoreOpen) {
+      addChoreWrap.appendChild(el('button', {
+        type: 'button', class: 'ca-btn ca-btn--secondary ca-btn--block',
+        onclick: () => { addChoreOpen = true; renderAddChoreWrap(); },
+      }, [el('i', { class: 'ti ti-plus' }), ' Add a chore']));
+      // Per mockups/rebrand/choresapp-parent-restyle.html's Screen 5 note:
+      // "Chore wizard moves to the Chores tab where a parent looking to add
+      // chores will actually be" -- was a Dashboard "Quick actions" card,
+      // now lives next to the plain add-chore button it's an alternative to.
+      addChoreWrap.appendChild(el('p', {
+        style: 'text-align:center;font-size:var(--ca-text-sm);margin:var(--ca-space-2) 0 var(--ca-space-4);',
+      }, [
+        'or ',
+        el('button', { type: 'button', class: 'ca-link', onclick: () => openChoreWizard() }, 'use the setup wizard'),
+      ]));
+      return;
+    }
+    addChoreWrap.appendChild(renderChoreForm());
+  }
+  renderAddChoreWrap();
+  container.appendChild(addChoreWrap);
+
   if (state.chores.length === 0) {
-    container.appendChild(el('div', { class: 'empty-state' }, 'No chores yet.'));
+    container.appendChild(el('div', { class: 'ca-empty' }, [
+      el('span', { class: 'ca-empty__icon' }, el('i', { class: 'ti ti-list-check' })),
+      el('p', { class: 'ca-empty__title' }, 'No chores yet'),
+    ]));
     return;
   }
 
   ['dailyTask', 'chore'].forEach((cat) => {
     const chores = state.chores.filter((c) => (c.category || 'chore') === cat);
     if (chores.length === 0) return;
-    container.appendChild(el('h2', { style: 'margin-top:16px;' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
+    container.appendChild(el('p', { class: 'ca-section' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
     chores.forEach((chore) => {
       const mode = resolveAssignmentMode(chore);
       let assignedLabel;
@@ -5425,19 +5656,20 @@ function renderActiveChores(container) {
         assignedLabel += ` — +${formatCents(chore.bonusCents, currency)} bonus when done`;
       }
       if (mode === 'rotating') assignedLabel += ` · ${DIFFICULTY_LABELS[resolveDifficulty(chore)]}`;
-      const card = el('div', { class: 'booking-card' }, [
-        el('div', { class: 'row' }, [
-          el('div', {}, [
-            el('div', { style: 'font-weight:600;' }, [choreLabel(chore), chore.active === false ? ' (inactive)' : '']),
-            el('div', { class: 'muted' }, assignedLabel),
+      const card = el('div', { class: `ca-card${chore.active === false ? ' ca-card--muted' : ''}` }, [
+        el('div', { class: 'ca-row' }, [
+          el('div', { class: 'ca-row__grow' }, [
+            el('p', { class: 'ca-title' }, [choreLabel(chore), chore.active === false ? ' (inactive)' : '']),
+            el('p', { class: 'ca-meta' }, assignedLabel),
           ]),
-          el('button', {
-            class: 'pill small',
+          renderKebabMenu([{
+            label: chore.active === false ? 'Reactivate' : 'Deactivate',
+            danger: chore.active !== false,
             onclick: async () => {
               const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
               await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { active: chore.active === false });
             },
-          }, chore.active === false ? 'Reactivate' : 'Deactivate'),
+          }]),
         ]),
       ]);
       // Per-chore streak bonus retired (ADR-0027) -- see Settings > Hot
@@ -5556,38 +5788,63 @@ function renderChoreLibrary(container) {
 // ---------------------------------------------------------------------
 // All Activity tab (admin) -- every member's ledger + filter
 // ---------------------------------------------------------------------
+// Admin Money tab -- per mockups/rebrand/choresapp-parent-restyle.html's
+// Screen 3: "This screen is close to right already. The changes are mostly
+// restraint: the coloured circles beside every row do the same job as the
+// coloured amount on the right, so one of them goes [moneyLineIcon,
+// dropped]. Running balance is the number a parent and child actually
+// argue about, and it isn't currently shown anywhere on this screen"
+// [added below, as a balance card]. Child selection becomes tabs (two or
+// three kids is the normal case), not a dropdown built for a long list.
 function renderAllActivity() {
   const container = document.getElementById('page-allactivity');
   container.innerHTML = '';
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
-
-  const select = el('select', { onchange: (e) => subscribeLedger(e.target.value) });
-  state.members.forEach((m) => {
-    select.appendChild(el('option', { value: m.uid, selected: m.uid === state.ledgerViewUid ? 'selected' : null }, m.displayName || m.email));
-  });
-  container.appendChild(attachCustomSelect(select));
-
-  if (state.ledger.length === 0) {
-    container.appendChild(el('div', { class: 'empty-state' }, 'No transactions yet.'));
+  const children = state.members.filter((m) => m.role === 'child');
+  if (children.length > 0 && !children.some((c) => c.uid === state.ledgerViewUid)) {
+    subscribeLedger(children[0].uid);
     return;
   }
 
-  state.ledger.forEach((tx) => {
-    const positive = tx.amountCents >= 0;
-    const when = tx.createdAt && typeof tx.createdAt.toDate === 'function' ? relativeDateTimeLabel(tx.createdAt.toDate()) : '';
-    container.appendChild(el('div', { class: 'booking-card' }, [
-      el('div', { class: 'row', style: 'align-items:center;gap:10px;' }, [
-        moneyLineIcon(positive),
-        el('div', { style: 'flex:1;' }, [
-          el('div', { style: 'font-weight:600;' }, tx.note || tx.type.replace(/_/g, ' ')),
-          el('div', { class: 'muted' }, tx.type.replace(/_/g, ' ')),
-        ]),
-        el('div', { style: 'text-align:right;' }, [
-          el('div', { class: `amount ${positive ? 'positive' : 'negative'}` }, `${positive ? '+' : ''}${formatCents(tx.amountCents, currency)}`),
-          when ? el('div', { class: 'muted', style: 'font-size:0.72rem;' }, when) : null,
-        ]),
-      ]),
+  if (children.length > 1) {
+    container.appendChild(el('div', { class: 'ca-seg', style: 'margin-bottom:var(--ca-space-4);' }, children.map((m) => el('button', {
+      type: 'button', 'aria-selected': m.uid === state.ledgerViewUid ? 'true' : 'false',
+      onclick: () => subscribeLedger(m.uid),
+    }, m.displayName || m.email))));
+  }
+
+  const viewedChild = children.find((m) => m.uid === state.ledgerViewUid);
+  if (viewedChild) {
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const payoutDay = dayNames[(state.family && state.family.settings && state.family.settings.payoutDayOfWeek) ?? 5];
+    container.appendChild(el('div', { class: 'ca-card', style: 'text-align:center;padding:var(--ca-space-4);' }, [
+      el('p', { class: 'ca-meta' }, 'Balance'),
+      el('p', { style: 'margin:4px 0 0;font-size:var(--ca-text-xl);font-weight:600;letter-spacing:-.02em;' }, formatCents(viewedChild.balanceCents || 0, currency)),
+      el('p', { class: 'ca-meta' }, `Next payout ${payoutDay}`),
     ]));
+  }
+
+  if (state.ledger.length === 0) {
+    container.appendChild(el('div', { class: 'ca-empty' }, [
+      el('span', { class: 'ca-empty__icon' }, el('i', { class: 'ti ti-receipt' })),
+      el('p', { class: 'ca-empty__title' }, 'No transactions yet'),
+    ]));
+    return;
+  }
+
+  container.appendChild(el('p', { class: 'ca-section' }, 'Activity'));
+  state.ledger.forEach((tx) => {
+    const when = tx.createdAt && typeof tx.createdAt.toDate === 'function' ? relativeDateTimeLabel(tx.createdAt.toDate()) : '';
+    container.appendChild(el('div', { class: 'ca-card' }, el('div', { class: 'ca-row' }, [
+      el('div', { class: 'ca-row__grow' }, [
+        el('p', { class: 'ca-title' }, tx.note || ledgerTypeLabel(tx)),
+        el('p', { class: 'ca-meta' }, tx.createdBy ? `Added by ${memberLabel(tx.createdBy)}` : ledgerTypeLabel(tx)),
+      ]),
+      el('div', { class: 'ca-row__end' }, [
+        el('p', { style: `margin:0;font-weight:600;color:${tx.amountCents >= 0 ? 'var(--ca-positive)' : 'var(--ca-danger-fg)'};` }, formatSignedCents(tx.amountCents, currency)),
+        when ? el('p', { class: 'ca-meta' }, when) : null,
+      ]),
+    ])));
   });
 }
 
@@ -5813,45 +6070,61 @@ function renderParentCodeBody() {
   return wrap;
 }
 
+// Rebuilt per mockups/rebrand/choresapp-parent-restyle.html's Screen 4:
+// grouped by what a setting actually affects (family-wide / this device /
+// this account) rather than mixed together, with the parent's own name
+// moved here from the old header (see the .app-header/.ca-appbar rule) --
+// "Nobody thinks of themselves as an administrator of their own family,"
+// and a name label belongs where it's actually useful.
+//
+// The weekly-allowance-day picker is dropped rather than relabeled: it
+// writes settings.payoutDayOfWeek, but nothing in functions/lib/settlement.js
+// ever reads that field back -- payouts always run Friday evening,
+// unconditionally (see functions/lib/invites.js's payoutDayOfWeek: 5
+// default). Per the doc: "Either hide the setting until it works, or say
+// plainly that it's coming" -- hiding it is the honest option, since
+// showing it implies a working control.
 function renderSettings() {
   const container = document.getElementById('page-settings');
   container.innerHTML = '';
 
+  container.appendChild(el('div', { class: 'ca-card' }, el('div', { class: 'ca-row' }, [
+    el('span', {
+      class: 'ca-avatar', style: `background:var(--ca-wash);color:var(--ca-green-700);`,
+    }, ((state.member && state.member.displayName) || (state.user && state.user.email) || '?').charAt(0).toUpperCase()),
+    el('div', { class: 'ca-row__grow' }, [
+      el('p', { class: 'ca-title' }, (state.member && state.member.displayName) || (state.user && state.user.email) || ''),
+      el('p', { class: 'ca-meta' }, `Parent · ${(state.family && state.family.name) || 'Your family'}`),
+    ]),
+  ])));
+
+  container.appendChild(el('p', { class: 'ca-section' }, 'Family'));
+  const currencySelect = el('select', {}, ['EUR', 'USD', 'GBP'].map((c) => el('option', { value: c }, c)));
+  currencySelect.value = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+  currencySelect.addEventListener('change', async () => {
+    const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+    await updateDoc(fsDoc(db, `families/${state.familyId}`), {
+      settings: { ...(state.family.settings || {}), currency: currencySelect.value },
+    });
+  });
+  const currencyBody = el('div', {}, [el('label', {}, 'Currency'), attachCustomSelect(currencySelect)]);
+  container.appendChild(makeExpandable('Currency', currencyBody));
+  container.appendChild(makeExpandable('Hot streak bonus', renderHotStreakBonusBody()));
+  container.appendChild(makeExpandable('Family unlock code', renderParentCodeBody()));
+  container.appendChild(makeExpandable('Invite a parent', renderAddMemberForm()));
+
+  container.appendChild(el('p', { class: 'ca-section' }, 'This device'));
   const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
   container.appendChild(renderMoreToggle([svgIcon('moon', { size: 16 }), ' Dark mode'], currentTheme === 'dark', (checked) => {
     const next = checked ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', next);
     try { localStorage.setItem('choresAppTheme', next); } catch (e) {}
   }));
-
-  const settingsForm = el('form', { class: 'booking-card' });
-  const currencySelect = el('select', {}, ['EUR', 'USD', 'GBP'].map((c) => el('option', { value: c }, c)));
-  currencySelect.value = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
-  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const daySelect = el('select', {}, dayNames.map((d, i) => el('option', { value: String(i) }, d)));
-  daySelect.value = String((state.family && state.family.settings && state.family.settings.payoutDayOfWeek) ?? 5);
-  settingsForm.appendChild(el('label', {}, 'Currency'));
-  settingsForm.appendChild(attachCustomSelect(currencySelect));
-  settingsForm.appendChild(el('label', {}, 'Weekly allowance day'));
-  settingsForm.appendChild(attachCustomSelect(daySelect));
-  settingsForm.appendChild(el('div', { class: 'muted', style: 'margin-bottom:8px;' }, 'Saved for future use -- the automatic payout currently runs Friday evening for all families regardless of this setting.'));
-  settingsForm.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Save'));
-  settingsForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-    await updateDoc(fsDoc(db, `families/${state.familyId}`), {
-      settings: { ...(state.family.settings || {}), currency: currencySelect.value, payoutDayOfWeek: parseInt(daySelect.value, 10) },
-    });
-  });
-  container.appendChild(settingsForm);
-
-  container.appendChild(makeExpandable('Hot streak bonus', renderHotStreakBonusBody()));
-
-  container.appendChild(makeExpandable('Family unlock code', renderParentCodeBody()));
   renderNotificationSettingsButton(container);
-  container.appendChild(makeExpandable('Invite family member', renderAddMemberForm()));
-  container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; renderWizardStep(); }));
 
+  container.appendChild(el('p', { class: 'ca-section' }, 'Account'));
+  container.appendChild(renderMoreLink('Change password', () => showScreen('changePassword')));
+  container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; renderWizardStep(); }));
   container.appendChild(el('button', { class: 'signout-row', onclick: () => signOut(auth) }, 'Sign out'));
 }
 
@@ -6698,17 +6971,19 @@ function renderAddWizardStep() {
       content.appendChild(renderWizardOptionCard({
         icon: resolveIconPickerValue(chore.icon), title: chore.name, subtitle: chore.description || null,
         onclick: () => {
+          // No "(copy)" suffix -- per
+          // mockups/rebrand/choresapp-parent-restyle.html: "Chores named
+          // (copy) are reaching users. Duplicating should either prompt for
+          // a new name or auto-name it something a person would write."
+          // The plain source name IS something a person would write (e.g.
+          // "Make your bed" duplicated for a second kid), and the existing
+          // findDuplicateChoreForPool check below already blocks the one
+          // case that actually needs blocking: saving it unedited for the
+          // SAME child(ren) the original already covers.
           addWizard.draft = {
-            name: `${chore.name} (copy)`, icon: chore.icon || null, description: chore.description || '',
+            name: chore.name, icon: chore.icon || null, description: chore.description || '',
             frequency: chore.frequency || 'weekly', difficulty: resolveDifficulty(chore),
             mode: resolveAssignmentMode(chore) === 'rotating' && addWizard.category === 'dailyTask' ? 'eachMember' : resolveAssignmentMode(chore),
-            // Tracked so the assignment step below can catch the exact case
-            // this whole flow's name suggests -- duplicating a chore and
-            // saving it unedited, still literally "X (copy)", for the same
-            // kid(s) the original already covers. Cleared the moment the
-            // name is actually changed to something else, since that's a
-            // deliberate new chore, not an accidental redundant copy.
-            duplicateSourceId: chore.id, duplicateSourceName: chore.name,
           };
           addWizard.screen = 'configure'; addWizard.step = 1; renderAdminWizardStep();
         },
@@ -6868,12 +7143,6 @@ function renderAddWizardStep() {
         onclick: () => {
           if (!nameInput.value.trim()) { showAppAlert(`Give this ${addWizardCategoryLabel()} a name first.`); return; }
           addWizard.draft = {
-            // Carried through from the duplicate-pick step, if this draft
-            // came from "Duplicate" rather than "Create custom" -- this
-            // screen replaces the whole draft object, so these would
-            // otherwise be silently dropped before the assignment step's
-            // unedited-copy check ever sees them.
-            duplicateSourceId: addWizard.draft.duplicateSourceId, duplicateSourceName: addWizard.draft.duplicateSourceName,
             name: nameInput.value.trim(), icon: iconInput.value.trim() || null, description: descInput.value.trim(),
             frequency: frequencySelect.value, difficulty: difficultySelect ? difficultySelect.value : 'medium', mode: modeSelect.value,
             ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
@@ -6915,19 +7184,6 @@ function renderAddWizardStep() {
             errorEl.textContent = `"${dup.name}" already exists for one of these children -- edit that one instead of adding a second copy.`;
             errorEl.hidden = false;
             return;
-          }
-          // The name-based check above can't catch a duplicated chore
-          // that's still literally "X (copy)" -- that name never equals
-          // "X", so it never matches. Catch it here instead, by pool
-          // overlap with the actual source chore, whatever its name.
-          if (draft.duplicateSourceId && draft.name.trim() === `${draft.duplicateSourceName} (copy)`) {
-            const source = state.chores.find((c) => c.id === draft.duplicateSourceId && c.active !== false);
-            const sourcePool = source ? resolvePool(source, activeChildUids()) : [];
-            if (source && pool.some((uid) => sourcePool.includes(uid))) {
-              errorEl.textContent = `This is still an unedited copy of "${source.name}" for the same child(ren) -- rename it to something different, or edit "${source.name}" directly instead of duplicating it.`;
-              errorEl.hidden = false;
-              return;
-            }
           }
           try {
             const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
