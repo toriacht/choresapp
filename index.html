@@ -1082,17 +1082,25 @@ function resolveEffectiveAssignee(chore, acceptedSwapsThisWeek) {
   const swap = (acceptedSwapsThisWeek || []).find((s) => s.choreId === chore.id && s.proposedBy === base);
   return swap ? swap.targetUid : base;
 }
-// See ADR-0029. Same infer-don't-migrate pattern as resolveAssignmentMode
-// above -- a chore with no (or an unrecognized) difficulty reads as medium.
-const DIFFICULTY_WEIGHTS = { easy: 1, medium: 2, hard: 3 };
-function resolveDifficulty(chore) {
-  return DIFFICULTY_WEIGHTS[chore.difficulty] ? chore.difficulty : 'medium';
+// See ADR-0029 (rotation fairness) and ADR-0037 (points-weighted payouts,
+// which renamed this from "difficulty" to "size" -- same weights, and now
+// also feeds what a chore is worth in euro, not just whose turn it is).
+// Same infer-don't-migrate pattern as resolveAssignmentMode above -- a
+// chore with no (or an unrecognized) size reads as medium, and a chore
+// still holding the old `difficulty` field maps to its size equivalent
+// rather than being migrated.
+const SIZE_WEIGHTS = { small: 1, medium: 2, large: 3 };
+const LEGACY_DIFFICULTY_TO_SIZE = { easy: 'small', medium: 'medium', hard: 'large' };
+function resolveSize(chore) {
+  if (SIZE_WEIGHTS[chore.size]) return chore.size;
+  if (LEGACY_DIFFICULTY_TO_SIZE[chore.difficulty]) return LEGACY_DIFFICULTY_TO_SIZE[chore.difficulty];
+  return 'medium';
 }
-function resolveDifficultyWeight(chore) {
-  return DIFFICULTY_WEIGHTS[resolveDifficulty(chore)];
+function resolveSizeWeight(chore) {
+  return SIZE_WEIGHTS[resolveSize(chore)];
 }
-const DIFFICULTY_LABELS = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
-// See ADR-0033 / functions/lib/missedChores.js's isInstanceSatisfied --
+const SIZE_LABELS = { small: 'Small', medium: 'Medium', large: 'Large' };
+// See ADR-0033 / functions/lib/settlement.js's computeChoreInstanceCredit --
 // mirrors the server's "how many approved entries this week does this
 // chore need" client-side for display. 1 for every frequency except
 // 'timesPerWeek', so this is a pure generalization of the old any-single-
@@ -1122,6 +1130,100 @@ function computeCurrentStreak({ choreId, executingUid: ownerUid, choreLogEntries
     streak = approved ? streak + 1 : 0;
   }
   return streak;
+}
+
+// ---- Client-side mirror of functions/lib/choreLog.js's
+// resolveChoreDueDateIds / resolveInstanceExpiryDateId and
+// functions/lib/settlement.js's computeChoreInstanceCredit /
+// computeWeeklyPointsForMember (ADR-0037) -- display-only, used to project
+// this week's still-changing proportional payout ratio before settlement
+// has actually run (see computePendingPaymentLines). Deliberately omits
+// settlement.js's Wrinkle-A deactivated-once-chore fallback: a chore
+// that's already vanished from state.chores can't be reconstructed for a
+// live projection anyway, and settlement itself (the only place money is
+// actually decided) still applies that fallback for real.
+function resolveChoreDueDateIds(chore, weekDateIds) {
+  if (chore.category === 'dailyTask') return [];
+  if (chore.frequency === 'occasional') return [];
+  if (chore.frequency === 'daily') return weekDateIds.slice();
+  if (chore.frequency === 'custom') {
+    const days = new Set(chore.scheduledDays || []);
+    return weekDateIds.filter((_, idx) => days.has(idx + 1));
+  }
+  if (chore.frequency === 'timesPerWeek') {
+    const count = Math.max(1, chore.timesPerWeekCount || 1);
+    return Array(count).fill(weekDateIds[weekDateIds.length - 1]);
+  }
+  return [weekDateIds[weekDateIds.length - 1]];
+}
+function resolveInstanceExpiryDateId(chore, dueDateId, weekDateIds) {
+  const sameDayOnly = chore.category === 'dailyTask' || chore.frequency === 'daily';
+  return sameDayOnly ? dueDateId : weekDateIds[weekDateIds.length - 1];
+}
+function computeChoreInstanceCredit({ chore, dueDateIds, weekDateIds, approvedEntryDateIds }) {
+  const weight = resolveSizeWeight(chore);
+  const dateScoped = chore.frequency === 'daily' || chore.frequency === 'custom';
+  if (!dateScoped) {
+    const earnedCount = Math.min(approvedEntryDateIds.length, dueDateIds.length);
+    return { possible: dueDateIds.length * weight, earned: earnedCount * weight };
+  }
+  const sortedDue = dueDateIds.slice().sort();
+  const available = approvedEntryDateIds.slice().sort();
+  const used = new Array(available.length).fill(false);
+  let earnedCount = 0;
+  for (const dueDateId of sortedDue) {
+    const expiryDateId = resolveInstanceExpiryDateId(chore, dueDateId, weekDateIds);
+    const idx = available.findIndex((d, i) => !used[i] && d >= dueDateId && d <= expiryDateId);
+    if (idx !== -1) { used[idx] = true; earnedCount++; }
+  }
+  return { possible: sortedDue.length * weight, earned: earnedCount * weight };
+}
+function resolveApprovedEntryDateIdsForMember({ chore, memberUid, mode, pool, weekSwaps, daySwaps }) {
+  if (mode === 'sharedAny') {
+    return state.choreLog
+      .filter((e) => e.choreId === chore.id && e.status === 'approved' && pool.includes(e.memberUid))
+      .map((e) => e.dateId || chore.id);
+  }
+  if (mode === 'eachMember') {
+    const dateScoped = chore.frequency === 'daily' || chore.frequency === 'custom';
+    return state.choreLog
+      .filter((e) => {
+        if (e.choreId !== chore.id || e.status !== 'approved') return false;
+        const executingUid = dateScoped ? resolveEffectiveAssigneeForDate(chore.id, memberUid, e.dateId, daySwaps) : memberUid;
+        return e.memberUid === executingUid;
+      })
+      .map((e) => e.dateId || chore.id);
+  }
+  const executingUid = resolveEffectiveAssignee(chore, weekSwaps);
+  return state.choreLog
+    .filter((e) => e.choreId === chore.id && e.status === 'approved' && e.memberUid === executingUid)
+    .map((e) => e.dateId || chore.id);
+}
+function computeWeeklyPointsForMember(memberUid) {
+  const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+  const pool0 = activeChildUids();
+  const weekSwaps = state.choreSwaps.filter((s) => s.status === 'accepted' && !s.dateId);
+  const daySwaps = acceptedDaySwaps();
+  let possible = 0;
+  let earned = 0;
+
+  state.chores.forEach((chore) => {
+    if (chore.active === false || chore.category === 'dailyTask') return;
+    const mode = resolveAssignmentMode(chore);
+    const pool = (mode === 'sharedAny' || mode === 'eachMember') ? resolvePool(chore, pool0) : null;
+    const isAssigned = pool ? pool.includes(memberUid) : resolveBaseAssignee(chore) === memberUid;
+    if (!isAssigned) return;
+
+    const dueDateIds = resolveChoreDueDateIds(chore, weekDateIds);
+    if (dueDateIds.length === 0) return;
+
+    const approvedEntryDateIds = resolveApprovedEntryDateIdsForMember({ chore, memberUid, mode, pool, weekSwaps, daySwaps });
+    const credit = computeChoreInstanceCredit({ chore, dueDateIds, weekDateIds, approvedEntryDateIds });
+    possible += credit.possible;
+    earned += credit.earned;
+  });
+
+  return { possible, earned };
 }
 
 // ---- Same synthetic-email construction as functions/lib/invites.js, so a
@@ -3107,22 +3209,21 @@ function choreLabel(chore) {
 // + today progress rings, a status-only list. All marking-done/swapping
 // happens on the Chores tab instead; tapping an item here deep-links there.
 // ---------------------------------------------------------------------
-// One line for whether this member is on track for the week's Hot Streak
-// Bonus (ADR-0027) -- one all-or-nothing
-// line, not per-chore, since the bonus itself is a single per-child flat
-// amount covering every selected task. Only shown while the week is still
-// perfect so far (every elapsed day fully done) -- once a day's broken it
-// stops being a safe "pending" projection (it CAN still be won back by a
-// late approval, but that's no longer guaranteed, so it's not listed as
-// pending money until it's re-earned).
+// One pro-rated line for the week's Hot Streak Bonus (ADR-0037 -- replaced
+// ADR-0027's all-or-nothing cliff with a restart-capable, pro-rated
+// amount). summary.streak is already the longest run of fully-qualified
+// days trailing back from today (or yesterday if today isn't decided yet,
+// same "don't zero out before the day is over" grace computeHotStreakSummary
+// always used) -- exactly the live, as-of-now equivalent of what
+// functions/lib/hotStreakBonus.js's computeHotStreakLongestTrailingRun
+// would find if settlement ran this instant, so no separate run-length walk
+// is needed here.
 function computePendingStreakBonusLines(memberUid) {
   const summary = computeHotStreakSummary(memberUid);
   if (!summary || summary.amountCents <= 0) return [];
-  const todayIdx = summary.weekDateIds.indexOf(summary.todayDateId);
-  const elapsed = summary.weekDateIds.slice(0, todayIdx + 1);
-  const onTrack = elapsed.length > 0 && elapsed.every((dateId) => summary.hitDateIds.has(dateId));
-  if (!onTrack) return [];
-  return [{ label: 'Hot streak bonus (on track)', cents: summary.amountCents }];
+  const projectedCents = Math.round(summary.amountCents * (summary.streak / 7));
+  if (projectedCents <= 0) return [];
+  return [{ label: `Hot streak bonus — ${summary.streak}/7 days`, cents: projectedCents }];
 }
 
 function pctLabel(approved, total) {
@@ -3173,13 +3274,21 @@ function computePendingPaymentLines(memberUid, member) {
     alreadySettled = true;
   } else {
     // Settlement hasn't run for this week yet -- a live, still-changing
-    // projection of what it WOULD compute right now. Base is unconditional
-    // (see ADR-0026, superseding ADR-0024's done/total proration) -- missed
-    // chores show up as their own separate, already-immediate
-    // missed_chore_deduction ledger lines instead, not a shrunken base.
+    // projection of what it WOULD compute right now. Base is proportional
+    // to points earned vs. possible so far this week (see ADR-0037, which
+    // replaced ADR-0026's unconditional-base-plus-automatic-deduction
+    // model) -- a child with nothing assigned (possible === 0) still
+    // projects their full base, mirroring computeSettlementActions.
     const fullBaseCents = member ? member.baseWeeklyAllowanceCents || 0 : 0;
     if (fullBaseCents > 0) {
-      baseLine = { label: 'Weekly allowance', cents: fullBaseCents, pending: true };
+      const { possible, earned } = computeWeeklyPointsForMember(memberUid);
+      const amountCents = possible > 0 ? Math.round((earned / possible) * fullBaseCents) : fullBaseCents;
+      if (amountCents > 0) {
+        baseLine = {
+          label: possible > 0 ? `Weekly allowance — ${earned}/${possible} points` : 'Weekly allowance',
+          cents: amountCents, pending: true,
+        };
+      }
     }
     extraLines = computePendingStreakBonusLines(memberUid).map((l) => ({ label: l.label, cents: l.cents, pending: true }));
   }
@@ -3265,9 +3374,10 @@ function moneyLineIcon(positive) {
 // do an extra task to offset a deduction, right from the activity line it
 // hit them on. Eligible deductions are manual ones only: type:'deduction'
 // (the admin's "not to do" catalog) and negative manual_adjustment debits.
-// missed_chore_deduction is NOT offered here -- it already has its own
-// automatic reversal via late chore completion (ADR-0026), no separate
-// request/approval round-trip needed.
+// missed_chore_deduction no longer exists as a ledger line at all (see
+// ADR-0037) -- a missed chore just earns fewer points toward the
+// proportional weekly allowance instead of triggering a separate immediate
+// deduction, so there's nothing of that type left to offer this flow for.
 //
 // Deliberately reuses the exact same extraJobs collection/lifecycle as
 // every other extra job -- an admin approving one pays immediately (see
@@ -5289,10 +5399,10 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     el('option', { value: 'eachMember' }, 'Everyone does their own'),
   ]);
   const frequencySelect = renderFrequencySelect();
-  const difficultySelect = el('select', {}, [
-    el('option', { value: 'easy' }, 'Easy'),
+  const sizeSelect = el('select', {}, [
+    el('option', { value: 'small' }, 'Small'),
     el('option', { value: 'medium', selected: 'selected' }, 'Medium'),
-    el('option', { value: 'hard' }, 'Hard'),
+    el('option', { value: 'large' }, 'Large'),
   ]);
 
   // Only shown for frequency:'custom' -- see ADR-0026. ISO weekday numbers
@@ -5400,10 +5510,10 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   form.appendChild(scheduledDaysWrap);
   form.appendChild(timesPerWeekWrap);
   form.appendChild(bonusWrap);
-  form.appendChild(el('label', {}, 'Difficulty'));
-  form.appendChild(attachCustomSelect(difficultySelect));
+  form.appendChild(el('label', {}, 'Size'));
+  form.appendChild(attachCustomSelect(sizeSelect));
   form.appendChild(el('div', { class: 'muted', style: 'margin:-4px 0 10px;font-size:0.78rem;' },
-    'Harder chores count for more when we balance whose turn it is.'));
+    'Bigger chores count for more -- both when we balance whose turn it is, and toward how much of the allowance they earn.'));
   form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add chore'));
 
   form.addEventListener('submit', async (event) => {
@@ -5448,7 +5558,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       ...(frequencySelect.value === 'custom' ? { scheduledDays } : {}),
       ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
       ...(frequencySelect.value === 'occasional' ? { bonusCents: centsFromMajorUnits(bonusInput.value) } : {}),
-      difficulty: difficultySelect.value,
+      size: sizeSelect.value,
       active: true,
       createdBy: state.user.uid,
       createdAt: serverTimestamp(),
@@ -5456,7 +5566,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     });
     nameInput.value = ''; iconInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly';
     categorySelect.value = 'chore'; modeSelect.value = 'fixed'; dailyRequirementCb.checked = false;
-    difficultySelect.value = 'medium'; timesPerWeekSelect.value = '2'; bonusInput.value = '';
+    sizeSelect.value = 'medium'; timesPerWeekSelect.value = '2'; bonusInput.value = '';
     dayButtons.forEach((b) => b.classList.remove('primary'));
     if (applyToAllCb) applyToAllCb.checked = false;
     updateModeOptionsForCategory(modeSelect, categorySelect);
@@ -5466,7 +5576,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   return form;
 }
 
-// Post-creation edit UI (ADR-0029) -- difficulty is a simple direct write;
+// Post-creation edit UI (ADR-0029) -- size is a simple direct write;
 // assignment mode/pool changes follow the transition rules below, mirroring
 // the creation form's own rotation-seeding logic (renderChoreForm) so a
 // chore edited into 'rotating' behaves identically to one created that way.
@@ -5522,22 +5632,22 @@ function computeAssignmentUpdatePayload(chore, newMode, newAssignedTo) {
 function renderEditAssignmentBody(chore, options = {}) {
   const wrap = el('div', {});
 
-  const difficultySelect = el('select', {}, [
-    el('option', { value: 'easy' }, 'Easy'),
+  const sizeSelect = el('select', {}, [
+    el('option', { value: 'small' }, 'Small'),
     el('option', { value: 'medium' }, 'Medium'),
-    el('option', { value: 'hard' }, 'Hard'),
+    el('option', { value: 'large' }, 'Large'),
   ]);
-  difficultySelect.value = resolveDifficulty(chore);
-  const saveDifficultyBtn = el('button', { type: 'button', class: 'pill primary small' }, 'Save');
-  saveDifficultyBtn.addEventListener('click', async () => {
-    saveDifficultyBtn.disabled = true;
+  sizeSelect.value = resolveSize(chore);
+  const saveSizeBtn = el('button', { type: 'button', class: 'pill primary small' }, 'Save');
+  saveSizeBtn.addEventListener('click', async () => {
+    saveSizeBtn.disabled = true;
     try {
       const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-      await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { difficulty: difficultySelect.value });
-    } catch (err) { showAppAlert(err.message); } finally { saveDifficultyBtn.disabled = false; }
+      await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { size: sizeSelect.value });
+    } catch (err) { showAppAlert(err.message); } finally { saveSizeBtn.disabled = false; }
   });
   wrap.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-bottom:14px;' }, [
-    el('label', { style: 'margin:0;' }, 'Difficulty'), attachCustomSelect(difficultySelect), saveDifficultyBtn,
+    el('label', { style: 'margin:0;' }, 'Size'), attachCustomSelect(sizeSelect), saveSizeBtn,
   ]));
 
   const modeSelect = el('select', {}, [
@@ -5694,7 +5804,7 @@ function renderActiveChores(container) {
       if (chore.frequency === 'occasional' && chore.bonusCents > 0) {
         assignedLabel += ` — +${formatCents(chore.bonusCents, currency)} bonus when done`;
       }
-      if (mode === 'rotating') assignedLabel += ` · ${DIFFICULTY_LABELS[resolveDifficulty(chore)]}`;
+      if (mode === 'rotating') assignedLabel += ` · ${SIZE_LABELS[resolveSize(chore)]}`;
       const card = el('div', { class: `ca-card${chore.active === false ? ' ca-card--muted' : ''}` }, [
         el('div', { class: 'ca-row' }, [
           el('div', { class: 'ca-row__grow' }, [
@@ -5775,7 +5885,7 @@ function renderActiveChores(container) {
           el('label', { style: 'margin:0;' }, 'Bonus'), editBonusInput, saveBonusBtn,
         ]));
       }
-      // Post-creation editing (ADR-0029) -- difficulty, assignment mode,
+      // Post-creation editing (ADR-0029) -- size, assignment mode,
       // and the pool used to only be creation-time-only; collapsed by
       // default (makeExpandable) since most chore cards never need this.
       card.appendChild(makeExpandable('Edit assignment', renderEditAssignmentBody(chore)));
@@ -6998,7 +7108,7 @@ function renderAddWizardStep() {
     card.appendChild(renderWizardOptionCard({
       icon: 'plus', title: 'Create custom', subtitle: `Add a completely new ${addWizardCategoryLabel()}`,
       onclick: () => {
-        addWizard.draft = { name: '', icon: null, description: '', frequency: addWizard.category === 'dailyTask' ? 'daily' : 'weekly', difficulty: 'medium', mode: addWizard.category === 'dailyTask' ? 'eachMember' : 'rotating' };
+        addWizard.draft = { name: '', icon: null, description: '', frequency: addWizard.category === 'dailyTask' ? 'daily' : 'weekly', size: 'medium', mode: addWizard.category === 'dailyTask' ? 'eachMember' : 'rotating' };
         addWizard.screen = 'configure'; addWizard.step = 1; renderAdminWizardStep();
       },
     }));
@@ -7027,7 +7137,7 @@ function renderAddWizardStep() {
           // SAME child(ren) the original already covers.
           addWizard.draft = {
             name: chore.name, icon: chore.icon || null, description: chore.description || '',
-            frequency: chore.frequency || 'weekly', difficulty: resolveDifficulty(chore),
+            frequency: chore.frequency || 'weekly', size: resolveSize(chore),
             mode: resolveAssignmentMode(chore) === 'rotating' && addWizard.category === 'dailyTask' ? 'eachMember' : resolveAssignmentMode(chore),
           };
           addWizard.screen = 'configure'; addWizard.step = 1; renderAdminWizardStep();
@@ -7104,7 +7214,7 @@ function renderAddWizardStep() {
             category: addWizard.category, assignmentMode: payload.assignmentMode, assignedTo: payload.assignedTo,
             ...(payload.rotation ? { rotation: payload.rotation } : {}),
             frequency: addWizard.category === 'dailyTask' ? 'daily' : 'weekly',
-            difficulty: 'medium', active: true, createdBy: state.user.uid,
+            size: 'medium', active: true, createdBy: state.user.uid,
             createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
           });
         }
@@ -7160,14 +7270,14 @@ function renderAddWizardStep() {
       bonusWrap.hidden = frequencySelect.value !== 'occasional';
     });
 
-    let difficultySelect = null;
+    let sizeSelect = null;
     if (addWizard.category !== 'dailyTask') {
-      difficultySelect = el('select', {}, [
-        el('option', { value: 'easy' }, 'Easy'), el('option', { value: 'medium' }, 'Medium'), el('option', { value: 'hard' }, 'Hard'),
+      sizeSelect = el('select', {}, [
+        el('option', { value: 'small' }, 'Small'), el('option', { value: 'medium' }, 'Medium'), el('option', { value: 'large' }, 'Large'),
       ]);
-      difficultySelect.value = draft.difficulty;
-      card.appendChild(el('label', {}, 'Difficulty'));
-      card.appendChild(attachCustomSelect(difficultySelect));
+      sizeSelect.value = draft.size;
+      card.appendChild(el('label', {}, 'Size'));
+      card.appendChild(attachCustomSelect(sizeSelect));
     }
 
     const modeSelect = el('select', {}, [
@@ -7189,7 +7299,7 @@ function renderAddWizardStep() {
           if (!nameInput.value.trim()) { showAppAlert(`Give this ${addWizardCategoryLabel()} a name first.`); return; }
           addWizard.draft = {
             name: nameInput.value.trim(), icon: iconInput.value.trim() || null, description: descInput.value.trim(),
-            frequency: frequencySelect.value, difficulty: difficultySelect ? difficultySelect.value : 'medium', mode: modeSelect.value,
+            frequency: frequencySelect.value, size: sizeSelect ? sizeSelect.value : 'medium', mode: modeSelect.value,
             ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
             ...(frequencySelect.value === 'occasional' ? { bonusCents: centsFromMajorUnits(bonusInput.value) } : {}),
           };
@@ -7237,7 +7347,7 @@ function renderAddWizardStep() {
               name: draft.name, icon: draft.icon, description: draft.description,
               category: addWizard.category, assignmentMode: payload.assignmentMode, assignedTo: payload.assignedTo,
               ...(payload.rotation ? { rotation: payload.rotation } : {}),
-              frequency: draft.frequency, difficulty: draft.difficulty,
+              frequency: draft.frequency, size: draft.size,
               ...(draft.frequency === 'timesPerWeek' ? { timesPerWeekCount: draft.timesPerWeekCount } : {}),
               ...(draft.frequency === 'occasional' ? { bonusCents: draft.bonusCents || 0 } : {}),
               active: true, createdBy: state.user.uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
