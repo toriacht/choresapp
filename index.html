@@ -655,9 +655,11 @@
 
       <!-- ============ Kid: step 1, username ============ -->
       <form id="kidUsernameStep" hidden>
+        <div id="kidUsernameChips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:var(--ca-space-3);" hidden></div>
         <div class="ca-field">
           <label class="ca-label" for="kidUsernameInput">Your username</label>
-          <input class="ca-input" id="kidUsernameInput" type="text" placeholder="e.g. saoirse" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="username" required />
+          <input class="ca-input" id="kidUsernameInput" type="text" placeholder="name.familyname" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="username" required />
+          <p class="ca-meta" id="kidUsernameHelp" style="margin-top:4px;">Looks like sam.murphys — a parent can tell you yours.</p>
         </div>
         <button class="ca-btn ca-btn--block" type="submit">Next</button>
         <p class="ca-signin-trust">Forgotten your username or PIN? Ask a parent to reset it for you.</p>
@@ -992,6 +994,7 @@ const callCheckEmailSignInMethod = httpsCallable(functions, 'checkEmailSignInMet
 const callClaimInviteIfVerified = httpsCallable(functions, 'claimInviteIfVerified');
 const callCheckPendingInvite = httpsCallable(functions, 'checkPendingInvite');
 const callSwitchChildCredential = httpsCallable(functions, 'switchChildCredential');
+const callRenameChildUsername = httpsCallable(functions, 'renameChildUsername');
 
 // ---- Same ISO-week algorithm as functions/lib/choreLog.js:getIsoWeekId,
 // duplicated here (not shared code -- this is a zero-build static frontend)
@@ -1232,6 +1235,38 @@ function computeWeeklyPointsForMember(memberUid) {
 const CHILD_ACCOUNT_DOMAIN = 'childaccounts.choresapp.internal';
 function usernameToSyntheticEmail(username) {
   return `${String(username || '').trim().toLowerCase()}@${CHILD_ACCOUNT_DOMAIN}`;
+}
+
+// ---- Same compound-username generation as functions/lib/invites.js
+// (mockups/rebrand/choresapp-child-signin-spec.html) -- duplicated here so
+// the "Add a kid" screens can show/validate a candidate the instant a
+// parent types a name, with no round trip. The server (addFamilyMember/
+// renameChildUsername) stays authoritative on whether a given string is
+// actually still available.
+const RESERVED_FAMILY_SLUGS = ['admin', 'parent', 'support', 'test'];
+function slugify(s) {
+  return String(s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/^the\s+/, '')
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 14);
+}
+function buildChildUsername(firstName, familyName) {
+  const nameSlug = slugify(firstName);
+  const familySlug = slugify(familyName);
+  const safeFamilySlug = RESERVED_FAMILY_SLUGS.includes(familySlug) ? `${familySlug}2` : familySlug;
+  return `${nameSlug}.${safeFamilySlug}`;
+}
+function suggestChildUsernames(nameSlug, familySlug) {
+  const suggestions = [`${nameSlug}.${familySlug}2`, `${nameSlug}${familySlug}`];
+  if (familySlug.endsWith('s') && familySlug.length > 1) {
+    suggestions.push(`${nameSlug}.${familySlug.slice(0, -1)}`);
+  }
+  return suggestions;
+}
+function isValidChildUsername(username) {
+  return /^([a-z0-9_-]{3,20}|[a-z0-9_-]{1,14}\.[a-z0-9_-]{1,14})$/.test(String(username || ''));
 }
 
 function formatCents(cents, currency) {
@@ -1862,7 +1897,65 @@ function describeParentAuthError(err) {
   if (err.code === 'auth/weak-password') return 'Password must be at least 6 characters.';
   if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') return 'Wrong email or password.';
   if (err.code === 'auth/invalid-email') return 'That email address doesn\'t look right.';
+  // Only genuinely reachable on the password-credential kid sign-in path
+  // (signInWithEmailAndPassword) -- PIN sign-in has its own server-side
+  // attempt counter + parent-unlock flow (kidLockedStep/kidUnlockCodeStep,
+  // ADR-0034) and never hits Firebase Auth's own throttling. See
+  // mockups/rebrand/choresapp-child-signin-spec.html's "Too many attempts".
+  if (err.code === 'auth/too-many-requests') {
+    return 'Sign-in is paused for a few minutes. Nothing is broken and none of your jobs are lost. Have a go again shortly.';
+  }
   return `${err.code || ''}: ${err.message}`;
+}
+
+// ---- "Recently signed in on this device" chips for the kid username step
+// (mockups/rebrand/choresapp-child-signin-spec.html) -- recovers the
+// "just tap and go" feel now that a compound username is too long to want
+// to retype every time. localStorage only holds the username strings
+// themselves (never a PIN/token/anything secret), most-recent-first,
+// capped at 3, and only ever added on a SUCCESSFUL sign-in.
+const KID_USERNAME_CHIPS_KEY = 'choresAppRecentKidUsernames';
+function loadKidUsernameChips() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(KID_USERNAME_CHIPS_KEY) || '[]');
+    return Array.isArray(arr) ? arr.filter((u) => typeof u === 'string' && u) : [];
+  } catch (e) { return []; }
+}
+function saveKidUsernameChips(list) {
+  try { localStorage.setItem(KID_USERNAME_CHIPS_KEY, JSON.stringify(list.slice(0, 3))); } catch (e) {}
+}
+function rememberKidUsernameChip(username) {
+  saveKidUsernameChips([username, ...loadKidUsernameChips().filter((u) => u !== username)]);
+}
+function removeKidUsernameChip(username) {
+  saveKidUsernameChips(loadKidUsernameChips().filter((u) => u !== username));
+  renderKidUsernameChips();
+}
+function renderKidUsernameChips() {
+  const wrap = document.getElementById('kidUsernameChips');
+  const helpEl = document.getElementById('kidUsernameHelp');
+  const chips = loadKidUsernameChips();
+  wrap.innerHTML = '';
+  wrap.hidden = chips.length === 0;
+  helpEl.hidden = chips.length > 0;
+  chips.forEach((username) => {
+    const row = el('span', { class: 'pill small', style: 'display:inline-flex;align-items:center;gap:6px;padding-right:6px;' });
+    const tapBtn = el('button', {
+      type: 'button', style: 'background:none;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;',
+    }, username);
+    tapBtn.addEventListener('click', () => {
+      document.getElementById('kidUsernameInput').value = username;
+      document.getElementById('kidUsernameStep').requestSubmit();
+    });
+    const removeBtn = el('button', {
+      type: 'button', 'aria-label': `Remove ${username}`,
+      style: 'background:none;border:none;padding:0;line-height:1;cursor:pointer;color:var(--ca-ink-3);',
+    }, '×');
+    removeBtn.addEventListener('click', (e) => { e.stopPropagation(); removeKidUsernameChip(username); });
+    row.appendChild(tapBtn);
+    row.appendChild(removeBtn);
+    wrap.appendChild(row);
+  });
 }
 
 // ---------------------------------------------------------------------
@@ -1873,6 +1966,7 @@ function showKidStep(step) {
   KID_STEPS.forEach((s) => { document.getElementById(s).hidden = s !== step; });
   document.getElementById('kidSignInHelp').hidden = step !== 'kidUsernameStep';
   document.getElementById('signInError').hidden = true;
+  if (step === 'kidUsernameStep') renderKidUsernameChips();
 }
 document.getElementById('signInModeParentBtn').addEventListener('click', () => {
   document.getElementById('signInModeParentBtn').setAttribute('aria-selected', 'true');
@@ -1990,6 +2084,7 @@ document.getElementById('kidPasswordStep').addEventListener('submit', async (eve
   const password = document.getElementById('kidPasswordInput').value;
   try {
     await signInWithEmailAndPassword(auth, usernameToSyntheticEmail(kidCurrentUsername), password);
+    rememberKidUsernameChip(kidCurrentUsername);
   } catch (err) {
     console.error('[choresapp] kid password sign-in ERROR:', err.code, err.message);
     errorEl.textContent = err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found'
@@ -2009,6 +2104,7 @@ async function submitKidPin() {
     const result = await callSignInWithPin({ username: kidCurrentUsername, pin });
     if (result.data.ok) {
       await signInWithCustomToken(auth, result.data.customToken);
+      rememberKidUsernameChip(kidCurrentUsername);
       return;
     }
     kidPinDigits = [];
@@ -2087,6 +2183,7 @@ document.getElementById('kidUnlockCodeStep').addEventListener('submit', async (e
   try {
     const result = await callUnlockWithParentCode({ username: kidCurrentUsername, code, newPin });
     await signInWithCustomToken(auth, result.data.customToken);
+    rememberKidUsernameChip(kidCurrentUsername);
   } catch (err) {
     console.error('[choresapp] unlockWithParentCode ERROR:', err.code, err.message);
     errorEl.textContent = describeParentAuthError(err);
@@ -4506,6 +4603,7 @@ function renderKidDetailBody(container, uid) {
     renderKebabMenu([{ label: `Assign chores for ${child.displayName || child.email}`, onclick: () => openRunWizard(uid) }]),
   ])));
 
+  container.appendChild(makeExpandable('+ Sign-in username', renderUsernameManagementForm(child, uid)));
   container.appendChild(makeExpandable('+ Sign-in method', renderCredentialManagementForm(child, uid)));
   container.appendChild(renderEditableAllowanceCard(child, currency));
   container.appendChild(makeExpandable(
@@ -5004,11 +5102,92 @@ function makeExpandable(title, bodyNode) {
   return wrap;
 }
 
+// Shared "Sign-in username" control for adding a child -- auto-generated
+// from the name field + family name the instant a parent types a name
+// (mockups/rebrand/choresapp-child-signin-spec.html), editable, re-checked
+// on blur (not live-per-keystroke, per the spec's own choice), with
+// collision suggestion chips. Used by both renderAddMemberForm (Kids tab)
+// and the onboarding wizard's kids step so both "add a child" entry
+// points behave identically -- see ADR-0038 for why onReadyChange exists
+// (the caller's submit button stays disabled, not clickable-then-rejected,
+// until this reports a real available username).
+function renderChildUsernameField(nameInput, onReadyChange) {
+  const wrap = el('div', {});
+  wrap.appendChild(el('label', {}, 'Sign-in username'));
+  const usernameInput = el('input', {
+    type: 'text', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', autocomplete: 'off',
+  });
+  const statusEl = el('p', { style: 'margin:-4px 0 6px;font-size:0.82rem;' });
+  const chipsWrap = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin:-2px 0 8px;' });
+  wrap.appendChild(usernameInput);
+  wrap.appendChild(statusEl);
+  wrap.appendChild(chipsWrap);
+
+  let manuallyEdited = false;
+  let availability = 'unknown'; // 'unknown' | 'checking' | 'available' | 'taken'
+  function familyName() { return (state.family && state.family.name) || ''; }
+
+  function renderStatus() {
+    chipsWrap.innerHTML = '';
+    if (availability === 'checking') {
+      statusEl.textContent = 'Checking…';
+      statusEl.style.color = 'var(--ink-3, #6B756D)';
+    } else if (availability === 'available') {
+      statusEl.textContent = 'Available';
+      statusEl.style.color = 'var(--success, #1D9E75)';
+    } else if (availability === 'taken') {
+      statusEl.textContent = 'Another family already uses this one.';
+      statusEl.style.color = 'var(--danger, #E24B4A)';
+      const nameSlug = slugify(nameInput.value);
+      const famSlug = slugify(familyName());
+      suggestChildUsernames(nameSlug, famSlug).forEach((suggestion, idx) => {
+        const chip = el('button', { type: 'button', class: `pill small${idx === 0 ? ' primary' : ''}`, style: 'margin-right:4px;' }, suggestion);
+        chip.addEventListener('click', () => { usernameInput.value = suggestion; manuallyEdited = true; checkAvailability(); });
+        chipsWrap.appendChild(chip);
+      });
+    } else {
+      statusEl.textContent = '';
+    }
+    onReadyChange(availability === 'available' && isValidChildUsername(usernameInput.value.trim().toLowerCase()));
+  }
+
+  async function checkAvailability() {
+    const candidate = usernameInput.value.trim().toLowerCase();
+    if (!isValidChildUsername(candidate)) { availability = 'unknown'; renderStatus(); return; }
+    availability = 'checking';
+    renderStatus();
+    try {
+      const result = await callLookupKidDisplayName({ username: candidate });
+      availability = result.data.found ? 'taken' : 'available';
+    } catch (err) {
+      availability = 'unknown';
+    }
+    renderStatus();
+  }
+
+  nameInput.addEventListener('input', () => {
+    if (manuallyEdited) return;
+    usernameInput.value = buildChildUsername(nameInput.value, familyName());
+    checkAvailability();
+  });
+  usernameInput.addEventListener('input', () => { manuallyEdited = true; availability = 'unknown'; renderStatus(); });
+  usernameInput.addEventListener('blur', checkAvailability);
+
+  return {
+    el: wrap,
+    usernameInput,
+    getValue() { return usernameInput.value.trim().toLowerCase(); },
+    reset() { manuallyEdited = false; availability = 'unknown'; usernameInput.value = ''; renderStatus(); },
+  };
+}
+
 function renderAddMemberForm() {
   const form = el('form', {});
   const roleSelect = el('select', {}, [el('option', { value: 'child' }, 'Child'), el('option', { value: 'admin' }, 'Admin')]);
   const emailInput = el('input', { type: 'email', placeholder: 'Email', required: true });
-  const usernameInput = el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', required: true, hidden: true });
+  const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
+  let childUsernameReady = false;
+  const usernameField = renderChildUsernameField(nameInput, (ready) => { childUsernameReady = ready; updateSubmitEnabled(); });
   // PIN is the default credential for a new child (per the rebrand's auth
   // design) -- password stays available as an explicit choice, same
   // callable either way (addFamilyMember's credentialType param).
@@ -5019,19 +5198,26 @@ function renderAddMemberForm() {
     placeholder: '4-digit PIN', autocomplete: 'off',
   });
   const generatePinBtn = el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;' }, 'Generate a PIN');
-  generatePinBtn.addEventListener('click', () => { pinInput.value = String(Math.floor(1000 + Math.random() * 9000)); });
+  generatePinBtn.addEventListener('click', () => { pinInput.value = String(Math.floor(1000 + Math.random() * 9000)); updateSubmitEnabled(); });
   const passwordInput = el('input', { type: 'text', placeholder: 'Password (min. 6 characters)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', minlength: '6', hidden: true });
   const generatePasswordBtn = el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;', hidden: true }, 'Generate a password');
-  generatePasswordBtn.addEventListener('click', () => { passwordInput.value = generateSimplePassword(); });
-  const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
+  generatePasswordBtn.addEventListener('click', () => { passwordInput.value = generateSimplePassword(); updateSubmitEnabled(); });
   const allowanceInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Weekly allowance (e.g. 25)', required: true });
+
+  // See ADR-0038: submit stays disabled until the current selection can
+  // actually succeed, instead of a click-time reject.
+  function isFormValid() {
+    if (roleSelect.value === 'admin') return !!emailInput.value.trim();
+    if (!nameInput.value.trim() || !childUsernameReady) return false;
+    return credentialSelect.value === 'pin' ? /^\d{4}$/.test(pinInput.value.trim()) : passwordInput.value.length >= 6;
+  }
+  function updateSubmitEnabled() { submitBtn.disabled = !isFormValid(); }
 
   function updateFieldsForRole() {
     const isChild = roleSelect.value === 'child';
     emailInput.hidden = isChild;
     emailInput.required = !isChild;
-    usernameInput.hidden = !isChild;
-    usernameInput.required = isChild;
+    usernameField.el.hidden = !isChild;
     credentialLabel.hidden = !isChild;
     credentialSelect.hidden = !isChild;
     updateFieldsForCredential();
@@ -5040,27 +5226,30 @@ function renderAddMemberForm() {
     const isChild = roleSelect.value === 'child';
     const isPin = credentialSelect.value === 'pin';
     pinInput.hidden = !isChild || !isPin;
-    pinInput.required = isChild && isPin;
     generatePinBtn.hidden = !isChild || !isPin;
     passwordInput.hidden = !isChild || isPin;
-    passwordInput.required = isChild && !isPin;
     generatePasswordBtn.hidden = !isChild || isPin;
+    updateSubmitEnabled();
   }
-  roleSelect.addEventListener('change', updateFieldsForRole);
+  roleSelect.addEventListener('change', () => { updateFieldsForRole(); updateSubmitEnabled(); });
   credentialSelect.addEventListener('change', updateFieldsForCredential);
+  emailInput.addEventListener('input', updateSubmitEnabled);
+  nameInput.addEventListener('input', updateSubmitEnabled);
+  pinInput.addEventListener('input', updateSubmitEnabled);
+  passwordInput.addEventListener('input', updateSubmitEnabled);
   updateFieldsForRole();
 
   form.appendChild(el('label', {}, 'Role'));
   form.appendChild(attachCustomSelect(roleSelect));
   form.appendChild(emailInput);
-  form.appendChild(usernameInput);
+  form.appendChild(nameInput);
+  form.appendChild(usernameField.el);
   form.appendChild(credentialLabel);
   form.appendChild(attachCustomSelect(credentialSelect));
   form.appendChild(pinInput);
   form.appendChild(generatePinBtn);
   form.appendChild(passwordInput);
   form.appendChild(generatePasswordBtn);
-  form.appendChild(nameInput);
   form.appendChild(allowanceInput);
   const errorEl = el('p', { class: 'error-text', style: 'margin:0 0 8px;' });
   errorEl.hidden = true;
@@ -5068,7 +5257,9 @@ function renderAddMemberForm() {
   const successEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' });
   successEl.hidden = true;
   form.appendChild(successEl);
-  form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add'));
+  const submitBtn = el('button', { class: 'pill primary', type: 'submit' }, 'Add');
+  form.appendChild(submitBtn);
+  updateSubmitEnabled();
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -5080,14 +5271,15 @@ function renderAddMemberForm() {
     try {
       const result = await callAddFamilyMember({
         email: emailInput.hidden ? undefined : enteredEmail,
-        username: usernameInput.hidden ? undefined : usernameInput.value.trim(),
+        username: isChild ? usernameField.getValue() : undefined,
         credentialType: isChild ? credentialSelect.value : undefined,
         pin: isPin ? pinInput.value.trim() : undefined,
         password: (isChild && !isPin) ? passwordInput.value : undefined,
         displayName: nameInput.value.trim(),
         role: roleSelect.value, baseWeeklyAllowanceCents: centsFromMajorUnits(allowanceInput.value),
       });
-      emailInput.value = ''; usernameInput.value = ''; pinInput.value = ''; passwordInput.value = ''; nameInput.value = ''; allowanceInput.value = '';
+      emailInput.value = ''; usernameField.reset(); pinInput.value = ''; passwordInput.value = ''; nameInput.value = ''; allowanceInput.value = '';
+      updateSubmitEnabled();
       if (result.data.mode === 'created') {
         successEl.textContent = isPin
           ? `Added "${result.data.username}" -- they can sign in now with the username and PIN you set.`
@@ -5097,11 +5289,102 @@ function renderAddMemberForm() {
         showCredentialModal({ title: 'Invite created' });
       }
     } catch (err) {
+      // A rare submit-time collision race (someone else's add landed
+      // between this form's last on-blur check and Add being tapped) --
+      // re-open the same collision UI rather than a generic popup.
+      if (isChild && err.code === 'functions/already-exists') {
+        usernameField.usernameInput.dispatchEvent(new Event('blur'));
+      }
       errorEl.textContent = err.message;
       errorEl.hidden = false;
     }
   });
   return form;
+}
+
+// Shows and edits a child's current login username -- the app's actual
+// "forgotten username" recovery path (mockups/rebrand/
+// choresapp-child-signin-spec.html's Recovery table: "Visible on the
+// child's profile in the parent app"). Unlike a PIN (a one-way scrypt
+// hash, only ever resettable, never re-displayable -- see ADR-0034), the
+// username is plain text and can always be shown back. Save is disabled
+// (ADR-0038) until the field actually differs from the current value and
+// isn't already known-taken.
+function renderUsernameManagementForm(child, uid) {
+  const wrap = el('div', {});
+  const currentUsername = child.usernameLocal || '';
+  wrap.appendChild(el('p', { class: 'muted', style: 'margin:0 0 10px;' },
+    currentUsername ? `Currently signs in as "${currentUsername}".` : 'No username on record for this account.'));
+
+  wrap.appendChild(el('label', {}, 'Sign-in username'));
+  const usernameInput = el('input', { type: 'text', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', autocomplete: 'off' });
+  usernameInput.value = currentUsername;
+  wrap.appendChild(usernameInput);
+  const statusEl = el('p', { style: 'margin:-4px 0 6px;font-size:0.82rem;' });
+  wrap.appendChild(statusEl);
+
+  let availability = 'unknown'; // 'unknown' | 'checking' | 'available' | 'taken'
+  function renderStatus() {
+    if (availability === 'checking') { statusEl.textContent = 'Checking…'; statusEl.style.color = 'var(--ink-3, #6B756D)'; }
+    else if (availability === 'available') { statusEl.textContent = 'Available'; statusEl.style.color = 'var(--success, #1D9E75)'; }
+    else if (availability === 'taken') { statusEl.textContent = 'Another family already uses this one.'; statusEl.style.color = 'var(--danger, #E24B4A)'; }
+    else { statusEl.textContent = ''; }
+    updateSaveEnabled();
+  }
+  async function checkAvailability() {
+    const candidate = usernameInput.value.trim().toLowerCase();
+    if (!candidate || !isValidChildUsername(candidate) || candidate === currentUsername) { availability = 'unknown'; renderStatus(); return; }
+    availability = 'checking';
+    renderStatus();
+    try {
+      const result = await callLookupKidDisplayName({ username: candidate });
+      availability = result.data.found ? 'taken' : 'available';
+    } catch (err) {
+      availability = 'unknown';
+    }
+    renderStatus();
+  }
+  usernameInput.addEventListener('input', () => { availability = 'unknown'; renderStatus(); });
+  usernameInput.addEventListener('blur', checkAvailability);
+
+  const errorEl = el('p', { class: 'error-text', style: 'margin:0 0 8px;' });
+  errorEl.hidden = true;
+  wrap.appendChild(errorEl);
+  const successEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' });
+  successEl.hidden = true;
+  wrap.appendChild(successEl);
+
+  const saveBtn = el('button', { type: 'button', class: 'pill primary', style: 'width:100%;' }, 'Save');
+  function updateSaveEnabled() {
+    const candidate = usernameInput.value.trim().toLowerCase();
+    saveBtn.disabled = !candidate || !isValidChildUsername(candidate) || candidate === currentUsername || availability === 'taken' || availability === 'checking';
+  }
+  usernameInput.addEventListener('input', updateSaveEnabled);
+  updateSaveEnabled();
+
+  saveBtn.addEventListener('click', async () => {
+    errorEl.hidden = true;
+    successEl.hidden = true;
+    const candidate = usernameInput.value.trim().toLowerCase();
+    const confirmed = await showAppConfirm(
+      `${child.displayName || 'They'} will need to sign in with "${candidate}" from now on -- make sure to tell them. Continue?`,
+      { title: 'Change sign-in username?', confirmLabel: 'Change it' }
+    );
+    if (!confirmed) return;
+    saveBtn.disabled = true;
+    try {
+      await callRenameChildUsername({ uid, username: candidate });
+      successEl.textContent = `Done -- ${child.displayName || 'they'} now sign in as "${candidate}".`;
+      successEl.hidden = false;
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    } finally {
+      updateSaveEnabled();
+    }
+  });
+  wrap.appendChild(saveBtn);
+  return wrap;
 }
 
 // Per-child PIN/password switch, from the Kids tab -- "the choice sits
@@ -6386,10 +6669,12 @@ function renderWizardStep() {
     card.appendChild(el('h1', {}, isAdminStep ? 'Add other admins' : 'Add your kids'));
     card.appendChild(el('p', {}, isAdminStep
       ? 'Optional -- add another parent/guardian who should also manage the app.'
-      : 'Pick a username and a 4-digit PIN for each child -- no email needed. They\'ll sign in with these directly.'));
+      : 'Their sign-in username is generated for you below from their name and your family name.'));
 
     const emailInput = isAdminStep ? el('input', { type: 'email', placeholder: 'Email' }) : null;
-    const usernameInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Username (e.g. alice)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
+    const nameInput = el('input', { type: 'text', placeholder: isAdminStep ? 'Display name' : "Child's name" });
+    let childUsernameReady = false;
+    const usernameField = isAdminStep ? null : renderChildUsernameField(nameInput, (ready) => { childUsernameReady = ready; updateAddMemberBtnEnabled(); });
     const credentialLabel = isAdminStep ? null : el('label', {}, 'Sign-in method');
     const credentialSelect = isAdminStep ? null : el('select', {}, [el('option', { value: 'pin' }, 'PIN (4 digits)'), el('option', { value: 'password' }, 'Password')]);
     const pinInput = isAdminStep ? null : el('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '4', placeholder: '4-digit PIN', autocomplete: 'off' });
@@ -6398,17 +6683,16 @@ function renderWizardStep() {
     const passwordInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Password (min. 6 characters)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', minlength: '6', hidden: true });
     const generatePasswordBtn = isAdminStep ? null : el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;', hidden: true }, 'Generate a password');
     if (generatePasswordBtn) generatePasswordBtn.addEventListener('click', () => { passwordInput.value = generateSimplePassword(); updateAddMemberBtnEnabled(); });
-    const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
     const allowanceInput = isAdminStep ? null : el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Weekly allowance (e.g. 25)' });
     if (emailInput) card.appendChild(emailInput);
-    if (usernameInput) card.appendChild(usernameInput);
+    card.appendChild(nameInput);
+    if (usernameField) card.appendChild(usernameField.el);
     if (credentialLabel) card.appendChild(credentialLabel);
     if (credentialSelect) card.appendChild(attachCustomSelect(credentialSelect));
     if (pinInput) card.appendChild(pinInput);
     if (generatePinBtn) card.appendChild(generatePinBtn);
     if (passwordInput) card.appendChild(passwordInput);
     if (generatePasswordBtn) card.appendChild(generatePasswordBtn);
-    card.appendChild(nameInput);
     if (allowanceInput) card.appendChild(allowanceInput);
     const successEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' });
     successEl.hidden = true;
@@ -6420,7 +6704,7 @@ function renderWizardStep() {
     // it immediately.
     function isAddMemberValid() {
       if (isAdminStep) return !!emailInput.value.trim();
-      if (!usernameInput.value.trim()) return false;
+      if (!nameInput.value.trim() || !childUsernameReady) return false;
       return credentialSelect.value === 'pin'
         ? /^\d{4}$/.test(pinInput.value.trim())
         : passwordInput.value.length >= 6;
@@ -6437,7 +6721,7 @@ function renderWizardStep() {
     }
     if (credentialSelect) credentialSelect.addEventListener('change', updateWizardCredentialFields);
     if (emailInput) emailInput.addEventListener('input', updateAddMemberBtnEnabled);
-    if (usernameInput) usernameInput.addEventListener('input', updateAddMemberBtnEnabled);
+    nameInput.addEventListener('input', updateAddMemberBtnEnabled);
     if (pinInput) pinInput.addEventListener('input', updateAddMemberBtnEnabled);
     if (passwordInput) passwordInput.addEventListener('input', updateAddMemberBtnEnabled);
 
@@ -6449,7 +6733,7 @@ function renderWizardStep() {
         try {
           const result = await callAddFamilyMember({
             email: emailInput ? emailInput.value.trim() : undefined,
-            username: usernameInput ? usernameInput.value.trim() : undefined,
+            username: usernameField ? usernameField.getValue() : undefined,
             credentialType: isAdminStep ? undefined : credentialSelect.value,
             pin: isPin ? pinInput.value.trim() : undefined,
             password: (!isAdminStep && !isPin) ? passwordInput.value : undefined,
@@ -6457,7 +6741,7 @@ function renderWizardStep() {
             baseWeeklyAllowanceCents: allowanceInput ? centsFromMajorUnits(allowanceInput.value) : 0,
           });
           if (emailInput) emailInput.value = '';
-          if (usernameInput) usernameInput.value = '';
+          if (usernameField) usernameField.reset();
           if (pinInput) pinInput.value = '';
           if (passwordInput) passwordInput.value = '';
           nameInput.value = ''; if (allowanceInput) allowanceInput.value = '';
@@ -6475,6 +6759,10 @@ function renderWizardStep() {
             showCredentialModal({ title: 'Invite created' });
           }
         } catch (err) {
+          // Rare submit-time collision race -- re-open the collision UI.
+          if (usernameField && err.code === 'functions/already-exists') {
+            usernameField.usernameInput.dispatchEvent(new Event('blur'));
+          }
           // Styled popup (same one used app-wide for a failed action), not
           // an inline "system-looking" error line.
           showAppAlert(describeActionError(err), { title: `Couldn't add ${roleLabel}` });
