@@ -6777,6 +6777,12 @@ function renderWizardStep() {
     if (pinInput) pinInput.addEventListener('input', updateAddMemberBtnEnabled);
     if (passwordInput) passwordInput.addEventListener('input', updateAddMemberBtnEnabled);
 
+    // "Add another child" doesn't make sense before there's a first one --
+    // see hasChildAlready below (also gates the Next button). The admins
+    // step always says "another" -- the person setting up is already an
+    // admin, so there's always at least one before this screen is ever
+    // reached.
+    const hasChildAlready = wizardChildAdded || state.members.some((m) => m.role === 'child');
     const addMemberBtn = el('button', {
       class: 'pill primary', type: 'button', style: 'width:100%;margin-bottom:8px;',
       onclick: async () => {
@@ -6801,6 +6807,7 @@ function renderWizardStep() {
             wizardChildAdded = true;
             nextBtn.disabled = false;
             childHintEl.hidden = true;
+            addMemberBtn.textContent = 'Add another child';
           }
           if (result.data.mode === 'created') {
             successEl.textContent = isPin
@@ -6822,7 +6829,7 @@ function renderWizardStep() {
           updateAddMemberBtnEnabled();
         }
       },
-    }, `Add another ${roleLabel}`);
+    }, isAdminStep ? 'Add another admin' : (hasChildAlready ? 'Add another child' : 'Add'));
     addMemberBtn.disabled = !isAddMemberValid();
     card.appendChild(addMemberBtn);
 
@@ -6832,7 +6839,6 @@ function renderWizardStep() {
     // child exists, rather than clickable-then-rejected. The admins step
     // stays always-enabled -- it's explicitly optional per its own copy
     // above.
-    const hasChildAlready = wizardChildAdded || state.members.some((m) => m.role === 'child');
     const childHintEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' }, 'Add at least one child above to continue.');
     childHintEl.hidden = isAdminStep || hasChildAlready;
     card.appendChild(childHintEl);
