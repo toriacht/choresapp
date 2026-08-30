@@ -5407,11 +5407,11 @@ function renderChoreForm({ presetChildUid = null } = {}) {
 
   // Only shown for frequency:'custom' -- see ADR-0026. ISO weekday numbers
   // (1=Mon..7=Sun) are the wire format (chore.scheduledDays), matching
-  // functions/lib/missedChores.js:resolveChoreDueDateIds exactly.
+  // functions/lib/choreLog.js:resolveChoreDueDateIds exactly.
   const DAY_LABELS = [['M', 1], ['T', 2], ['W', 3], ['T', 4], ['F', 5], ['S', 6], ['S', 7]];
   const dayButtons = DAY_LABELS.map(([label, isoDay]) => {
     const btn = el('button', { type: 'button', class: 'pill small', 'data-day': String(isoDay) }, label);
-    btn.addEventListener('click', () => btn.classList.toggle('primary'));
+    btn.addEventListener('click', () => { btn.classList.toggle('primary'); updateSubmitEnabled(); });
     return btn;
   });
   const scheduledDaysWrap = el('div', { style: 'display:flex;gap:6px;margin-bottom:10px;', hidden: true }, dayButtons);
@@ -5424,7 +5424,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     timesPerWeekWrap.hidden = frequencySelect.value !== 'timesPerWeek';
     bonusWrap.hidden = frequencySelect.value !== 'occasional';
   }
-  frequencySelect.addEventListener('change', updateScheduledDaysVisibility);
+  frequencySelect.addEventListener('change', () => { updateScheduledDaysVisibility(); updateSubmitEnabled(); });
   // One-tap default-setter for the common case (category/frequency/mode are
   // otherwise three separate abstract choices a parent has to correctly
   // combine to get a working daily requirement, e.g. "make your bed"). Left
@@ -5445,6 +5445,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       checkedUids = new Set(applyToAll ? children.map((m) => m.uid) : [presetChildUid]);
     }
     renderPoolControl(poolWrap, modeSelect.value, checkedUids);
+    updateSubmitEnabled();
   }
   modeSelect.addEventListener('change', () => { renderAssigneeControl(); });
   categorySelect.addEventListener('change', () => {
@@ -5467,6 +5468,23 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     applyToAllCb = el('input', { type: 'checkbox' });
     applyToAllCb.addEventListener('change', renderAssigneeControl);
   }
+
+  // See ADR-0038: disabled until it can actually succeed -- a name and a
+  // non-empty pool, both already visible on screen, plus at least one day
+  // picked when frequency:'custom' is selected -- instead of a click-time
+  // showAppAlert/silent no-op for conditions already knowable up front.
+  // poolWrap's own children get fully rebuilt by renderAssigneeControl
+  // (mode/category changes), so this reads it fresh each call rather than
+  // caching a reference to any one checkbox/select.
+  const submitBtn = el('button', { class: 'pill primary', type: 'submit' }, 'Add chore');
+  function updateSubmitEnabled() {
+    const pool = readPoolControl(poolWrap, modeSelect.value);
+    const hasPool = pool.length > 0 && pool[0];
+    const hasCustomDay = frequencySelect.value !== 'custom' || dayButtons.some((b) => b.classList.contains('primary'));
+    submitBtn.disabled = !nameInput.value.trim() || !hasPool || !hasCustomDay;
+  }
+  nameInput.addEventListener('input', updateSubmitEnabled);
+  poolWrap.addEventListener('change', updateSubmitEnabled);
 
   updateModeOptionsForCategory(modeSelect, categorySelect);
   renderAssigneeControl();
@@ -5514,14 +5532,10 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   form.appendChild(attachCustomSelect(sizeSelect));
   form.appendChild(el('div', { class: 'muted', style: 'margin:-4px 0 10px;font-size:0.78rem;' },
     'Bigger chores count for more -- both when we balance whose turn it is, and toward how much of the allowance they earn.'));
-  form.appendChild(el('button', { class: 'pill primary', type: 'submit' }, 'Add chore'));
+  form.appendChild(submitBtn);
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (frequencySelect.value === 'custom' && !dayButtons.some((b) => b.classList.contains('primary'))) {
-      showAppAlert('Pick at least one day for this chore.');
-      return;
-    }
     const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
     const mode = modeSelect.value;
     let assignedTo, rotation;
@@ -6380,19 +6394,10 @@ function renderWizardStep() {
     const credentialSelect = isAdminStep ? null : el('select', {}, [el('option', { value: 'pin' }, 'PIN (4 digits)'), el('option', { value: 'password' }, 'Password')]);
     const pinInput = isAdminStep ? null : el('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '4', placeholder: '4-digit PIN', autocomplete: 'off' });
     const generatePinBtn = isAdminStep ? null : el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;' }, 'Generate a PIN');
-    if (generatePinBtn) generatePinBtn.addEventListener('click', () => { pinInput.value = String(Math.floor(1000 + Math.random() * 9000)); });
+    if (generatePinBtn) generatePinBtn.addEventListener('click', () => { pinInput.value = String(Math.floor(1000 + Math.random() * 9000)); updateAddMemberBtnEnabled(); });
     const passwordInput = isAdminStep ? null : el('input', { type: 'text', placeholder: 'Password (min. 6 characters)', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', minlength: '6', hidden: true });
     const generatePasswordBtn = isAdminStep ? null : el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;', hidden: true }, 'Generate a password');
-    if (generatePasswordBtn) generatePasswordBtn.addEventListener('click', () => { passwordInput.value = generateSimplePassword(); });
-    function updateWizardCredentialFields() {
-      if (isAdminStep) return;
-      const isPin = credentialSelect.value === 'pin';
-      pinInput.hidden = !isPin;
-      generatePinBtn.hidden = !isPin;
-      passwordInput.hidden = isPin;
-      generatePasswordBtn.hidden = isPin;
-    }
-    if (credentialSelect) credentialSelect.addEventListener('change', updateWizardCredentialFields);
+    if (generatePasswordBtn) generatePasswordBtn.addEventListener('click', () => { passwordInput.value = generateSimplePassword(); updateAddMemberBtnEnabled(); });
     const nameInput = el('input', { type: 'text', placeholder: 'Display name' });
     const allowanceInput = isAdminStep ? null : el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Weekly allowance (e.g. 25)' });
     if (emailInput) card.appendChild(emailInput);
@@ -6408,12 +6413,38 @@ function renderWizardStep() {
     const successEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' });
     successEl.hidden = true;
     card.appendChild(successEl);
-    card.appendChild(el('button', {
+
+    // See ADR-0038: disabled until it can actually succeed, not clickable-
+    // then-silently-rejected. Re-evaluated live off whichever fields this
+    // step actually shows, so switching PIN<->password (or typing) updates
+    // it immediately.
+    function isAddMemberValid() {
+      if (isAdminStep) return !!emailInput.value.trim();
+      if (!usernameInput.value.trim()) return false;
+      return credentialSelect.value === 'pin'
+        ? /^\d{4}$/.test(pinInput.value.trim())
+        : passwordInput.value.length >= 6;
+    }
+    function updateAddMemberBtnEnabled() { addMemberBtn.disabled = !isAddMemberValid(); }
+    function updateWizardCredentialFields() {
+      if (isAdminStep) return;
+      const isPin = credentialSelect.value === 'pin';
+      pinInput.hidden = !isPin;
+      generatePinBtn.hidden = !isPin;
+      passwordInput.hidden = isPin;
+      generatePasswordBtn.hidden = isPin;
+      updateAddMemberBtnEnabled();
+    }
+    if (credentialSelect) credentialSelect.addEventListener('change', updateWizardCredentialFields);
+    if (emailInput) emailInput.addEventListener('input', updateAddMemberBtnEnabled);
+    if (usernameInput) usernameInput.addEventListener('input', updateAddMemberBtnEnabled);
+    if (pinInput) pinInput.addEventListener('input', updateAddMemberBtnEnabled);
+    if (passwordInput) passwordInput.addEventListener('input', updateAddMemberBtnEnabled);
+
+    const addMemberBtn = el('button', {
       class: 'pill primary', type: 'button', style: 'width:100%;margin-bottom:8px;',
       onclick: async () => {
         successEl.hidden = true;
-        if (isAdminStep && !emailInput.value.trim()) return;
-        if (!isAdminStep && !usernameInput.value.trim()) return;
         const isPin = !isAdminStep && credentialSelect.value === 'pin';
         try {
           const result = await callAddFamilyMember({
@@ -6447,9 +6478,13 @@ function renderWizardStep() {
           // Styled popup (same one used app-wide for a failed action), not
           // an inline "system-looking" error line.
           showAppAlert(describeActionError(err), { title: `Couldn't add ${roleLabel}` });
+        } finally {
+          updateAddMemberBtnEnabled();
         }
       },
-    }, `Add another ${roleLabel}`));
+    }, `Add another ${roleLabel}`);
+    addMemberBtn.disabled = !isAddMemberValid();
+    card.appendChild(addMemberBtn);
 
     // A family with zero children breaks step 3 (quick-setup chores)
     // silently -- rotating/eachMember chores would save with an empty
@@ -7318,22 +7353,27 @@ function renderAddWizardStep() {
     card.appendChild(el('label', {}, 'Assignment'));
     card.appendChild(attachCustomSelect(modeSelect));
 
+    const configureNextBtn = el('button', {
+      class: 'pill primary', style: 'flex:1;', type: 'button',
+      onclick: () => {
+        addWizard.draft = {
+          name: nameInput.value.trim(), icon: iconInput.value.trim() || null, description: descInput.value.trim(),
+          frequency: frequencySelect.value, size: sizeSelect ? sizeSelect.value : 'medium', mode: modeSelect.value,
+          ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
+          ...(frequencySelect.value === 'occasional' ? { bonusCents: centsFromMajorUnits(bonusInput.value) } : {}),
+        };
+        addWizard.screen = 'assignment'; addWizard.step = 1;
+        renderAdminWizardStep();
+      },
+    }, 'Next');
+    // See ADR-0038: disabled until a name is entered, instead of a
+    // click-time showAppAlert for a condition already visible on screen.
+    configureNextBtn.disabled = !nameInput.value.trim();
+    nameInput.addEventListener('input', () => { configureNextBtn.disabled = !nameInput.value.trim(); });
+
     card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
       el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => { addWizard.screen = 'source'; addWizard.step = 0; renderAdminWizardStep(); } }, 'Back'),
-      el('button', {
-        class: 'pill primary', style: 'flex:1;', type: 'button',
-        onclick: () => {
-          if (!nameInput.value.trim()) { showAppAlert(`Give this ${addWizardCategoryLabel()} a name first.`); return; }
-          addWizard.draft = {
-            name: nameInput.value.trim(), icon: iconInput.value.trim() || null, description: descInput.value.trim(),
-            frequency: frequencySelect.value, size: sizeSelect ? sizeSelect.value : 'medium', mode: modeSelect.value,
-            ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
-            ...(frequencySelect.value === 'occasional' ? { bonusCents: centsFromMajorUnits(bonusInput.value) } : {}),
-          };
-          addWizard.screen = 'assignment'; addWizard.step = 1;
-          renderAdminWizardStep();
-        },
-      }, 'Next'),
+      configureNextBtn,
     ]));
     content.appendChild(card);
     return;
@@ -7350,46 +7390,55 @@ function renderAddWizardStep() {
     const poolWrap = el('div', {});
     renderPoolControl(poolWrap, draft.mode, new Set(activeChildUids()));
     card.appendChild(poolWrap);
-    const errorEl = el('p', { class: 'error-text' });
-    errorEl.hidden = true;
+
+    const saveBtn = el('button', {
+      class: 'pill primary', style: 'flex:1;', type: 'button',
+      onclick: async () => {
+        const pool = readPoolControl(poolWrap, draft.mode);
+        // Not a knowable-in-advance check like the pool-empty one below
+        // (ADR-0038) -- it depends on which specific children end up
+        // checked, and the message needs to name the actual conflict, so
+        // it stays a click-time check surfaced as a popup rather than a
+        // disabled button with no explanation.
+        const dup = findDuplicateChoreForPool(draft.name, addWizard.category, pool);
+        if (dup) {
+          showAppAlert(`"${dup.name}" already exists for one of these children -- edit that one instead of adding a second copy.`, { title: 'Already exists' });
+          return;
+        }
+        try {
+          const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+          const payload = computeAssignmentUpdatePayload({ assignmentMode: 'fixed' }, draft.mode, pool);
+          await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
+            name: draft.name, icon: draft.icon, description: draft.description,
+            category: addWizard.category, assignmentMode: payload.assignmentMode, assignedTo: payload.assignedTo,
+            ...(payload.rotation ? { rotation: payload.rotation } : {}),
+            frequency: draft.frequency, size: draft.size,
+            ...(draft.frequency === 'timesPerWeek' ? { timesPerWeekCount: draft.timesPerWeekCount } : {}),
+            ...(draft.frequency === 'occasional' ? { bonusCents: draft.bonusCents || 0 } : {}),
+            active: true, createdBy: state.user.uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+          });
+          addWizard.lastAdded = [draft.name];
+          addWizard.screen = 'done'; addWizard.step = 2;
+          renderAdminWizardStep();
+        } catch (err) {
+          showAppAlert(describeActionError(err), { title: "Couldn't save" });
+        }
+      },
+    }, 'Save');
+    // See ADR-0038: disabled until the pool is non-empty, instead of a
+    // click-time reject -- a single delegated `change` listener on the
+    // wrap covers every checkbox/select renderPoolControl builds into it.
+    function updateSaveBtnEnabled() {
+      const pool = readPoolControl(poolWrap, draft.mode);
+      saveBtn.disabled = pool.length === 0 || !pool[0];
+    }
+    updateSaveBtnEnabled();
+    poolWrap.addEventListener('change', updateSaveBtnEnabled);
 
     card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
       el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => { addWizard.screen = 'configure'; addWizard.step = 1; renderAdminWizardStep(); } }, 'Back'),
-      el('button', {
-        class: 'pill primary', style: 'flex:1;', type: 'button',
-        onclick: async () => {
-          errorEl.hidden = true;
-          const pool = readPoolControl(poolWrap, draft.mode);
-          if (pool.length === 0 || !pool[0]) { errorEl.textContent = 'Pick at least one child.'; errorEl.hidden = false; return; }
-          const dup = findDuplicateChoreForPool(draft.name, addWizard.category, pool);
-          if (dup) {
-            errorEl.textContent = `"${dup.name}" already exists for one of these children -- edit that one instead of adding a second copy.`;
-            errorEl.hidden = false;
-            return;
-          }
-          try {
-            const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-            const payload = computeAssignmentUpdatePayload({ assignmentMode: 'fixed' }, draft.mode, pool);
-            await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
-              name: draft.name, icon: draft.icon, description: draft.description,
-              category: addWizard.category, assignmentMode: payload.assignmentMode, assignedTo: payload.assignedTo,
-              ...(payload.rotation ? { rotation: payload.rotation } : {}),
-              frequency: draft.frequency, size: draft.size,
-              ...(draft.frequency === 'timesPerWeek' ? { timesPerWeekCount: draft.timesPerWeekCount } : {}),
-              ...(draft.frequency === 'occasional' ? { bonusCents: draft.bonusCents || 0 } : {}),
-              active: true, createdBy: state.user.uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-            });
-            addWizard.lastAdded = [draft.name];
-            addWizard.screen = 'done'; addWizard.step = 2;
-            renderAdminWizardStep();
-          } catch (err) {
-            errorEl.textContent = err.message;
-            errorEl.hidden = false;
-          }
-        },
-      }, 'Save'),
+      saveBtn,
     ]));
-    card.appendChild(errorEl);
     content.appendChild(card);
     return;
   }
