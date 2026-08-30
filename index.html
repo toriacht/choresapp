@@ -6405,16 +6405,12 @@ function renderWizardStep() {
     if (generatePasswordBtn) card.appendChild(generatePasswordBtn);
     card.appendChild(nameInput);
     if (allowanceInput) card.appendChild(allowanceInput);
-    const errorEl = el('p', { class: 'error-text', style: 'margin:0 0 8px;' });
-    errorEl.hidden = true;
-    card.appendChild(errorEl);
     const successEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' });
     successEl.hidden = true;
     card.appendChild(successEl);
     card.appendChild(el('button', {
       class: 'pill primary', type: 'button', style: 'width:100%;margin-bottom:8px;',
       onclick: async () => {
-        errorEl.hidden = true;
         successEl.hidden = true;
         if (isAdminStep && !emailInput.value.trim()) return;
         if (!isAdminStep && !usernameInput.value.trim()) return;
@@ -6434,7 +6430,11 @@ function renderWizardStep() {
           if (pinInput) pinInput.value = '';
           if (passwordInput) passwordInput.value = '';
           nameInput.value = ''; if (allowanceInput) allowanceInput.value = '';
-          if (!isAdminStep) wizardChildAdded = true;
+          if (!isAdminStep) {
+            wizardChildAdded = true;
+            nextBtn.disabled = false;
+            childHintEl.hidden = true;
+          }
           if (result.data.mode === 'created') {
             successEl.textContent = isPin
               ? `Added "${result.data.username}" -- they can sign in now with the username and PIN you set.`
@@ -6444,29 +6444,33 @@ function renderWizardStep() {
             showCredentialModal({ title: 'Invite created' });
           }
         } catch (err) {
-          errorEl.textContent = err.message;
-          errorEl.hidden = false;
+          // Styled popup (same one used app-wide for a failed action), not
+          // an inline "system-looking" error line.
+          showAppAlert(describeActionError(err), { title: `Couldn't add ${roleLabel}` });
         }
       },
     }, `Add another ${roleLabel}`));
 
+    // A family with zero children breaks step 3 (quick-setup chores)
+    // silently -- rotating/eachMember chores would save with an empty
+    // pool/assignedTo -- so Next is disabled outright on this step until a
+    // child exists, rather than clickable-then-rejected. The admins step
+    // stays always-enabled -- it's explicitly optional per its own copy
+    // above.
+    const hasChildAlready = wizardChildAdded || state.members.some((m) => m.role === 'child');
+    const childHintEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' }, 'Add at least one child above to continue.');
+    childHintEl.hidden = isAdminStep || hasChildAlready;
+    card.appendChild(childHintEl);
+
+    const nextBtn = el('button', {
+      class: 'pill primary', style: 'flex:1;', type: 'button',
+      onclick: () => { wizardStep += 1; renderWizardStep(); },
+    }, 'Next');
+    nextBtn.disabled = !isAdminStep && !hasChildAlready;
+
     const nav = el('div', { style: 'display:flex;gap:8px;' }, [
       el('button', { class: 'pill', style: 'flex:1;', onclick: () => { wizardStep -= 1; renderWizardStep(); } }, 'Back'),
-      el('button', {
-        class: 'pill primary', style: 'flex:1;', type: 'button',
-        onclick: () => {
-          // A family with zero children breaks step 3 (quick-setup chores)
-          // silently -- rotating/eachMember chores would save with an empty
-          // pool/assignedTo -- so this step alone is a hard gate, unlike the
-          // admins step (explicitly optional per its own copy above).
-          if (!isAdminStep && !wizardChildAdded && !state.members.some((m) => m.role === 'child')) {
-            errorEl.textContent = 'Add at least one child before continuing.';
-            errorEl.hidden = false;
-            return;
-          }
-          wizardStep += 1; renderWizardStep();
-        },
-      }, 'Next'),
+      nextBtn,
     ]);
     card.appendChild(nav);
     content.appendChild(card);
