@@ -1252,16 +1252,24 @@ function slugify(s) {
     .replace(/[^a-z0-9]/g, '')
     .slice(0, 14);
 }
+// A family name is typically typed in its natural "The Smiths"-style
+// plural form, but a login string reads better singular -- "sam.murphy",
+// not "sam.murphys" (confirmed with the app owner, a deliberate
+// deviation from the source doc's own literal example).
+function singularizeFamilySlug(familySlug) {
+  return familySlug.endsWith('s') && familySlug.length > 1 ? familySlug.slice(0, -1) : familySlug;
+}
 function buildChildUsername(firstName, familyName) {
   const nameSlug = slugify(firstName);
-  const familySlug = slugify(familyName);
+  const familySlug = singularizeFamilySlug(slugify(familyName));
   const safeFamilySlug = RESERVED_FAMILY_SLUGS.includes(familySlug) ? `${familySlug}2` : familySlug;
   return `${nameSlug}.${safeFamilySlug}`;
 }
 function suggestChildUsernames(nameSlug, familySlug) {
-  const suggestions = [`${nameSlug}.${familySlug}2`, `${nameSlug}${familySlug}`];
-  if (familySlug.endsWith('s') && familySlug.length > 1) {
-    suggestions.push(`${nameSlug}.${familySlug.slice(0, -1)}`);
+  const singular = singularizeFamilySlug(familySlug);
+  const suggestions = [`${nameSlug}.${singular}2`, `${nameSlug}${singular}`];
+  if (familySlug !== singular) {
+    suggestions.push(`${nameSlug}.${familySlug}`);
   }
   return suggestions;
 }
@@ -6530,6 +6538,47 @@ function renderParentCodeBody() {
 // default). Per the doc: "Either hide the setting until it works, or say
 // plainly that it's coming" -- hiding it is the honest option, since
 // showing it implies a working control.
+// Family name -- set once at family creation (createFamilyAndAdmin's
+// familyNameInput) and, until now, never editable again anywhere:
+// Settings only ever showed it read-only, and the onboarding wizard
+// (below) never surfaced it at all, even via its own Back button, which
+// only ever leads to its own Welcome screen. Shared by both places it's
+// now editable (this Settings section and the wizard's Welcome step) so
+// an admin can fix it before OR after finishing onboarding. Direct client
+// updateDoc -- firestore.rules already lets an admin write
+// families/{familyId}.name (CRUD-style admin config, not money or
+// cross-document work, same reasoning as the Currency control next to it).
+function renderFamilyNameField() {
+  const wrap = el('div', {});
+  const input = el('input', { type: 'text' });
+  input.value = (state.family && state.family.name) || '';
+  const saveBtn = el('button', { type: 'button', class: 'pill primary small' }, 'Save');
+  const errorEl = el('p', { class: 'error-text', style: 'margin:4px 0 0;' });
+  errorEl.hidden = true;
+  saveBtn.addEventListener('click', async () => {
+    const name = input.value.trim();
+    errorEl.hidden = true;
+    if (!name) {
+      errorEl.textContent = "Family name can't be empty.";
+      errorEl.hidden = false;
+      return;
+    }
+    saveBtn.disabled = true;
+    try {
+      const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await updateDoc(fsDoc(db, `families/${state.familyId}`), { name });
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+  wrap.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;' }, [input, saveBtn]));
+  wrap.appendChild(errorEl);
+  return wrap;
+}
+
 function renderSettings() {
   const container = document.getElementById('page-settings');
   container.innerHTML = '';
@@ -6545,6 +6594,7 @@ function renderSettings() {
   ])));
 
   container.appendChild(el('p', { class: 'ca-section' }, 'Family'));
+  container.appendChild(makeExpandable('Family name', renderFamilyNameField()));
   const currencySelect = el('select', {}, ['EUR', 'USD', 'GBP'].map((c) => el('option', { value: c }, c)));
   currencySelect.value = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
   currencySelect.addEventListener('change', async () => {
@@ -6657,7 +6707,9 @@ function renderWizardStep() {
     content.appendChild(el('div', { class: 'wizard-card' }, [
       el('h1', {}, 'Welcome!'),
       el('p', { class: 'muted' }, "Let's set up your family. You'll add your kids and any other admins, then pick daily tasks and chores to start with -- everything here can be changed later."),
-      el('button', { class: 'pill primary', style: 'width:100%;', onclick: () => { wizardStep = 1; renderWizardStep(); } }, 'Get started'),
+      el('label', {}, 'Family name'),
+      renderFamilyNameField(),
+      el('button', { class: 'pill primary', style: 'width:100%;margin-top:14px;', onclick: () => { wizardStep = 1; renderWizardStep(); } }, 'Get started'),
     ]));
     return;
   }
