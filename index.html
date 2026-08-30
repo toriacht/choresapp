@@ -5119,7 +5119,11 @@ function makeExpandable(title, bodyNode) {
 // points behave identically -- see ADR-0038 for why onReadyChange exists
 // (the caller's submit button stays disabled, not clickable-then-rejected,
 // until this reports a real available username).
-function renderChildUsernameField(nameInput, onReadyChange) {
+// isLocallyTaken (optional): checked BEFORE the server round-trip -- lets
+// a caller staging multiple not-yet-created kids locally (the onboarding
+// wizard's draft list) flag a collision between two drafts in the same
+// session, which the server has no way to know about yet.
+function renderChildUsernameField(nameInput, onReadyChange, isLocallyTaken) {
   const wrap = el('div', {});
   wrap.appendChild(el('label', {}, 'Sign-in username'));
   const usernameInput = el('input', {
@@ -5162,6 +5166,7 @@ function renderChildUsernameField(nameInput, onReadyChange) {
   async function checkAvailability() {
     const candidate = usernameInput.value.trim().toLowerCase();
     if (!isValidChildUsername(candidate)) { availability = 'unknown'; renderStatus(); return; }
+    if (isLocallyTaken && isLocallyTaken(candidate)) { availability = 'taken'; renderStatus(); return; }
     availability = 'checking';
     renderStatus();
     try {
@@ -6626,7 +6631,7 @@ function renderSettings() {
 
   container.appendChild(el('p', { class: 'ca-section' }, 'Account'));
   container.appendChild(renderMoreLink('Change password', () => showScreen('changePassword')));
-  container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; wizardChildAdded = false; renderWizardStep(); }));
+  container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; wizardDraftKids = []; renderWizardStep(); }));
   container.appendChild(el('button', { class: 'signout-row', onclick: () => signOut(auth) }, 'Sign out'));
 }
 
@@ -6681,14 +6686,15 @@ const STARTER_TEMPLATES = [
 let wizardStep = 0;
 let wizardItems = STARTER_TEMPLATES.map((t) => ({ ...t }));
 let wizardSaveAsTemplates = true;
-// Set synchronously the instant a child is successfully added during this
-// wizard visit (step 1's "Add another child" handler) -- guards the
-// step-1 "Next" button below without depending on state.members' onSnapshot
-// listener, which updates asynchronously (callAddFamilyMember is a Cloud
-// Function write, not an optimistic local client write) and could
-// otherwise leave a brief window where a just-added child doesn't yet
-// count. Reset to false wherever the wizard is (re)started from step 0.
-let wizardChildAdded = false;
+// Kids added during THIS wizard visit but not yet sent to the server --
+// { name, username, credentialType, pin, password, allowanceCents } each.
+// Nothing is created (no Firebase Auth account, no members/{uid} doc)
+// until Next is tapped on the kids step, which batch-commits the whole
+// list -- see commitWizardDraftKids. This is what lets "Back" and
+// re-adding freely edit/redo instead of leaving real, already-created
+// accounts behind (the previous per-add-immediate-commit design's exact
+// complaint). Reset to [] wherever the wizard is (re)started from step 0.
+let wizardDraftKids = [];
 
 function renderWizardProgress() {
   const bar = document.getElementById('wizardProgress');
@@ -6721,12 +6727,52 @@ function renderWizardStep() {
     card.appendChild(el('h1', {}, isAdminStep ? 'Add other admins' : 'Add your kids'));
     card.appendChild(el('p', {}, isAdminStep
       ? 'Optional -- add another parent/guardian who should also manage the app.'
-      : 'Their sign-in username is generated for you below from their name and your family name.'));
+      : "Their sign-in username is generated for you below from their name and your family name. Nothing is created until you tap Next -- add, remove, or fix any of these freely first."));
+
+    // Kids only: already-real children (from an earlier "Next" this
+    // session, or a prior wizard run entirely) plus the running list of
+    // this-session drafts not yet committed (see wizardDraftKids's own
+    // comment for why). Shown together so stepping Back after a
+    // successful commit doesn't look like the kids you already added
+    // vanished -- only drafts are actually removable here, since a real
+    // child needs a heavier action (deactivation) to undo, not a splice.
+    const draftListWrap = el('div', {});
+    function renderDraftList() {
+      draftListWrap.innerHTML = '';
+      state.members.filter((m) => m.role === 'child').forEach((child) => {
+        draftListWrap.appendChild(el('div', { class: 'booking-card', style: 'display:flex;align-items:center;gap:10px;' }, [
+          svgIcon('checkCircleWithRing', { size: 16, color: 'var(--success, #1D9E75)' }),
+          el('div', {}, [
+            el('div', { style: 'font-weight:600;' }, child.displayName),
+            el('div', { class: 'muted', style: 'font-size:0.82rem;' }, `${child.usernameLocal || ''} · already added`),
+          ]),
+        ]));
+      });
+      wizardDraftKids.forEach((draft, idx) => {
+        draftListWrap.appendChild(el('div', {
+          class: 'booking-card', style: 'display:flex;align-items:center;justify-content:space-between;gap:10px;',
+        }, [
+          el('div', {}, [
+            el('div', { style: 'font-weight:600;' }, draft.name),
+            el('div', { class: 'muted', style: 'font-size:0.82rem;' }, `${draft.username} · ${draft.credentialType === 'pin' ? 'PIN' : 'Password'}`),
+          ]),
+          el('button', {
+            type: 'button', class: 'pill small',
+            onclick: () => { wizardDraftKids.splice(idx, 1); renderDraftList(); updateNextEnabled(); addMemberBtn.textContent = addMemberBtnLabel(); },
+          }, 'Remove'),
+        ]));
+      });
+    }
+    if (!isAdminStep) card.appendChild(draftListWrap);
 
     const emailInput = isAdminStep ? el('input', { type: 'email', placeholder: 'Email' }) : null;
     const nameInput = el('input', { type: 'text', placeholder: isAdminStep ? 'Display name' : "Child's name" });
     let childUsernameReady = false;
-    const usernameField = isAdminStep ? null : renderChildUsernameField(nameInput, (ready) => { childUsernameReady = ready; updateAddMemberBtnEnabled(); });
+    const usernameField = isAdminStep ? null : renderChildUsernameField(
+      nameInput,
+      (ready) => { childUsernameReady = ready; updateAddMemberBtnEnabled(); },
+      (candidate) => wizardDraftKids.some((d) => d.username === candidate)
+    );
     const credentialLabel = isAdminStep ? null : el('label', {}, 'Sign-in method');
     const credentialSelect = isAdminStep ? null : el('select', {}, [el('option', { value: 'pin' }, 'PIN (4 digits)'), el('option', { value: 'password' }, 'Password')]);
     const pinInput = isAdminStep ? null : el('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '4', placeholder: '4-digit PIN', autocomplete: 'off' });
@@ -6746,9 +6792,6 @@ function renderWizardStep() {
     if (passwordInput) card.appendChild(passwordInput);
     if (generatePasswordBtn) card.appendChild(generatePasswordBtn);
     if (allowanceInput) card.appendChild(allowanceInput);
-    const successEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' });
-    successEl.hidden = true;
-    card.appendChild(successEl);
 
     // See ADR-0038: disabled until it can actually succeed, not clickable-
     // then-silently-rejected. Re-evaluated live off whichever fields this
@@ -6778,76 +6821,128 @@ function renderWizardStep() {
     if (passwordInput) passwordInput.addEventListener('input', updateAddMemberBtnEnabled);
 
     // "Add another child" doesn't make sense before there's a first one --
-    // see hasChildAlready below (also gates the Next button). The admins
-    // step always says "another" -- the person setting up is already an
-    // admin, so there's always at least one before this screen is ever
-    // reached.
-    const hasChildAlready = wizardChildAdded || state.members.some((m) => m.role === 'child');
+    // counts drafts not yet committed too, since they will be the moment
+    // Next is tapped. The admins step always says "another" -- the person
+    // setting up is already an admin, so there's always at least one
+    // before this screen is ever reached.
+    function hasChildAlready() { return wizardDraftKids.length > 0 || state.members.some((m) => m.role === 'child'); }
+    function addMemberBtnLabel() {
+      return isAdminStep ? 'Add another admin' : (hasChildAlready() ? 'Add another child' : 'Add');
+    }
     const addMemberBtn = el('button', {
       class: 'pill primary', type: 'button', style: 'width:100%;margin-bottom:8px;',
       onclick: async () => {
-        successEl.hidden = true;
         const isPin = !isAdminStep && credentialSelect.value === 'pin';
-        try {
-          const result = await callAddFamilyMember({
-            email: emailInput ? emailInput.value.trim() : undefined,
-            username: usernameField ? usernameField.getValue() : undefined,
-            credentialType: isAdminStep ? undefined : credentialSelect.value,
+
+        if (!isAdminStep) {
+          // Stage locally only -- no network call, nothing created yet.
+          // See wizardDraftKids's own comment for why.
+          wizardDraftKids.push({
+            name: nameInput.value.trim(),
+            username: usernameField.getValue(),
+            credentialType: credentialSelect.value,
             pin: isPin ? pinInput.value.trim() : undefined,
-            password: (!isAdminStep && !isPin) ? passwordInput.value : undefined,
-            displayName: nameInput.value.trim(), role: roleLabel,
-            baseWeeklyAllowanceCents: allowanceInput ? centsFromMajorUnits(allowanceInput.value) : 0,
+            password: !isPin ? passwordInput.value : undefined,
+            allowanceCents: centsFromMajorUnits(allowanceInput.value),
           });
-          if (emailInput) emailInput.value = '';
-          if (usernameField) usernameField.reset();
+          usernameField.reset();
           if (pinInput) pinInput.value = '';
           if (passwordInput) passwordInput.value = '';
           nameInput.value = ''; if (allowanceInput) allowanceInput.value = '';
-          if (!isAdminStep) {
-            wizardChildAdded = true;
-            nextBtn.disabled = false;
-            childHintEl.hidden = true;
-            addMemberBtn.textContent = 'Add another child';
-          }
-          if (result.data.mode === 'created') {
-            successEl.textContent = isPin
-              ? `Added "${result.data.username}" -- they can sign in now with the username and PIN you set.`
-              : `Added "${result.data.username}" -- they can sign in now with the username and password you set.`;
-            successEl.hidden = false;
-          } else {
-            showCredentialModal({ title: 'Invite created' });
-          }
+          renderDraftList();
+          updateNextEnabled();
+          childHintEl.hidden = true;
+          addMemberBtn.textContent = addMemberBtnLabel();
+          updateAddMemberBtnEnabled();
+          return;
+        }
+
+        // Admin invites stay immediate -- a pre-provisioning /invites/{email}
+        // doc, not a real Auth account, so there's no "orphaned account"
+        // risk to stage against, and they're explicitly optional besides.
+        // Always mode:'invite' for role:'admin' (addFamilyMember never
+        // returns 'created' for this role), so there's just the one
+        // outcome to show.
+        try {
+          await callAddFamilyMember({
+            email: emailInput.value.trim(),
+            displayName: nameInput.value.trim(), role: roleLabel,
+            baseWeeklyAllowanceCents: 0,
+          });
+          emailInput.value = '';
+          nameInput.value = '';
+          showCredentialModal({ title: 'Invite created' });
         } catch (err) {
-          // Rare submit-time collision race -- re-open the collision UI.
-          if (usernameField && err.code === 'functions/already-exists') {
-            usernameField.usernameInput.dispatchEvent(new Event('blur'));
-          }
-          // Styled popup (same one used app-wide for a failed action), not
-          // an inline "system-looking" error line.
           showAppAlert(describeActionError(err), { title: `Couldn't add ${roleLabel}` });
         } finally {
           updateAddMemberBtnEnabled();
         }
       },
-    }, isAdminStep ? 'Add another admin' : (hasChildAlready ? 'Add another child' : 'Add'));
+    }, addMemberBtnLabel());
     addMemberBtn.disabled = !isAddMemberValid();
     card.appendChild(addMemberBtn);
+    if (!isAdminStep) renderDraftList();
 
     // A family with zero children breaks step 3 (quick-setup chores)
     // silently -- rotating/eachMember chores would save with an empty
     // pool/assignedTo -- so Next is disabled outright on this step until a
-    // child exists, rather than clickable-then-rejected. The admins step
-    // stays always-enabled -- it's explicitly optional per its own copy
-    // above.
+    // child exists (drafted or already real), rather than clickable-then-
+    // rejected. The admins step stays always-enabled -- it's explicitly
+    // optional per its own copy above.
     const childHintEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' }, 'Add at least one child above to continue.');
-    childHintEl.hidden = isAdminStep || hasChildAlready;
+    childHintEl.hidden = isAdminStep || hasChildAlready();
     card.appendChild(childHintEl);
 
+    function updateNextEnabled() { nextBtn.disabled = !isAdminStep && !hasChildAlready(); }
     const nextBtn = el('button', {
       class: 'pill primary', style: 'flex:1;', type: 'button',
-      onclick: () => { wizardStep += 1; renderWizardStep(); },
+      onclick: async () => {
+        if (isAdminStep || wizardDraftKids.length === 0) {
+          wizardStep += 1; renderWizardStep();
+          return;
+        }
+        // Batch-commit every drafted kid now -- this is the one moment
+        // they actually become real accounts. Failures (a genuine
+        // last-second collision, a network blip) stay in the draft list
+        // for the admin to fix/retry; only what succeeds is cleared and
+        // only advances if EVERYTHING succeeded, so a partial failure
+        // never silently strands the family mid-setup.
+        nextBtn.disabled = true;
+        nextBtn.textContent = 'Adding…';
+        const failures = [];
+        const remaining = [];
+        for (const draft of wizardDraftKids) {
+          try {
+            await callAddFamilyMember({
+              username: draft.username,
+              credentialType: draft.credentialType,
+              pin: draft.credentialType === 'pin' ? draft.pin : undefined,
+              password: draft.credentialType === 'password' ? draft.password : undefined,
+              displayName: draft.name, role: 'child',
+              baseWeeklyAllowanceCents: draft.allowanceCents,
+            });
+          } catch (err) {
+            failures.push({ draft, message: describeActionError(err) });
+            remaining.push(draft);
+          }
+        }
+        wizardDraftKids = remaining;
+        nextBtn.textContent = 'Next';
+        if (failures.length > 0) {
+          renderDraftList();
+          updateNextEnabled();
+          addMemberBtn.textContent = addMemberBtnLabel();
+          await showAppAlert(
+            failures.map((f) => `${f.draft.name}: ${f.message}`).join('\n'),
+            { title: failures.length === 1 ? "Couldn't add one child" : `Couldn't add ${failures.length} children` }
+          );
+          return;
+        }
+        wizardStep += 1;
+        renderWizardStep();
+      },
     }, 'Next');
-    nextBtn.disabled = !isAdminStep && !hasChildAlready;
+    nextBtn.disabled = !isAdminStep && !hasChildAlready();
 
     const nav = el('div', { style: 'display:flex;gap:8px;' }, [
       el('button', { class: 'pill', style: 'flex:1;', onclick: () => { wizardStep -= 1; renderWizardStep(); } }, 'Back'),
