@@ -6279,7 +6279,7 @@ function renderSettings() {
 
   container.appendChild(el('p', { class: 'ca-section' }, 'Account'));
   container.appendChild(renderMoreLink('Change password', () => showScreen('changePassword')));
-  container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; renderWizardStep(); }));
+  container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; wizardChildAdded = false; renderWizardStep(); }));
   container.appendChild(el('button', { class: 'signout-row', onclick: () => signOut(auth) }, 'Sign out'));
 }
 
@@ -6334,6 +6334,14 @@ const STARTER_TEMPLATES = [
 let wizardStep = 0;
 let wizardItems = STARTER_TEMPLATES.map((t) => ({ ...t }));
 let wizardSaveAsTemplates = true;
+// Set synchronously the instant a child is successfully added during this
+// wizard visit (step 1's "Add another child" handler) -- guards the
+// step-1 "Next" button below without depending on state.members' onSnapshot
+// listener, which updates asynchronously (callAddFamilyMember is a Cloud
+// Function write, not an optimistic local client write) and could
+// otherwise leave a brief window where a just-added child doesn't yet
+// count. Reset to false wherever the wizard is (re)started from step 0.
+let wizardChildAdded = false;
 
 function renderWizardProgress() {
   const bar = document.getElementById('wizardProgress');
@@ -6426,6 +6434,7 @@ function renderWizardStep() {
           if (pinInput) pinInput.value = '';
           if (passwordInput) passwordInput.value = '';
           nameInput.value = ''; if (allowanceInput) allowanceInput.value = '';
+          if (!isAdminStep) wizardChildAdded = true;
           if (result.data.mode === 'created') {
             successEl.textContent = isPin
               ? `Added "${result.data.username}" -- they can sign in now with the username and PIN you set.`
@@ -6443,7 +6452,21 @@ function renderWizardStep() {
 
     const nav = el('div', { style: 'display:flex;gap:8px;' }, [
       el('button', { class: 'pill', style: 'flex:1;', onclick: () => { wizardStep -= 1; renderWizardStep(); } }, 'Back'),
-      el('button', { class: 'pill primary', style: 'flex:1;', onclick: () => { wizardStep += 1; renderWizardStep(); } }, 'Next'),
+      el('button', {
+        class: 'pill primary', style: 'flex:1;', type: 'button',
+        onclick: () => {
+          // A family with zero children breaks step 3 (quick-setup chores)
+          // silently -- rotating/eachMember chores would save with an empty
+          // pool/assignedTo -- so this step alone is a hard gate, unlike the
+          // admins step (explicitly optional per its own copy above).
+          if (!isAdminStep && !wizardChildAdded && !state.members.some((m) => m.role === 'child')) {
+            errorEl.textContent = 'Add at least one child before continuing.';
+            errorEl.hidden = false;
+            return;
+          }
+          wizardStep += 1; renderWizardStep();
+        },
+      }, 'Next'),
     ]);
     card.appendChild(nav);
     content.appendChild(card);
