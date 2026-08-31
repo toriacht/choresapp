@@ -3703,10 +3703,10 @@ function renderEarnItBackForm(tx, currency) {
   const options = state.catalog.filter((c) => c.active !== false);
   let selectedCatalogId = null;
   const proposeDesc = el('input', { type: 'text', placeholder: 'Describe the task', hidden: true, style: 'margin-top:8px;' });
-  const proposeAmount = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Amount you\'re asking for (e.g. 5.00)', hidden: true });
+  const proposeAmount = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'How much? (e.g. 5.00)', hidden: true });
   const errorEl = el('p', { class: 'error-text' });
   errorEl.hidden = true;
-  const submitBtn = el('button', { type: 'button', class: 'pill primary' }, 'Request approval');
+  const submitBtn = el('button', { type: 'button', class: 'pill primary' }, 'Ask a parent');
   submitBtn.disabled = true;
 
   function updateSubmitEnabled() {
@@ -3739,7 +3739,7 @@ function renderEarnItBackForm(tx, currency) {
     updateSubmitEnabled();
   });
   card.appendChild(el('label', { style: 'display:flex;align-items:center;padding:8px 0;cursor:pointer;' }, [
-    proposeRadio, el('span', {}, 'Propose your own'),
+    proposeRadio, el('span', {}, 'Ask about something else'),
   ]));
   card.appendChild(proposeDesc);
   card.appendChild(proposeAmount);
