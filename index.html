@@ -1426,7 +1426,7 @@ function formatSignedCents(cents, currency) {
 // Money screen notes.
 function ledgerTypeLabel(tx) {
   const LEDGER_TYPE_LABELS = {
-    weekly_payout: 'Weekly allowance', streak_bonus: 'Daily task bonus',
+    weekly_payout: 'Weekly allowance', streak_bonus: 'Basics bonus',
     extra_job_credit: 'Extra job', chore_bonus: 'Bonus',
     missed_chore_reversal: 'Late completion credit',
     deduction: 'Deduction', missed_chore_deduction: 'Missed chore',
@@ -3484,7 +3484,7 @@ function computePendingStreakBonusLines(memberUid) {
   if (!summary || summary.amountCents <= 0) return [];
   const projectedCents = Math.round(summary.amountCents * (summary.streak / 7));
   if (projectedCents <= 0) return [];
-  return [{ label: `Daily task bonus — ${summary.streak}/7 days`, cents: projectedCents }];
+  return [{ label: `Basics bonus — ${summary.streak}/7 days`, cents: projectedCents }];
 }
 
 function pctLabel(approved, total) {
@@ -4666,7 +4666,7 @@ function renderAdminDashboard() {
     ]),
   ])));
 
-  // ---- Daily task bonus: a quiet line, not a nagging card (mockup: "'Not
+  // ---- Basics bonus: a quiet line, not a nagging card (mockup: "'Not
   // set up yet' in a full card will sit there permanently for anyone who
   // doesn't want the feature") -- editor lives on that child's own Kids
   // tab detail view, alongside their allowance, not a separate Settings
@@ -4676,13 +4676,13 @@ function renderAdminDashboard() {
     container.appendChild(el('button', {
       type: 'button', class: 'ca-btn ca-btn--secondary ca-btn--block', style: 'margin-top:var(--ca-space-2);',
       onclick: () => switchTab('kids'),
-    }, 'Set up a daily task bonus'));
+    }, 'Set up a basics bonus'));
   } else {
     const hotStreakChild = hotStreakChildren[0];
     container.appendChild(el('p', {
       class: 'ca-meta', style: 'text-align:center;margin-top:var(--ca-space-2);cursor:pointer;',
       onclick: () => { selectedKidUid = hotStreakChild.uid; switchTab('kids'); },
-    }, [el('i', { class: 'ti ti-flame' }), ` Daily task bonus on for ${memberLabel(hotStreakChild.uid)} · Edit under Kids`]));
+    }, [el('i', { class: 'ti ti-flame' }), ` Basics bonus on for ${memberLabel(hotStreakChild.uid)} · Edit under Kids`]));
   }
 }
 
@@ -4773,9 +4773,9 @@ function renderKidDetailBody(container, uid) {
   container.appendChild(makeExpandable('+ Sign-in username', renderUsernameManagementForm(child, uid)));
   container.appendChild(makeExpandable('+ Sign-in method', renderCredentialManagementForm(child, uid)));
   container.appendChild(renderEditableAllowanceCard(child, currency));
-  container.appendChild(makeExpandable('+ Daily task bonus', renderHotStreakBonusBody(child)));
+  container.appendChild(makeExpandable('+ Basics bonus', renderHotStreakBonusBody(child)));
   container.appendChild(makeExpandable(
-    `+ Add a chore or daily task for ${child.displayName || child.email}`,
+    `+ Add a chore or basic for ${child.displayName || child.email}`,
     renderChoreForm({ presetChildUid: uid })
   ));
 
@@ -5846,7 +5846,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   const descInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
   const categorySelect = el('select', {}, [
     el('option', { value: 'chore' }, 'Chore'),
-    el('option', { value: 'dailyTask' }, 'Daily task'),
+    el('option', { value: 'dailyTask' }, 'Basic'),
   ]);
   const modeSelect = el('select', {}, [
     el('option', { value: 'fixed' }, 'One specific person'),
@@ -6318,7 +6318,7 @@ function renderActiveChores(container) {
   ['dailyTask', 'chore'].forEach((cat) => {
     const chores = state.chores.filter((c) => (c.category || 'chore') === cat);
     if (chores.length === 0) return;
-    container.appendChild(el('p', { class: 'ca-section' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
+    container.appendChild(el('p', { class: 'ca-section' }, cat === 'dailyTask' ? 'Basics' : 'Chores'));
     chores.forEach((chore) => {
       const mode = resolveAssignmentMode(chore);
       let assignedLabel;
@@ -6592,8 +6592,8 @@ function renderHotStreakBonusBody(child) {
   const enableInput = el('input', { type: 'checkbox', ...(cfg.enabled ? { checked: 'checked' } : {}) });
   form.appendChild(el('div', { class: 'more-toggle-row', style: 'padding:8px 0;' }, [
     el('div', {}, [
-      el('div', { class: 'more-toggle-label' }, 'Enable daily task bonus'),
-      el('div', { class: 'muted', style: 'font-size:0.78rem;' }, `Reward ${child.displayName || 'this child'} for completing selected daily tasks every day.`),
+      el('div', { class: 'more-toggle-label' }, 'Enable basics bonus'),
+      el('div', { class: 'muted', style: 'font-size:0.78rem;' }, `Reward ${child.displayName || 'this child'} for completing selected basics every day.`),
     ]),
     el('label', { class: 'theme-switch' }, [enableInput, el('span', { class: 'theme-switch-slider' })]),
   ]));
@@ -6605,7 +6605,7 @@ function renderHotStreakBonusBody(child) {
   const dailyTasks = state.chores.filter(
     (c) => c.active !== false && c.category === 'dailyTask' && resolvePool(c, activeChildUids()).includes(child.uid)
   );
-  form.appendChild(el('label', {}, 'Included daily tasks'));
+  form.appendChild(el('label', {}, 'Included basics'));
   const taskCheckboxes = dailyTasks.map((c) => {
     const cb = el('input', {
       type: 'checkbox', value: c.id, style: 'margin-right:6px;',
@@ -6615,7 +6615,7 @@ function renderHotStreakBonusBody(child) {
     return cb;
   });
   if (dailyTasks.length === 0) {
-    form.appendChild(el('div', { class: 'muted' }, `${child.displayName || 'This child'} has no daily tasks yet -- add one first (Manage Chores).`));
+    form.appendChild(el('div', { class: 'muted' }, `${child.displayName || 'This child'} has no basics yet -- add one first (Manage Chores).`));
   }
 
   const errorEl = el('p', { class: 'error-text' });
@@ -6678,7 +6678,7 @@ function renderHotStreakBonusBody(child) {
       style: 'display:flex;align-items:center;gap:8px;margin-top:12px;padding:10px 12px;background:var(--panel2);border-radius:10px;font-size:0.82rem;',
     }, [
       svgIcon('infoCircle', { size: 16, color: 'var(--accent2)' }),
-      el('div', {}, 'Complete all selected daily tasks every day to earn the full streak bonus -- a task done late still counts once approved, even for a past week.'),
+      el('div', {}, 'Complete all selected basics every day to earn the full streak bonus -- one done late still counts once approved, even for a past week.'),
     ]));
     wrap.appendChild(preview);
   }
@@ -7201,14 +7201,14 @@ function renderChoreWizardHowItWorks(card) {
   choresCard.appendChild(allowanceInput);
   choresCard.appendChild(el('p', { class: 'muted', style: 'font-size:0.78rem;margin:4px 0 0;' }, "A week's allowance, split across their chores."));
 
-  // Daily tasks card -- the bonus on/off switch lives in its header now,
-  // not a separate toggle row below both cards.
+  // Basics card -- the bonus on/off switch lives in its header now, not
+  // a separate toggle row below both cards.
   const bonusToggle = el('input', { type: 'checkbox', ...(wizardChoreState.bonusEnabled ? { checked: 'checked' } : {}) });
   bonusToggle.addEventListener('change', () => { wizardChoreState.bonusEnabled = bonusToggle.checked; renderWizardStep(); });
   const dailyTasksCard = el('div', { class: 'booking-card' }, [
     el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;' }, [
       svgIcon('award', { size: 16, color: 'var(--accent2)' }),
-      el('span', { style: 'font-weight:700;flex:1;' }, 'Daily tasks'),
+      el('span', { style: 'font-weight:700;flex:1;' }, 'Basics'),
       el('label', { class: 'theme-switch' }, [bonusToggle, el('span', { class: 'theme-switch-slider' })]),
     ]),
     el('div', { class: 'muted', style: 'margin-bottom:9px;' }, wizardChoreState.isRerun
@@ -7255,9 +7255,9 @@ function renderChoreWizardHowItWorks(card) {
   renderChoreWizardNav(card, { onNext: choreWizardNext });
 }
 
-// ---- 2 · Daily tasks ---------------------------------------------------
+// ---- 2 · Basics ---------------------------------------------------
 function renderChoreWizardDailyTasks(card) {
-  card.appendChild(el('h1', {}, 'Daily tasks'));
+  card.appendChild(el('h1', {}, 'Basics'));
   card.appendChild(el('p', { class: 'muted' }, 'The everyday things you expect anyway.'));
 
   const listWrap = el('div', {});
@@ -7625,13 +7625,13 @@ function renderChoreWizardReview(card) {
         el('span', { class: 'ca-avatar', style: `background:var(--ca-child-${childColorIdx(uid)});color:var(--ca-child-${childColorIdx(uid)}-ink);` }, memberLabel(uid).charAt(0).toUpperCase()),
         el('div', { style: 'flex:1;' }, [
           el('div', { style: 'font-weight:700;' }, memberLabel(uid)),
-          el('div', { class: 'muted', style: 'font-size:0.78rem;' }, `${choreCountForUid} chores · ${chosenTasks.length} daily tasks`),
+          el('div', { class: 'muted', style: 'font-size:0.78rem;' }, `${choreCountForUid} chores · ${chosenTasks.length} basics`),
         ]),
         el('span', { style: 'font-weight:700;' }, formatCents(allowanceCents + bonusCents, currency)),
       ]),
       el('div', { style: 'border-top:1px solid var(--border);padding-top:6px;font-size:0.78rem;' }, [
         el('div', { style: 'display:flex;justify-content:space-between;' }, [el('span', { class: 'muted' }, 'Chores'), el('span', { class: 'muted' }, `up to ${formatCents(allowanceCents, currency)}`)]),
-        wizardChoreState.bonusEnabled ? el('div', { style: 'display:flex;justify-content:space-between;' }, [el('span', { class: 'muted' }, 'Daily task bonus'), el('span', { class: 'muted' }, formatCents(bonusCents, currency))]) : null,
+        wizardChoreState.bonusEnabled ? el('div', { style: 'display:flex;justify-content:space-between;' }, [el('span', { class: 'muted' }, 'Basics bonus'), el('span', { class: 'muted' }, formatCents(bonusCents, currency))]) : null,
       ]),
     ]));
   });
@@ -7808,7 +7808,7 @@ function renderWizardStep() {
   if (wizardStep === 0) {
     content.appendChild(el('div', { class: 'wizard-card' }, [
       el('h1', {}, 'Welcome!'),
-      el('p', { class: 'muted' }, "Let's set up your family. You'll add your kids and any other admins, then pick daily tasks and chores to start with -- everything here can be changed later."),
+      el('p', { class: 'muted' }, "Let's set up your family. You'll add your kids and any other admins, then pick basics and chores to start with -- everything here can be changed later."),
       el('label', {}, 'Family name'),
       renderFamilyNameField(),
       el('button', { class: 'pill primary', style: 'width:100%;margin-top:14px;', onclick: () => { wizardStep = 1; renderWizardStep(); } }, 'Get started'),
@@ -8196,8 +8196,8 @@ function summaryStatRow(icon, value, label) {
 // ---------------------------------------------------------------------
 const CHORE_WIZARD_TYPE_OPTIONS = [
   ['chores', 'broom', 'Chores only', 'Assign or reassign chores'],
-  ['dailyTasks', 'calendarCheck', 'Daily tasks only', 'Assign or reassign daily tasks'],
-  ['both', 'checkCircleWithRing', 'Both chores & daily tasks', 'Configure everything'],
+  ['dailyTasks', 'calendarCheck', 'Basics only', 'Assign or reassign basics'],
+  ['both', 'checkCircleWithRing', 'Both chores & basics', 'Configure everything'],
 ];
 
 function renderChoreWizardStep() {
@@ -8211,7 +8211,7 @@ function renderChoreWizardStep() {
     card.appendChild(el('p', { class: 'muted' }, 'What would you like to do?'));
     const options = [
       ['reassign', 'people', 'Reassign existing', 'Change who does what, or their schedule'],
-      ['add', 'plus', 'Add new', 'Add chores or daily tasks to your list'],
+      ['add', 'plus', 'Add new', 'Add chores or basics to your list'],
       ['startFresh', 'circleMinus', 'Start fresh', 'Clear everything and rebuild from scratch'],
     ];
     const optionsWrap = el('div', {});
@@ -8230,7 +8230,7 @@ function renderChoreWizardStep() {
   if (choreWizard.step === 'type') {
     const card = el('div', { class: 'wizard-card' });
     card.appendChild(el('h1', {}, 'Chore wizard'));
-    card.appendChild(el('p', { class: 'muted' }, 'Chores, daily tasks, or both?'));
+    card.appendChild(el('p', { class: 'muted' }, 'Chores, basics, or both?'));
     const options = choreWizard.mode === 'reassign'
       ? CHORE_WIZARD_TYPE_OPTIONS
       : CHORE_WIZARD_TYPE_OPTIONS.filter(([value]) => value !== 'both');
@@ -8288,7 +8288,7 @@ function handOffChoreWizard() {
 // ever writes `active: false`, never deletes anything.
 function renderStartFreshConfirmStep(content) {
   const category = choreWizard.type === 'dailyTasks' ? 'dailyTask' : 'chore';
-  const label = category === 'dailyTask' ? 'daily task' : 'chore';
+  const label = category === 'dailyTask' ? 'basic' : 'chore';
   const matching = state.chores.filter((c) => c.active !== false && (c.category || 'chore') === category);
   const card = el('div', { class: 'wizard-card' });
   card.appendChild(el('h1', {}, 'Start fresh?'));
@@ -8360,8 +8360,8 @@ function renderRunWizardStep() {
     card.appendChild(el('p', { class: 'muted' }, 'What would you like to configure?'));
     const options = [
       ['chores', 'broom', 'Chores only', 'Assign or reassign chores'],
-      ['dailyTasks', 'calendarCheck', 'Daily tasks only', 'Assign or reassign daily tasks'],
-      ['both', 'checkCircleWithRing', 'Both chores & daily tasks', 'Configure everything'],
+      ['dailyTasks', 'calendarCheck', 'Basics only', 'Assign or reassign basics'],
+      ['both', 'checkCircleWithRing', 'Both chores & basics', 'Configure everything'],
     ];
     const optionsWrap = el('div', {});
     options.forEach(([value, icon, title, subtitle]) => {
@@ -8411,7 +8411,7 @@ function renderRunWizardStep() {
       style: 'display:flex;gap:8px;align-items:flex-start;margin-top:14px;padding:10px 12px;background:var(--panel2);border-radius:10px;font-size:0.82rem;',
     }, [
       svgIcon('infoCircle', { size: 16, color: 'var(--accent2)' }),
-      el('div', {}, 'Running for one child will only affect their chores and/or daily tasks.'),
+      el('div', {}, 'Running for one child will only affect their chores and/or basics.'),
     ]));
     return;
   }
@@ -8426,7 +8426,7 @@ function renderRunWizardStep() {
       }, [
         el('div', { style: 'font-weight:700;' }, `This will apply to ${child ? (child.displayName || child.email) : 'this child'} only`),
         el('div', { class: 'muted', style: 'font-size:0.85rem;margin-top:4px;' },
-          `Only their chores and/or daily tasks will be updated. Shared (round-robin) chores will stay as they are unless you change them.`),
+          `Only their chores and/or basics will be updated. Shared (round-robin) chores will stay as they are unless you change them.`),
       ]));
     }
     [
@@ -8467,12 +8467,12 @@ function renderRunWizardStep() {
       card.appendChild(summaryStatRow('people', rotatingCount, 'Round-robin chores'));
     }
     if (runWizard.type !== 'chores') {
-      card.appendChild(el('div', { class: 'ring-heading', style: 'margin-top:10px;' }, 'Daily tasks'));
-      card.appendChild(summaryStatRow('calendarCheck', dailyTasks.length, 'Daily tasks'));
+      card.appendChild(el('div', { class: 'ring-heading', style: 'margin-top:10px;' }, 'Basics'));
+      card.appendChild(summaryStatRow('calendarCheck', dailyTasks.length, 'Basics'));
       card.appendChild(summaryStatRow('people', appliedToAll, 'Applied to all'));
     }
     if (scoped.length === 0) {
-      card.appendChild(el('div', { class: 'empty-state' }, 'Nothing in scope yet -- add some from "Add chores/daily tasks to library" first.'));
+      card.appendChild(el('div', { class: 'empty-state' }, 'Nothing in scope yet -- add some from "Add chores/basics to library" first.'));
     }
     card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
       el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.INFO) }, 'Back'),
@@ -8500,7 +8500,7 @@ function renderRunWizardStep() {
     ['chore', 'dailyTask'].forEach((cat) => {
       const items = scoped.filter((c) => (c.category || 'chore') === cat);
       if (items.length === 0) return;
-      content.appendChild(el('h2', { style: 'margin-top:10px;' }, cat === 'dailyTask' ? 'Daily tasks' : 'Chores'));
+      content.appendChild(el('h2', { style: 'margin-top:10px;' }, cat === 'dailyTask' ? 'Basics' : 'Chores'));
       items.forEach((chore) => content.appendChild(runWizardItemRow(chore)));
     });
 
@@ -8519,7 +8519,7 @@ function renderRunWizardStep() {
       el('p', { class: 'muted' }, 'Your setup has been updated.'),
       el('div', { class: 'booking-card', style: 'text-align:left;' }, [
         runWizard.type !== 'dailyTasks' ? el('div', {}, [svgIcon('check', { size: 14, color: 'var(--success)' }), ' Chores updated']) : null,
-        runWizard.type !== 'chores' ? el('div', {}, [svgIcon('check', { size: 14, color: 'var(--success)' }), ' Daily tasks updated']) : null,
+        runWizard.type !== 'chores' ? el('div', {}, [svgIcon('check', { size: 14, color: 'var(--success)' }), ' Basics updated']) : null,
         el('div', { class: 'muted', style: 'margin-top:6px;' }, `Scope: ${child ? (child.displayName || child.email) : 'Whole family'}`),
       ]),
       el('button', {
@@ -8603,7 +8603,7 @@ function runWizardItemRow(chore) {
 // "My family library -- use or duplicate from your existing list" wording,
 // NOT the smaller separate choreTemplates quick-pick collection the plain
 // form already has.
-function addWizardCategoryLabel() { return addWizard.category === 'dailyTask' ? 'daily task' : 'chore'; }
+function addWizardCategoryLabel() { return addWizard.category === 'dailyTask' ? 'basic' : 'chore'; }
 function addWizardStarterLibrary() { return addWizard.category === 'dailyTask' ? STARTER_DAILY_TASK_LIBRARY : STARTER_CHORE_LIBRARY; }
 function addWizardFamilyItems() { return state.chores.filter((c) => (c.category || 'chore') === addWizard.category); }
 
@@ -8762,7 +8762,7 @@ function renderAddWizardStep() {
     const draft = addWizard.draft;
     const card = el('div', { class: 'wizard-card' });
     card.appendChild(el('h1', {}, `Configure ${addWizardCategoryLabel()}`));
-    const nameInput = el('input', { type: 'text', placeholder: `${addWizard.category === 'dailyTask' ? 'Daily task' : 'Chore'} name`, required: true });
+    const nameInput = el('input', { type: 'text', placeholder: `${addWizard.category === 'dailyTask' ? 'Basic' : 'Chore'} name`, required: true });
     nameInput.value = draft.name;
     const iconInput = renderIconPicker(resolveIconPickerValue(draft.icon));
     const descInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
