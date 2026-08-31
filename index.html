@@ -2024,8 +2024,20 @@ function showScreen(name) {
 // parent-code/parentAuth callables). A functions/ error's message is
 // already the human-written string a callable threw (see kidAuth.js/
 // parentCode.js/parentAuth.js) -- surfaced as-is, no code prefix.
+// Firebase's own placeholder text for an unexpected, uncaught server-side
+// error -- deliberately generic for security, always exactly this string
+// regardless of what actually broke. A deliberate `HttpsError('internal',
+// '<real message>')` throw (several exist in functions/lib/*.js, e.g.
+// invites.js's "Could not create the account: ...") keeps its own real
+// text and never matches this, so this only ever catches genuine crashes,
+// not intentional error messages.
+function isGenericServerCrash(err) {
+  return !!(err && err.message === 'INTERNAL');
+}
 function describeParentAuthError(err) {
-  if (err.code && err.code.startsWith('functions/')) return err.message;
+  if (err.code && err.code.startsWith('functions/')) {
+    return isGenericServerCrash(err) ? 'Something went wrong on our end. Try again in a moment.' : err.message;
+  }
   if (err.code === 'auth/email-already-in-use') return 'An account already exists for that email -- try signing in instead.';
   if (err.code === 'auth/weak-password') return 'Password must be at least 6 characters.';
   if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') return 'Wrong email or password.';
@@ -2548,6 +2560,7 @@ function describeActionError(err) {
   if (code === 'permission-denied' || code === 'functions/permission-denied') {
     return "You don't have permission to do that.";
   }
+  if (isGenericServerCrash(err)) return 'Something went wrong on our end. Try again in a moment.';
   return (err && err.message) || 'Something went wrong — please try again.';
 }
 
@@ -7360,13 +7373,26 @@ function renderChoreWizardChores(card) {
   renderList();
 
   const nameInput = el('input', { type: 'text', placeholder: 'e.g. Clean out the shed', style: 'margin-top:6px;' });
+  // 'timesPerWeek' (ADR-0033) already existed everywhere else -- the
+  // post-onboarding "Add chore" form, several SETUP_WIZARD_CHORES library
+  // items, commitChoreWizard's write path -- just missing from this one
+  // option list. It's the right fit for a chore like "bring the bins in"
+  // that fills up on no fixed day but should still count toward the
+  // weighted allowance, unlike 'occasional' (never counts).
   const frequencySelect = el('select', {}, [
     el('option', { value: 'daily' }, 'Daily'), el('option', { value: 'custom' }, 'Some days'),
-    el('option', { value: 'weekly', selected: 'selected' }, 'Weekly'), el('option', { value: 'occasional' }, 'Now and then'),
+    el('option', { value: 'weekly', selected: 'selected' }, 'Weekly'),
+    el('option', { value: 'timesPerWeek' }, 'A few times a week, any days'),
+    el('option', { value: 'occasional' }, 'Now and then'),
   ]);
   const sizeSelect = el('select', {}, [
     el('option', { value: 'small' }, 'Small'), el('option', { value: 'medium', selected: 'selected' }, 'Medium'), el('option', { value: 'large' }, 'Large'),
   ]);
+  const timesPerWeekSelect = renderTimesPerWeekSelect();
+  const timesPerWeekWrap = el('div', { hidden: true, style: 'margin-bottom:8px;' }, [
+    el('label', {}, 'How many times a week?'), attachCustomSelect(timesPerWeekSelect),
+  ]);
+  frequencySelect.addEventListener('change', () => { timesPerWeekWrap.hidden = frequencySelect.value !== 'timesPerWeek'; });
   const errorEl = el('p', { class: 'error-text', style: 'margin:0 0 8px;' });
   errorEl.hidden = true;
   const addBtn = el('button', {
@@ -7384,6 +7410,7 @@ function renderChoreWizardChores(card) {
       wizardChoreState.choreDrafts.push({
         id: nextWizardDraftId(), name, tabCategory: 'Custom', icon: inferChoreIcon(name),
         frequency: frequencySelect.value, size: sizeSelect.value, checked: true, existing: false, eligibleUids: undefined,
+        ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
       });
       nameInput.value = '';
       renderList();
@@ -7393,6 +7420,7 @@ function renderChoreWizardChores(card) {
   card.appendChild(el('label', {}, 'Write your own'));
   card.appendChild(nameInput);
   card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-bottom:8px;' }, [attachCustomSelect(frequencySelect), attachCustomSelect(sizeSelect)]));
+  card.appendChild(timesPerWeekWrap);
   card.appendChild(addBtn);
   card.appendChild(errorEl);
 
