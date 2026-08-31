@@ -2148,6 +2148,10 @@ function childColorIdx(uid) {
 }
 let kidCurrentUsername = '';
 let kidPinDigits = [];
+// Which screen kidUnlockCodeStep's Back button returns to -- differs
+// depending on whether it was reached via an actual lockout or via
+// "Forgotten it?" pre-emptively (see kidPinForgotBtn/kidParentHereBtn).
+let kidUnlockReturnStep = 'kidLockedStep';
 function renderKidPinDots() {
   document.querySelectorAll('#kidPinDots .ca-pin-dot').forEach((dot, i) => {
     if (i < kidPinDigits.length) dot.setAttribute('data-filled', ''); else dot.removeAttribute('data-filled');
@@ -2198,8 +2202,21 @@ document.getElementById('kidUsernameStep').addEventListener('submit', async (eve
   showKidStep('kidPinStep');
 });
 document.getElementById('kidPinBackBtn').addEventListener('click', () => showKidStep('kidUsernameStep'));
+// "Forgotten it?" used to just show an alert pointing at the admin-side
+// reset, dead-ending a child who already HAS a parent-generated code in
+// hand -- the code-entry screen (kidUnlockCodeStep) previously only had
+// one path in, through the lockout screen after enough wrong PINs. It
+// doesn't actually require being locked out server-side (see
+// unlockWithParentCode), so this is a legitimate second entry point, not
+// a workaround. kidUnlockReturnStep remembers which screen "Back" should
+// return to, since that differs depending on how this was reached.
 document.getElementById('kidPinForgotBtn').addEventListener('click', () => {
-  showAppAlert("Ask your parent to reset your PIN from their Kids tab.");
+  document.getElementById('kidUnlockCodeInput').value = '';
+  document.getElementById('kidUnlockSetNewPinCheckbox').checked = false;
+  document.getElementById('kidUnlockNewPinField').hidden = true;
+  document.getElementById('kidUnlockNewPinInput').value = '';
+  kidUnlockReturnStep = 'kidPinStep';
+  showKidStep('kidUnlockCodeStep');
 });
 
 document.getElementById('kidPasswordBackBtn').addEventListener('click', () => showKidStep('kidUsernameStep'));
@@ -2295,9 +2312,10 @@ document.getElementById('kidParentHereBtn').addEventListener('click', () => {
   document.getElementById('kidUnlockSetNewPinCheckbox').checked = false;
   document.getElementById('kidUnlockNewPinField').hidden = true;
   document.getElementById('kidUnlockNewPinInput').value = '';
+  kidUnlockReturnStep = 'kidLockedStep';
   showKidStep('kidUnlockCodeStep');
 });
-document.getElementById('kidUnlockBackBtn').addEventListener('click', () => showKidStep('kidLockedStep'));
+document.getElementById('kidUnlockBackBtn').addEventListener('click', () => showKidStep(kidUnlockReturnStep));
 document.getElementById('kidUnlockSetNewPinCheckbox').addEventListener('change', (event) => {
   document.getElementById('kidUnlockNewPinField').hidden = !event.target.checked;
 });
