@@ -2645,7 +2645,19 @@ async function markNotifRead(notifId) {
 // so grouping needs no backend/data-model change.
 function groupNotifications(list) {
   const groups = [];
+  // A rejected chore can be redone and later approved -- both
+  // notifications share the same relatedId (the choreLog entry, updated
+  // in place -- see functions/lib/choreReview.js), so once a review
+  // outcome shows for a chore, an older one for the same chore is stale
+  // and should drop rather than sit alongside it contradicting it. `list`
+  // is already newest-first (orderBy('createdAt', 'desc')), so the first
+  // one seen per relatedId is the one to keep.
+  const seenReviewRelatedIds = new Set();
   list.forEach((n) => {
+    if (n.type === 'chore_approved' || n.type === 'chore_rejected') {
+      if (seenReviewRelatedIds.has(n.relatedId)) return;
+      seenReviewRelatedIds.add(n.relatedId);
+    }
     if (n.type === 'chore_marked_done') {
       const entry = state.choreLog.find((e) => e.id === n.relatedId);
       const memberUid = entry ? entry.memberUid : null;
@@ -8646,7 +8658,8 @@ function renderAddWizardStep() {
     content.appendChild(card);
     addWizardFamilyItems().forEach((chore) => {
       content.appendChild(renderWizardOptionCard({
-        icon: resolveIconPickerValue(chore.icon), title: chore.name, subtitle: chore.description || null,
+        icon: resolveIconPickerValue(chore.icon), title: chore.name,
+        subtitle: chore.description && chore.description !== chore.name ? chore.description : null,
         onclick: () => {
           // No "(copy)" suffix -- per
           // mockups/rebrand/choresapp-parent-restyle.html: "Chores named
