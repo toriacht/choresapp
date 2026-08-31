@@ -1328,9 +1328,10 @@ function computeWeeklyPointsForMember(memberUid) {
   return { possible, earned };
 }
 
-// Live per-size euro value for the setup wizard's money screen
-// (mockups/rebrand/choresapp-setup-wizard-spec.html: "Small €0.88 ·
-// medium €1.76 · large €2.65" for a €15 allowance) -- same proportional-
+// Live per-size euro value for the setup wizard's Review screen
+// ("What one chore is worth" -- mockups/rebrand/choresapp-setup-wizard-
+// spec_updated.html: "Small €0.88 · medium €1.76 · large €2.65" for a
+// €15 allowance) -- same proportional-
 // points math as computeChoreInstanceCredit above, run against the
 // wizard's still-in-memory draft chores (nothing's real yet, so there's
 // no choreLog to read). possiblePoints is the week's total point value
@@ -5341,6 +5342,7 @@ function renderAddMemberForm() {
   const generatePasswordBtn = el('button', { type: 'button', class: 'pill', style: 'margin-bottom:8px;', hidden: true }, 'Generate a password');
   generatePasswordBtn.addEventListener('click', () => { passwordInput.value = generateSimplePassword(); updateSubmitEnabled(); });
   const allowanceInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Weekly allowance (e.g. 25)', required: true });
+  const submitBtn = el('button', { class: 'pill primary', type: 'submit' }, 'Add');
 
   // See ADR-0038: submit stays disabled until the current selection can
   // actually succeed, instead of a click-time reject.
@@ -5395,7 +5397,6 @@ function renderAddMemberForm() {
   const successEl = el('p', { class: 'muted', style: 'margin:0 0 8px;' });
   successEl.hidden = true;
   form.appendChild(successEl);
-  const submitBtn = el('button', { class: 'pill primary', type: 'submit' }, 'Add');
   form.appendChild(submitBtn);
   updateSubmitEnabled();
 
@@ -6978,18 +6979,24 @@ let wizardDraftKids = [];
 
 // ---------------------------------------------------------------------
 // Chores/daily-tasks/sharing-out/money sub-flow (ADR-0042,
-// mockups/rebrand/choresapp-setup-wizard-spec.html) -- wizardStep === 3's
-// own internal 6-screen state machine. Everything below lives in memory
+// mockups/rebrand/choresapp-setup-wizard-spec_updated.html) -- wizardStep
+// === 3's own internal 5-screen state machine (How it works now also
+// sets the money -- there's no separate money screen). Everything below
+// lives in memory
 // only; nothing reaches Firestore before Review ("Create it") commits it
 // in one pass, same principle ADR-0040 already established for the kids
 // step.
 // ---------------------------------------------------------------------
-let wizardChoreStep = 'howItWorks'; // 'howItWorks'|'dailyTasks'|'chores'|'sharingOut'|'money'|'review'
+let wizardChoreStep = 'howItWorks'; // 'howItWorks'|'dailyTasks'|'chores'|'sharingOut'|'review'
 let wizardChoreState = null;
 let wizardDraftIdCounter = 0;
 function nextWizardDraftId() { wizardDraftIdCounter += 1; return `draft${wizardDraftIdCounter}`; }
+// Which child's amounts How it works is currently showing when "Same for
+// both" is off -- a tab-strip selection, not part of wizardChoreState
+// itself (nothing here is written; it's purely which card is on screen).
+let wizardChoreMoneyTargetUid = null;
 
-const CHORE_WIZARD_STEP_ORDER = ['howItWorks', 'dailyTasks', 'chores', 'sharingOut', 'money', 'review'];
+const CHORE_WIZARD_STEP_ORDER = ['howItWorks', 'dailyTasks', 'chores', 'sharingOut', 'review'];
 function choreWizardVisibleSteps() {
   return CHORE_WIZARD_STEP_ORDER.filter((s) => {
     if (s === 'dailyTasks') return wizardChoreState.bonusEnabled;
@@ -7020,6 +7027,7 @@ function choreWizardNext() {
 // of that affects what gets written back out.
 function resetWizardChoreState() {
   wizardChoreStep = 'howItWorks';
+  wizardChoreMoneyTargetUid = null;
   const existingActiveChores = state.chores.filter((c) => c.active !== false);
   const isRerun = existingActiveChores.length > 0;
   const firstChild = state.members.find((m) => m.role === 'child');
@@ -7111,46 +7119,122 @@ function renderChoreWizardSubStep(content) {
   else if (wizardChoreStep === 'dailyTasks') renderChoreWizardDailyTasks(card);
   else if (wizardChoreStep === 'chores') renderChoreWizardChores(card);
   else if (wizardChoreStep === 'sharingOut') renderChoreWizardSharingOut(card);
-  else if (wizardChoreStep === 'money') renderChoreWizardMoney(card);
   else if (wizardChoreStep === 'review') renderChoreWizardReview(card);
 }
 
-// ---- 1 · How it works ------------------------------------------------
+// ---- 1 · How it works --------------------------------------------------
+// Explains each category and sets its amount in the same card (spec's
+// "explained and set together") -- there's no separate money screen
+// anymore (see ADR-0042's amendment). The one thing this screen can't
+// show is what a single chore is worth: no chores have been chosen yet,
+// so that arithmetic waits for Review, once real chores exist to divide
+// the allowance across.
 function renderChoreWizardHowItWorks(card) {
   const currency = choreWizardCurrency();
-  card.appendChild(el('h1', {}, wizardChoreState.isRerun ? 'How the money works' : 'How the money works'));
+  const activeUids = activeChildUids();
+  if (!wizardChoreMoneyTargetUid || !activeUids.includes(wizardChoreMoneyTargetUid)) {
+    wizardChoreMoneyTargetUid = activeUids[0] || null;
+  }
+  const perChild = !wizardChoreState.sameForBoth && activeUids.length > 1;
+  const targetUid = perChild ? wizardChoreMoneyTargetUid : null;
+  const override = targetUid ? (wizardChoreState.perChildOverrides[targetUid] || {}) : {};
+  const allowanceCents = targetUid && override.baseWeeklyAllowanceCents != null ? override.baseWeeklyAllowanceCents : wizardChoreState.baseWeeklyAllowanceCents;
+  const bonusCents = targetUid && override.bonusAmountCents != null ? override.bonusAmountCents : wizardChoreState.bonusAmountCents;
+
+  card.appendChild(el('h1', {}, 'How the money works'));
   card.appendChild(el('p', { class: 'muted' }, wizardChoreState.isRerun
     ? 'A quick recap before you make changes.'
     : 'Two kinds of job, two kinds of reward.'));
 
-  card.appendChild(el('div', { class: 'booking-card' }, [
-    el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;' }, [svgIcon('checkCircleWithRing', { size: 16, color: 'var(--accent2)' }), el('span', { style: 'font-weight:700;' }, 'Chores')]),
-    el('div', { class: 'muted' }, 'Bigger jobs -- the dishwasher, the bins, the lawn. Each one is worth part of the weekly allowance. Do them all, get the lot.'),
-  ]));
-  card.appendChild(el('div', { class: 'booking-card' }, [
-    el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;' }, [svgIcon('award', { size: 16, color: 'var(--accent2)' }), el('span', { style: 'font-weight:700;' }, 'Daily tasks')]),
-    el('div', { class: 'muted' }, 'Small things you expect anyway -- bed made, room tidy. Worth nothing on their own, but keeping them up every day earns a bonus on top.'),
-  ]));
+  if (perChild) {
+    const tabRow = el('div', { style: 'display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;' });
+    activeUids.forEach((uid) => {
+      const btn = el('button', { type: 'button', class: `pill small${uid === targetUid ? ' primary' : ''}` }, memberLabel(uid));
+      btn.addEventListener('click', () => { wizardChoreMoneyTargetUid = uid; renderWizardStep(); });
+      tabRow.appendChild(btn);
+    });
+    card.appendChild(tabRow);
+  }
 
-  const exampleAllowance = wizardChoreState.baseWeeklyAllowanceCents;
-  const exampleBonus = wizardChoreState.bonusEnabled ? wizardChoreState.bonusAmountCents : 0;
-  const exampleRows = [['Chores, all done', exampleAllowance]];
-  if (wizardChoreState.bonusEnabled) exampleRows.push(['Daily task bonus', exampleBonus]);
-  card.appendChild(el('div', { class: 'booking-card', style: 'background:var(--panel2);' }, [
-    el('div', { class: 'muted', style: 'font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px;' }, 'For example'),
-    ...exampleRows.map(([label, cents]) => el('div', { style: 'display:flex;justify-content:space-between;font-size:0.85rem;padding:2px 0;' }, [
-      el('span', { class: 'muted' }, label), el('span', { style: 'font-weight:600;' }, formatCents(cents, currency)),
-    ])),
-    el('div', { style: 'display:flex;justify-content:space-between;font-weight:700;padding-top:7px;margin-top:6px;border-top:1px solid var(--border);' }, [
-      el('span', {}, 'A perfect week'), el('span', {}, formatCents(exampleAllowance + exampleBonus, currency)),
+  const perfectWeekValueEl = el('span', { style: 'margin:0 0 0 auto;font-size:1.1rem;font-weight:700;' });
+  function updatePerfectWeek() {
+    const a = centsFromMajorUnits(allowanceInput.value);
+    const b = wizardChoreState.bonusEnabled && bonusInput ? centsFromMajorUnits(bonusInput.value) : 0;
+    perfectWeekValueEl.textContent = formatCents(a + b, currency);
+  }
+
+  // Chores card.
+  const choresCard = el('div', { class: 'booking-card' }, [
+    el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;' }, [
+      svgIcon('checkCircleWithRing', { size: 16, color: 'var(--accent2)' }),
+      el('span', { style: 'font-weight:700;flex:1;' }, 'Chores'),
     ]),
-  ]));
+    el('div', { class: 'muted', style: 'margin-bottom:9px;' }, wizardChoreState.isRerun
+      ? 'Bigger jobs, worth part of the weekly allowance.'
+      : 'Bigger jobs -- the dishwasher, the bins, the lawn. Each is worth part of the weekly allowance. Do them all, get the lot.'),
+  ]);
+  card.appendChild(choresCard);
+  const allowanceInput = el('input', { type: 'number', min: '0', step: '0.01' });
+  allowanceInput.value = (allowanceCents / 100).toFixed(2);
+  allowanceInput.addEventListener('input', () => {
+    const cents = centsFromMajorUnits(allowanceInput.value);
+    if (targetUid) wizardChoreState.perChildOverrides[targetUid] = { ...wizardChoreState.perChildOverrides[targetUid], baseWeeklyAllowanceCents: cents };
+    else wizardChoreState.baseWeeklyAllowanceCents = cents;
+    updatePerfectWeek();
+  });
+  choresCard.appendChild(allowanceInput);
+  choresCard.appendChild(el('p', { class: 'muted', style: 'font-size:0.78rem;margin:4px 0 0;' }, "A week's allowance, split across their chores."));
 
-  card.appendChild(renderMoreToggle('Use the daily task bonus', wizardChoreState.bonusEnabled, (checked) => {
-    wizardChoreState.bonusEnabled = checked;
-    renderWizardStep();
-  }));
-  card.appendChild(el('p', { class: 'muted', style: 'font-size:0.78rem;margin-top:-8px;' }, 'You can turn this off and just use chores.'));
+  // Daily tasks card -- the bonus on/off switch lives in its header now,
+  // not a separate toggle row below both cards.
+  const bonusToggle = el('input', { type: 'checkbox', ...(wizardChoreState.bonusEnabled ? { checked: 'checked' } : {}) });
+  bonusToggle.addEventListener('change', () => { wizardChoreState.bonusEnabled = bonusToggle.checked; renderWizardStep(); });
+  const dailyTasksCard = el('div', { class: 'booking-card' }, [
+    el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;' }, [
+      svgIcon('award', { size: 16, color: 'var(--accent2)' }),
+      el('span', { style: 'font-weight:700;flex:1;' }, 'Daily tasks'),
+      el('label', { class: 'theme-switch' }, [bonusToggle, el('span', { class: 'theme-switch-slider' })]),
+    ]),
+    el('div', { class: 'muted', style: 'margin-bottom:9px;' }, wizardChoreState.isRerun
+      ? 'Small things you expect anyway, worth a bonus for keeping them up.'
+      : 'Small things you expect anyway -- bed made, room tidy. Worth nothing on their own, but keeping them up all week earns a bonus.'),
+  ]);
+  card.appendChild(dailyTasksCard);
+  let bonusInput = null;
+  if (wizardChoreState.bonusEnabled) {
+    bonusInput = el('input', { type: 'number', min: '0', step: '0.01' });
+    bonusInput.value = (bonusCents / 100).toFixed(2);
+    bonusInput.addEventListener('input', () => {
+      const cents = centsFromMajorUnits(bonusInput.value);
+      if (targetUid) wizardChoreState.perChildOverrides[targetUid] = { ...wizardChoreState.perChildOverrides[targetUid], bonusAmountCents: cents };
+      else wizardChoreState.bonusAmountCents = cents;
+      updatePerfectWeek();
+    });
+    dailyTasksCard.appendChild(bonusInput);
+    dailyTasksCard.appendChild(el('p', { class: 'muted', style: 'font-size:0.78rem;margin:4px 0 0;' }, 'On top, if the streak holds.'));
+  }
+
+  // "A perfect week" summary, live.
+  card.appendChild(el('div', { class: 'booking-card', style: 'background:var(--panel2);' }, [
+    el('div', { style: 'display:flex;align-items:center;' }, [
+      el('div', {}, [
+        el('div', { style: 'font-weight:700;' }, 'A perfect week'),
+        el('div', { class: 'muted', style: 'font-size:0.78rem;' }, targetUid ? `${memberLabel(targetUid)}, paid Fridays` : 'Each child, paid Fridays'),
+      ]),
+      perfectWeekValueEl,
+    ]),
+    el('p', { class: 'muted', style: 'font-size:0.78rem;margin:7px 0 0;padding-top:7px;border-top:1px solid var(--border);' }, wizardChoreState.isRerun
+      ? 'Changing these takes effect from Monday -- this week is already under way.'
+      : 'Pick something roughly right -- you can change both amounts any time in Settings.'),
+  ]));
+  updatePerfectWeek();
+
+  if (activeUids.length > 1) {
+    card.appendChild(renderMoreToggle(`Same for ${activeUids.map((uid) => memberLabel(uid)).join(' and ')}`, wizardChoreState.sameForBoth, (checked) => {
+      wizardChoreState.sameForBoth = checked;
+      renderWizardStep();
+    }));
+  }
 
   renderChoreWizardNav(card, { onNext: choreWizardNext });
 }
@@ -7212,8 +7296,8 @@ function renderChoreWizardDailyTasks(card) {
       if (wizardChoreState.dailyTaskDrafts.filter((d) => d.checked).length === 0) {
         // No selected daily tasks -- the bonus has nothing to reward, so
         // turn it back off rather than carry an empty, meaningless config
-        // forward (the money screen would otherwise show a bonus for
-        // nothing).
+        // forward (How it works would otherwise still show a bonus
+        // amount for nothing).
         wizardChoreState.bonusEnabled = false;
       }
       choreWizardNext();
@@ -7484,82 +7568,7 @@ function openEligibilitySheet(draft, { onChange }) {
   document.body.appendChild(overlay);
 }
 
-// ---- 5 · The money -------------------------------------------------
-function renderChoreWizardMoney(card) {
-  const currency = choreWizardCurrency();
-  card.appendChild(el('h1', {}, 'The money'));
-  card.appendChild(el('p', { class: 'muted' }, 'Paid every Friday evening.'));
-
-  const activeUids = activeChildUids();
-  if (activeUids.length > 1) {
-    card.appendChild(renderMoreToggle('Same for both kids', wizardChoreState.sameForBoth, (checked) => {
-      wizardChoreState.sameForBoth = checked;
-      renderWizardStep();
-    }));
-  }
-
-  const targets = wizardChoreState.sameForBoth || activeUids.length <= 1 ? [null] : activeUids;
-  targets.forEach((uid) => {
-    const override = uid ? (wizardChoreState.perChildOverrides[uid] || {}) : {};
-    const allowanceCents = uid ? (override.baseWeeklyAllowanceCents != null ? override.baseWeeklyAllowanceCents : wizardChoreState.baseWeeklyAllowanceCents) : wizardChoreState.baseWeeklyAllowanceCents;
-    const bonusCents = uid ? (override.bonusAmountCents != null ? override.bonusAmountCents : wizardChoreState.bonusAmountCents) : wizardChoreState.bonusAmountCents;
-
-    if (uid) card.appendChild(el('p', { style: 'font-weight:700;margin:14px 0 4px;' }, memberLabel(uid)));
-
-    card.appendChild(el('label', {}, 'Weekly chore allowance'));
-    const allowanceInput = el('input', { type: 'number', min: '0', step: '0.01' });
-    allowanceInput.value = (allowanceCents / 100).toFixed(2);
-    const sizeValuesEl = el('p', { class: 'muted', style: 'font-size:0.78rem;margin-top:-4px;' });
-    function updateSizeValues() {
-      const chosen = wizardChoreState.choreDrafts.filter((d) => d.checked);
-      const cents = centsFromMajorUnits(allowanceInput.value);
-      const values = computeSizeValuesCents(chosen, cents);
-      sizeValuesEl.textContent = values.possiblePoints > 0
-        ? `Small ${formatCents(values.small, currency)} · Medium ${formatCents(values.medium, currency)} · Large ${formatCents(values.large, currency)}`
-        : 'Pick some chores to see per-size values.';
-    }
-    allowanceInput.addEventListener('input', () => {
-      const cents = centsFromMajorUnits(allowanceInput.value);
-      if (uid) { wizardChoreState.perChildOverrides[uid] = { ...wizardChoreState.perChildOverrides[uid], baseWeeklyAllowanceCents: cents }; }
-      else wizardChoreState.baseWeeklyAllowanceCents = cents;
-      updateSizeValues();
-      updatePerfectWeek();
-    });
-    card.appendChild(allowanceInput);
-    updateSizeValues();
-    card.appendChild(sizeValuesEl);
-
-    let bonusInput = null;
-    if (wizardChoreState.bonusEnabled) {
-      card.appendChild(el('label', {}, 'Daily task bonus'));
-      bonusInput = el('input', { type: 'number', min: '0', step: '0.01' });
-      bonusInput.value = (bonusCents / 100).toFixed(2);
-      bonusInput.addEventListener('input', () => {
-        const cents = centsFromMajorUnits(bonusInput.value);
-        if (uid) wizardChoreState.perChildOverrides[uid] = { ...wizardChoreState.perChildOverrides[uid], bonusAmountCents: cents };
-        else wizardChoreState.bonusAmountCents = cents;
-        updatePerfectWeek();
-      });
-      card.appendChild(bonusInput);
-      card.appendChild(el('p', { class: 'muted', style: 'font-size:0.78rem;margin-top:-4px;' }, 'On top, for keeping every daily task going all week.'));
-    }
-
-    const perfectWeekEl = el('p', { style: 'font-size:1rem;font-weight:700;margin:8px 0 0;' });
-    function updatePerfectWeek() {
-      const a = centsFromMajorUnits(allowanceInput.value);
-      const b = wizardChoreState.bonusEnabled && bonusInput ? centsFromMajorUnits(bonusInput.value) : 0;
-      perfectWeekEl.textContent = `A perfect week: ${formatCents(a + b, currency)}`;
-    }
-    updatePerfectWeek();
-    card.appendChild(perfectWeekEl);
-  });
-
-  card.appendChild(el('p', { class: 'muted', style: 'font-size:0.78rem;margin-top:10px;' }, 'About this much in a normal week -- some weeks hold a job or two more than others.'));
-
-  renderChoreWizardNav(card, { onNext: choreWizardNext });
-}
-
-// ---- 6 · Review ------------------------------------------------------
+// ---- 5 · Review ------------------------------------------------------
 function renderChoreWizardReview(card) {
   const currency = choreWizardCurrency();
   card.appendChild(el('h1', {}, 'Ready to go'));
@@ -7595,6 +7604,29 @@ function renderChoreWizardReview(card) {
       ]),
     ]));
   });
+
+  // The first place a per-chore value can exist -- no chores were chosen
+  // yet back on screen 1, so this arithmetic waits until here. Uses the
+  // shared allowance figure even when "Same for both" is off (per-child
+  // divergence there doesn't get its own per-size breakdown -- a
+  // reasonable simplification, not a nuance the mockup itself draws out
+  // either).
+  const sizeValues = computeSizeValuesCents(chosenChores, wizardChoreState.baseWeeklyAllowanceCents);
+  if (sizeValues.possiblePoints > 0) {
+    card.appendChild(el('p', { class: 'muted', style: 'font-size:0.75rem;font-weight:700;text-transform:uppercase;margin:14px 0 6px;' }, 'What one chore is worth'));
+    const sizeCard = el('div', {
+      class: 'booking-card', style: 'background:var(--panel2);cursor:pointer;',
+      onclick: () => goToChoreWizardStep('howItWorks'),
+    }, [
+      el('div', { style: 'display:flex;font-size:0.72rem;color:var(--ink-3, #6B756D);' }, [
+        el('span', { style: 'flex:1;' }, `Small ${formatCents(sizeValues.small, currency)}`),
+        el('span', { style: 'flex:1;text-align:center;' }, `Medium ${formatCents(sizeValues.medium, currency)}`),
+        el('span', { style: 'flex:1;text-align:right;' }, `Large ${formatCents(sizeValues.large, currency)}`),
+      ]),
+      el('p', { class: 'muted', style: 'font-size:0.78rem;margin:6px 0 0;text-align:center;' }, 'Tap to change the allowance'),
+    ]);
+    card.appendChild(sizeCard);
+  }
 
   card.appendChild(renderInfoBox('Miss a chore and that share comes off. Break the daily streak and the bonus goes.'));
   const removedCount = [...wizardChoreState.choreDrafts, ...wizardChoreState.dailyTaskDrafts].filter((d) => d.existing && !d.checked).length;
