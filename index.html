@@ -1811,7 +1811,18 @@ function computeWeekProgressForMember(memberUid) {
 
   const done = items.filter((i) => i.satisfied).length;
   const pendingCount = items.filter((i) => i.pending).length;
-  return { total: items.length, done, pendingCount, items };
+  // Points-weighted counterparts of total/done, for any display meant to
+  // track "how much of this week's money is earned" rather than "how many
+  // chores" -- a size-3 chore left undone should move a money-adjacent bar
+  // more than a size-1 one. Mirrors settlement.js's own point weighting
+  // (resolveSizeWeight), so this stays consistent with what actually gets
+  // paid even though the real payout math lives server-side. Text counts
+  // ("8 of 13 done this week") intentionally keep using the plain
+  // done/total above -- only visual progress bars near money should read
+  // from these.
+  const pointsTotal = items.reduce((sum, i) => sum + resolveSizeWeight(i.chore), 0);
+  const pointsDone = items.filter((i) => i.satisfied).reduce((sum, i) => sum + resolveSizeWeight(i.chore), 0);
+  return { total: items.length, done, pendingCount, pointsTotal, pointsDone, items };
 }
 
 // Shared progress-ring builder -- a 3-segment conic-gradient donut (green
@@ -4653,7 +4664,7 @@ function renderAdminDashboard() {
         el('p', { class: 'ca-title' }, child.displayName || child.email),
         el('p', { class: 'ca-meta' }, `${progress.done} of ${progress.total} done this week`),
         el('div', { class: 'ca-progress', style: 'margin-top:6px;' },
-          el('span', { style: `width:${progress.total === 0 ? 0 : Math.round((progress.done / progress.total) * 100)}%` })),
+          el('span', { style: `width:${progress.pointsTotal === 0 ? 0 : Math.round((progress.pointsDone / progress.pointsTotal) * 100)}%` })),
       ]),
       el('p', { style: 'margin:0;font-weight:600;flex-shrink:0;' }, formatCents(child.balanceCents || 0, currency)),
     ])));
@@ -5181,7 +5192,7 @@ function openAdjustMoneyModal(child) {
       `${child.displayName || 'Their'}'s balance has been updated`));
 
     const weekProgress = computeWeekProgressForMember(child.uid);
-    const weekPct = weekProgress.total === 0 ? 100 : Math.round((weekProgress.done / weekProgress.total) * 100);
+    const weekPct = weekProgress.pointsTotal === 0 ? 100 : Math.round((weekProgress.pointsDone / weekProgress.pointsTotal) * 100);
     body.appendChild(el('div', { class: 'booking-card', style: 'text-align:left;' }, [
       el('div', { class: 'row' }, [
         el('div', { style: 'font-weight:700;' }, child.displayName || child.email),
