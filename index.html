@@ -1426,7 +1426,7 @@ function formatSignedCents(cents, currency) {
 // Money screen notes.
 function ledgerTypeLabel(tx) {
   const LEDGER_TYPE_LABELS = {
-    weekly_payout: 'Weekly allowance', streak_bonus: 'Hot streak bonus',
+    weekly_payout: 'Weekly allowance', streak_bonus: 'Daily task bonus',
     extra_job_credit: 'Extra job', chore_bonus: 'Bonus',
     missed_chore_reversal: 'Late completion credit',
     deduction: 'Deduction', missed_chore_deduction: 'Missed chore',
@@ -1725,7 +1725,6 @@ const state = {
   payouts: [],
   ledger: [],
   ledgerViewUid: null,
-  hotStreakSettingsChildUid: null,
   currentTab: localStorage.getItem('choresAppTab') || 'dashboard',
 };
 let unsubscribers = [];
@@ -3454,7 +3453,7 @@ function computePendingStreakBonusLines(memberUid) {
   if (!summary || summary.amountCents <= 0) return [];
   const projectedCents = Math.round(summary.amountCents * (summary.streak / 7));
   if (projectedCents <= 0) return [];
-  return [{ label: `Hot streak bonus — ${summary.streak}/7 days`, cents: projectedCents }];
+  return [{ label: `Daily task bonus — ${summary.streak}/7 days`, cents: projectedCents }];
 }
 
 function pctLabel(approved, total) {
@@ -4636,20 +4635,23 @@ function renderAdminDashboard() {
     ]),
   ])));
 
-  // ---- Hot streak bonus: a quiet line, not a nagging card (mockup: "'Not
+  // ---- Daily task bonus: a quiet line, not a nagging card (mockup: "'Not
   // set up yet' in a full card will sit there permanently for anyone who
-  // doesn't want the feature") ----
+  // doesn't want the feature") -- editor lives on that child's own Kids
+  // tab detail view, alongside their allowance, not a separate Settings
+  // section.
   const hotStreakChildren = state.members.filter((m) => m.role === 'child' && m.active !== false && m.hotStreakBonus && m.hotStreakBonus.enabled);
   if (hotStreakChildren.length === 0) {
     container.appendChild(el('button', {
       type: 'button', class: 'ca-btn ca-btn--secondary ca-btn--block', style: 'margin-top:var(--ca-space-2);',
-      onclick: () => switchTab('settings'),
-    }, 'Set up hot streak bonus'));
+      onclick: () => switchTab('kids'),
+    }, 'Set up a daily task bonus'));
   } else {
-    const hotStreakChild = hotStreakChildren.find((c) => c.uid === state.hotStreakSettingsChildUid) || hotStreakChildren[0];
+    const hotStreakChild = hotStreakChildren[0];
     container.appendChild(el('p', {
-      class: 'ca-meta', style: 'text-align:center;margin-top:var(--ca-space-2);cursor:pointer;', onclick: () => switchTab('settings'),
-    }, [el('i', { class: 'ti ti-flame' }), ` Hot streak bonus on for ${memberLabel(hotStreakChild.uid)} · Edit in Settings`]));
+      class: 'ca-meta', style: 'text-align:center;margin-top:var(--ca-space-2);cursor:pointer;',
+      onclick: () => { selectedKidUid = hotStreakChild.uid; switchTab('kids'); },
+    }, [el('i', { class: 'ti ti-flame' }), ` Daily task bonus on for ${memberLabel(hotStreakChild.uid)} · Edit under Kids`]));
   }
 }
 
@@ -4740,6 +4742,7 @@ function renderKidDetailBody(container, uid) {
   container.appendChild(makeExpandable('+ Sign-in username', renderUsernameManagementForm(child, uid)));
   container.appendChild(makeExpandable('+ Sign-in method', renderCredentialManagementForm(child, uid)));
   container.appendChild(renderEditableAllowanceCard(child, currency));
+  container.appendChild(makeExpandable('+ Daily task bonus', renderHotStreakBonusBody(child)));
   container.appendChild(makeExpandable(
     `+ Add a chore or daily task for ${child.displayName || child.email}`,
     renderChoreForm({ presetChildUid: uid })
@@ -6326,8 +6329,9 @@ function renderActiveChores(container) {
           }]),
         ]),
       ]);
-      // Per-chore streak bonus retired (ADR-0027) -- see Settings > Hot
-      // Streak Bonus for the unified per-child program that replaced it.
+      // Per-chore streak bonus retired (ADR-0027) -- see each child's Kids
+      // tab "Daily task bonus" for the unified per-child program that
+      // replaced it.
       // Which days a frequency:'custom' chore is due -- see ADR-0026's
       // scheduledDays field. Edit-in-place, same pattern as streak bonus above.
       if (chore.frequency === 'custom') {
@@ -6505,17 +6509,6 @@ function renderAllActivity() {
 // ---------------------------------------------------------------------
 // Settings tab (admin)
 // ---------------------------------------------------------------------
-// Settings > Hot Streak Bonus (mockups/hot-streak-bonus-mock.png, ADR-0027)
-// -- one bundled per-child program (enabled, amountCents, taskChoreIds),
-// replacing the old per-chore dailyStreakBonusCentsPerDay field entirely.
-// Config lives directly on the member doc (same direct-updateDoc pattern as
-// renderEditableAllowanceCard -- firestore.rules already lets an admin
-// update any member field except balanceCents, so no new callable is
-// needed). Since docs/adr/adr-0037, the payout itself is pro-rated by the
-// longest trailing run of fully-qualified days (not all-or-nothing) and
-// evaluated once at Friday settlement alongside the base allowance -- this
-// screen only sets the config (enabled/amount/which tasks), it doesn't
-// need to know the payout math to do that.
 // Family-wide fair-vs-manual choice (ADR-0041/ADR-0042) -- one setting,
 // every chore follows it, no per-chore override (the setup wizard's own
 // Sharing-out screen sets this initially; this is the "changeable later
@@ -6545,37 +6538,30 @@ function renderRotationModeBody() {
   return wrap;
 }
 
-function renderHotStreakBonusBody() {
+// "Daily task bonus" (user-facing name; mockups/hot-streak-bonus-mock.png,
+// ADR-0027) -- one bundled per-child program (enabled, amountCents,
+// taskChoreIds), replacing the old per-chore dailyStreakBonusCentsPerDay
+// field entirely. Config lives directly on the member doc (same direct-
+// updateDoc pattern as renderEditableAllowanceCard -- firestore.rules
+// already lets an admin update any member field except balanceCents, so
+// no new callable is needed). Since docs/adr/adr-0037, the payout itself
+// is pro-rated by the longest trailing run of fully-qualified days (not
+// all-or-nothing) and evaluated once at Friday settlement alongside the
+// base allowance -- this screen only sets the config (enabled/amount/
+// which tasks), it doesn't need to know the payout math to do that.
+// Lives on that child's own Kids tab detail view (alongside their
+// allowance), not a family-wide Settings section with its own child
+// picker -- it's exactly as per-child as the allowance is.
+function renderHotStreakBonusBody(child) {
   const wrap = el('div', {});
-  const children = state.members.filter((m) => m.role === 'child' && m.active !== false);
-  if (children.length === 0) {
-    wrap.appendChild(el('div', { class: 'empty-state' }, 'Add a child first.'));
-    return wrap;
-  }
-  if (!state.hotStreakSettingsChildUid || !children.some((c) => c.uid === state.hotStreakSettingsChildUid)) {
-    state.hotStreakSettingsChildUid = children[0].uid;
-  }
-  const child = children.find((c) => c.uid === state.hotStreakSettingsChildUid);
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
   const cfg = child.hotStreakBonus || { enabled: false, amountCents: 0, taskChoreIds: [] };
-
-  if (children.length > 1) {
-    const childSelect = el('select', {}, children.map((c) => el(
-      'option', { value: c.uid, ...(c.uid === child.uid ? { selected: 'selected' } : {}) }, c.displayName || c.email
-    )));
-    childSelect.addEventListener('change', () => {
-      state.hotStreakSettingsChildUid = childSelect.value;
-      renderSettings();
-    });
-    wrap.appendChild(el('label', {}, 'Child'));
-    wrap.appendChild(attachCustomSelect(childSelect));
-  }
 
   const form = el('form', {});
   const enableInput = el('input', { type: 'checkbox', ...(cfg.enabled ? { checked: 'checked' } : {}) });
   form.appendChild(el('div', { class: 'more-toggle-row', style: 'padding:8px 0;' }, [
     el('div', {}, [
-      el('div', { class: 'more-toggle-label' }, 'Enable hot streak bonus'),
+      el('div', { class: 'more-toggle-label' }, 'Enable daily task bonus'),
       el('div', { class: 'muted', style: 'font-size:0.78rem;' }, `Reward ${child.displayName || 'this child'} for completing selected daily tasks every day.`),
     ]),
     el('label', { class: 'theme-switch' }, [enableInput, el('span', { class: 'theme-switch-slider' })]),
@@ -6643,7 +6629,7 @@ function renderHotStreakBonusBody() {
 
     const preview = el('div', { class: 'booking-card', style: 'margin-top:14px;' });
     preview.appendChild(el('div', { class: 'row', style: 'align-items:center;' }, [
-      el('div', { class: 'muted', style: 'font-weight:700;' }, 'This week\'s streak preview'),
+      el('div', { class: 'muted', style: 'font-weight:700;' }, 'This week\'s bonus preview'),
     ]));
     preview.appendChild(el('div', { style: 'display:flex;align-items:center;gap:10px;margin-top:8px;' }, [
       svgIcon('flame', { size: 22, color: 'var(--accent2)' }),
@@ -6837,7 +6823,6 @@ function renderSettings() {
   if (state.members.filter((m) => m.role === 'child').length > 1) {
     container.appendChild(makeExpandable('Sharing chores out', renderRotationModeBody()));
   }
-  container.appendChild(makeExpandable('Hot streak bonus', renderHotStreakBonusBody()));
   container.appendChild(makeExpandable('Family unlock code', renderParentCodeBody()));
   container.appendChild(makeExpandable('Invite a parent', renderAddMemberForm()));
   // renderExtras()'s admin branch (the extra-jobs/deduction catalogs and
