@@ -1053,6 +1053,14 @@ function resolvePool(chore, allChildUids) {
   }
   return assignedTo;
 }
+// ---- Same "who can do this" resolution as functions/lib/choreAssignment.js
+// (ADR-0041) -- absent eligibleUids means everyone, narrowed to whoever's
+// still active, never resolving to nobody.
+function resolveEligibleUids(chore, activeChildUidsList) {
+  if (!Array.isArray(chore.eligibleUids)) return activeChildUidsList;
+  const eligible = chore.eligibleUids.filter((uid) => activeChildUidsList.includes(uid));
+  return eligible.length > 0 ? eligible : activeChildUidsList;
+}
 // Blocks accidentally creating two literal instances of the same chore for
 // the same child -- e.g. duplicating a chore from "My family library" and
 // saving it unedited (still named "X (copy)" or worse, if the admin
@@ -1072,6 +1080,41 @@ function findDuplicateChoreForPool(name, category, pool, excludeChoreId) {
     const existingPool = resolvePool(c, activeChildUids());
     return pool.some((uid) => existingPool.includes(uid));
   }) || null;
+}
+// Stricter, simpler cousin of findDuplicateChoreForPool above, for the
+// setup wizard specifically (mockups/rebrand/choresapp-setup-wizard-spec.html:
+// "Names must be unique across chores and daily tasks within a family").
+// No pool-overlap or category scoping at all -- a "Take out the bins"
+// chore and a "Take out the bins" daily task collide just as much as two
+// chores would, since they'd otherwise show up as two identically-named
+// rows in the same family's list. `existingDraftNames` lets the wizard
+// also catch a collision against items already staged in the SAME
+// session (nothing's been written yet, so the server has nothing to
+// check them against -- same reasoning as ADR-0040's sibling-draft
+// username check).
+function findChoreOrTaskByName(name, excludeChoreId, existingDraftNames) {
+  const normalized = (name || '').trim().toLowerCase();
+  if (!normalized) return null;
+  const draftHit = (existingDraftNames || []).find((n) => (n || '').trim().toLowerCase() === normalized);
+  if (draftHit) return { name: draftHit, isDraft: true };
+  const real = state.chores.find((c) =>
+    c.id !== excludeChoreId && c.active !== false && (c.name || '').trim().toLowerCase() === normalized
+  );
+  return real || null;
+}
+// Keyword -> existing ICONS key (ADR-0025's "one approved set" -- this
+// infers from that set, it doesn't add to it). Checked in order, first
+// match wins, so a name matching two keywords (rare) takes the earlier
+// one; falls back to the same generic 'broom' default choreLabel/
+// resolveIconPickerValue already use for an icon-less chore.
+const CHORE_ICON_KEYWORDS = [
+  ['bed', 'bed'], ['dish', 'dishwasher'], ['bin', 'trash'], ['trash', 'trash'], ['rubbish', 'trash'],
+  ['recycl', 'trash'], ['vacuum', 'vacuum'], ['hoover', 'vacuum'],
+];
+function inferChoreIcon(name) {
+  const normalized = (name || '').trim().toLowerCase();
+  const hit = CHORE_ICON_KEYWORDS.find(([keyword]) => normalized.includes(keyword));
+  return hit ? hit[1] : 'broom';
 }
 function resolveBaseAssignee(chore) {
   const mode = resolveAssignmentMode(chore);
@@ -1163,6 +1206,62 @@ function resolveInstanceExpiryDateId(chore, dueDateId, weekDateIds) {
   const sameDayOnly = chore.category === 'dailyTask' || chore.frequency === 'daily';
   return sameDayOnly ? dueDateId : weekDateIds[weekDateIds.length - 1];
 }
+// ---- Same family-wide rotation balancer as functions/lib/rotation.js
+// (ADR-0029/ADR-0037), duplicated here so the setup wizard's Sharing-out
+// screen can dry-run a real preview of "next two weeks" without writing
+// anything -- both functions are pure/Firestore-free on the server too,
+// so this is a direct port, not an approximation.
+function computeCurrentWeightedLoad(chores) {
+  const load = {};
+  for (const chore of chores) {
+    if (resolveAssignmentMode(chore) !== 'rotating') continue;
+    const pool = (chore.rotation && chore.rotation.pool) || [];
+    const history = (chore.rotation && chore.rotation.history) || {};
+    const weight = resolveSizeWeight(chore);
+    for (const uid of pool) {
+      const timesAssigned = (history[uid] && history[uid].timesAssigned) || 0;
+      load[uid] = (load[uid] || 0) + timesAssigned * weight;
+    }
+  }
+  return load;
+}
+function computeFamilyRotationAssignments({ chores, weekId, weekDateIds }) {
+  const eligible = chores.filter((c) =>
+    c.active !== false
+    && resolveAssignmentMode(c) === 'rotating'
+    && c.rotation && Array.isArray(c.rotation.pool) && c.rotation.pool.length > 0
+    && c.rotation.currentAssigneeWeekId !== weekId
+    && resolveChoreDueDateIds(c, weekDateIds).length > 0
+  );
+  if (eligible.length === 0) return [];
+
+  const runningLoad = computeCurrentWeightedLoad(chores);
+  const ordered = eligible.slice().sort((a, b) => {
+    const wa = resolveSizeWeight(a);
+    const wb = resolveSizeWeight(b);
+    if (wa !== wb) return wb - wa;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+
+  const assignments = [];
+  for (const chore of ordered) {
+    const weight = resolveSizeWeight(chore);
+    const pool = chore.rotation.pool;
+    const history = chore.rotation.history || {};
+    const picked = pool.slice().sort((uidA, uidB) => {
+      const la = runningLoad[uidA] || 0;
+      const lb = runningLoad[uidB] || 0;
+      if (la !== lb) return la - lb;
+      const ha = (history[uidA] && history[uidA].lastAssignedWeekId) || '';
+      const hb = (history[uidB] && history[uidB].lastAssignedWeekId) || '';
+      if (ha !== hb) return ha < hb ? -1 : 1;
+      return uidA < uidB ? -1 : uidA > uidB ? 1 : 0;
+    })[0];
+    runningLoad[picked] = (runningLoad[picked] || 0) + weight;
+    assignments.push({ choreId: chore.id, uid: picked });
+  }
+  return assignments;
+}
 function computeChoreInstanceCredit({ chore, dueDateIds, weekDateIds, approvedEntryDateIds }) {
   const weight = resolveSizeWeight(chore);
   const dateScoped = chore.frequency === 'daily' || chore.frequency === 'custom';
@@ -1227,6 +1326,32 @@ function computeWeeklyPointsForMember(memberUid) {
   });
 
   return { possible, earned };
+}
+
+// Live per-size euro value for the setup wizard's money screen
+// (mockups/rebrand/choresapp-setup-wizard-spec.html: "Small €0.88 ·
+// medium €1.76 · large €2.65" for a €15 allowance) -- same proportional-
+// points math as computeChoreInstanceCredit above, run against the
+// wizard's still-in-memory draft chores (nothing's real yet, so there's
+// no choreLog to read). possiblePoints is the week's total point value
+// if every currently-drafted chore happened in full; each size's euro
+// value is just its own weight's share of the allowance at that rate --
+// hand-verified against the spec's own worked numbers: base 1500c /
+// 17 possible points = ~88.2c/point -> small 88c, medium 176c, large 265c.
+function computeSizeValuesCents(draftChores, baseWeeklyAllowanceCents) {
+  const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+  const possiblePoints = draftChores.reduce((sum, chore) => {
+    if (chore.category === 'dailyTask') return sum;
+    return sum + resolveChoreDueDateIds(chore, weekDateIds).length * resolveSizeWeight(chore);
+  }, 0);
+  if (possiblePoints === 0) return { small: 0, medium: 0, large: 0, possiblePoints: 0 };
+  const perPointCents = baseWeeklyAllowanceCents / possiblePoints;
+  return {
+    small: Math.round(perPointCents * SIZE_WEIGHTS.small),
+    medium: Math.round(perPointCents * SIZE_WEIGHTS.medium),
+    large: Math.round(perPointCents * SIZE_WEIGHTS.large),
+    possiblePoints,
+  };
 }
 
 // ---- Same synthetic-email construction as functions/lib/invites.js, so a
@@ -6027,6 +6152,75 @@ function renderEditAssignmentBody(chore, options = {}) {
     'Changes to a rotation\'s lineup take effect from next Monday.'));
   wrap.appendChild(errorEl);
   wrap.appendChild(saveAssignmentBtn);
+
+  // "Who can do this" (ADR-0041) -- separate from "who does it" above:
+  // for fixed/rotating chores only (sharedAny/eachMember already mean
+  // "everyone", nothing to narrow). All in by default -- this exists to
+  // be edited in the rare case, not answered during normal setup, per
+  // mockups/rebrand/choresapp-setup-wizard-spec.html's "All in by
+  // default." Fair mode: narrows who the rotation balancer can pick.
+  // Manual mode: purely advisory here (filters nothing in this admin
+  // view, unlike the wizard's own chip row) -- editing it still updates
+  // rotation.pool immediately if the chore is rotating, so a later
+  // switch to fair mode starts from the right pool.
+  if (currentMode === 'fixed' || currentMode === 'rotating') {
+    const activeUids = activeChildUids();
+    const eligibleSet = new Set(resolveEligibleUids(chore, activeUids));
+    const eligibilityChips = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;' });
+    const eligibilityNoteEl = el('div', { class: 'muted', style: 'font-size:0.75rem;margin-bottom:4px;' });
+    const eligibilityErrorEl = el('p', { class: 'error-text' });
+    eligibilityErrorEl.hidden = true;
+    function renderEligibilityChips() {
+      eligibilityChips.innerHTML = '';
+      activeUids.forEach((uid) => {
+        const on = eligibleSet.has(uid);
+        const chip = el('button', { type: 'button', class: `pill small${on ? ' primary' : ''}` }, memberLabel(uid));
+        chip.addEventListener('click', () => {
+          if (on && eligibleSet.size === 1) return; // can't exclude everybody
+          if (on) eligibleSet.delete(uid); else eligibleSet.add(uid);
+          renderEligibilityChips();
+        });
+        eligibilityChips.appendChild(chip);
+      });
+      eligibilityNoteEl.textContent = eligibleSet.size === 1
+        ? `${memberLabel([...eligibleSet][0])} will always do it.`
+        : 'All children can do this by default.';
+    }
+    renderEligibilityChips();
+    const saveEligibilityBtn = el('button', { type: 'button', class: 'pill primary small', style: 'margin-top:8px;' }, 'Save');
+    saveEligibilityBtn.addEventListener('click', async () => {
+      eligibilityErrorEl.hidden = true;
+      saveEligibilityBtn.disabled = true;
+      try {
+        const newEligible = activeUids.filter((uid) => eligibleSet.has(uid));
+        const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+        const payload = { eligibleUids: newEligible };
+        if (currentMode === 'rotating' && chore.rotation) {
+          // Keep rotation.pool in sync -- the balancer only ever reads
+          // the pool, not eligibleUids directly (see ADR-0041).
+          const newPool = newEligible;
+          const history = {};
+          newPool.forEach((uid) => { history[uid] = (chore.rotation.history && chore.rotation.history[uid]) || { timesAssigned: 0, lastAssignedWeekId: null }; });
+          payload.rotation = {
+            ...chore.rotation, pool: newPool, history,
+            currentAssigneeUid: newPool.includes(chore.rotation.currentAssigneeUid) ? chore.rotation.currentAssigneeUid : null,
+          };
+        }
+        await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), payload);
+      } catch (err) {
+        eligibilityErrorEl.textContent = err.message;
+        eligibilityErrorEl.hidden = false;
+      } finally {
+        saveEligibilityBtn.disabled = false;
+      }
+    });
+    wrap.appendChild(el('label', { style: 'margin:14px 0 0;' }, 'Who can do this'));
+    wrap.appendChild(eligibilityChips);
+    wrap.appendChild(eligibilityNoteEl);
+    wrap.appendChild(eligibilityErrorEl);
+    wrap.appendChild(saveEligibilityBtn);
+  }
+
   return wrap;
 }
 
@@ -6316,11 +6510,40 @@ function renderAllActivity() {
 // Config lives directly on the member doc (same direct-updateDoc pattern as
 // renderEditableAllowanceCard -- firestore.rules already lets an admin
 // update any member field except balanceCents, so no new callable is
-// needed). All-or-nothing weekly rule only, per the app owner: full
-// amountCents if EVERY selected task is approved EVERY day Mon-Sun, nothing
-// otherwise -- a late-approved task retroactively re-qualifies an
-// already-evaluated past week automatically (see onChoreLogReviewed), so
-// there's no separate "revert" action needed here, just approve the chore.
+// needed). Since docs/adr/adr-0037, the payout itself is pro-rated by the
+// longest trailing run of fully-qualified days (not all-or-nothing) and
+// evaluated once at Friday settlement alongside the base allowance -- this
+// screen only sets the config (enabled/amount/which tasks), it doesn't
+// need to know the payout math to do that.
+// Family-wide fair-vs-manual choice (ADR-0041/ADR-0042) -- one setting,
+// every chore follows it, no per-chore override (the setup wizard's own
+// Sharing-out screen sets this initially; this is the "changeable later
+// in Settings" the spec calls for). Deliberately does NOT retroactively
+// touch any existing chore's own assignmentMode/pool when changed here --
+// that transition-seeding nuance is explicitly deferred (ADR-0042); this
+// control only decides which mode new/edited chores default to going
+// forward, and is only shown once there's more than one child (nothing
+// to share out with just one).
+function renderRotationModeBody() {
+  const wrap = el('div', {});
+  const select = el('select', {}, [
+    el('option', { value: 'fair' }, 'Share them out fairly'),
+    el('option', { value: 'manual' }, "I'll decide"),
+  ]);
+  select.value = (state.family && state.family.settings && state.family.settings.rotationMode) || 'fair';
+  select.addEventListener('change', async () => {
+    const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+    await updateDoc(fsDoc(db, `families/${state.familyId}`), {
+      settings: { ...(state.family.settings || {}), rotationMode: select.value },
+    });
+  });
+  wrap.appendChild(el('label', {}, 'How chores get divided'));
+  wrap.appendChild(attachCustomSelect(select));
+  wrap.appendChild(el('div', { class: 'muted', style: 'font-size:0.78rem;' },
+    "Fair: the app decides each week and keeps it even over time. I'll decide: you give each chore to one child and it stays with them. This only changes how new or re-run chores get set up -- it doesn't move an existing chore's own assignment."));
+  return wrap;
+}
+
 function renderHotStreakBonusBody() {
   const wrap = el('div', {});
   const children = state.members.filter((m) => m.role === 'child' && m.active !== false);
@@ -6610,6 +6833,9 @@ function renderSettings() {
   });
   const currencyBody = el('div', {}, [el('label', {}, 'Currency'), attachCustomSelect(currencySelect)]);
   container.appendChild(makeExpandable('Currency', currencyBody));
+  if (state.members.filter((m) => m.role === 'child').length > 1) {
+    container.appendChild(makeExpandable('Sharing chores out', renderRotationModeBody()));
+  }
   container.appendChild(makeExpandable('Hot streak bonus', renderHotStreakBonusBody()));
   container.appendChild(makeExpandable('Family unlock code', renderParentCodeBody()));
   container.appendChild(makeExpandable('Invite a parent', renderAddMemberForm()));
@@ -6631,7 +6857,7 @@ function renderSettings() {
 
   container.appendChild(el('p', { class: 'ca-section' }, 'Account'));
   container.appendChild(renderMoreLink('Change password', () => showScreen('changePassword')));
-  container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; wizardDraftKids = []; renderWizardStep(); }));
+  container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; wizardDraftKids = []; wizardChoreState = null; renderWizardStep(); }));
   container.appendChild(el('button', { class: 'signout-row', onclick: () => signOut(auth) }, 'Sign out'));
 }
 
@@ -6683,8 +6909,62 @@ const STARTER_TEMPLATES = [
   { name: 'Take out the trash', icon: 'trash', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true },
   { name: 'Vacuum the living room', icon: 'vacuum', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true },
 ];
+
+// ---------------------------------------------------------------------
+// Setup wizard's chore/daily-task library (mockups/rebrand/
+// choresapp-setup-wizard-spec.html "Library" section, verbatim) --
+// deliberately separate from STARTER_CHORE_LIBRARY/STARTER_DAILY_TASK_LIBRARY
+// above, which belong to the unrelated post-onboarding addWizard ("Add
+// chores to library"). Every item already carries a schedule and size,
+// per the spec's "zero sizing decisions unless you want to" -- frequency
+// values map onto this app's existing frequency vocabulary ("2x week" ->
+// timesPerWeek count:2, "now and then" -> occasional).
+const SETUP_WIZARD_DAILY_TASKS = [
+  { name: 'Make your bed', checked: true },
+  { name: 'Keep your room tidy', checked: true },
+  { name: 'Clothes in the hamper', checked: true },
+  { name: 'Plate in the dishwasher', checked: false },
+  { name: 'Shoes away', checked: false },
+  { name: 'Pack your school bag', checked: false },
+  { name: 'Hang up your coat', checked: false },
+  { name: 'Charge and put away devices', checked: false },
+];
+const SETUP_WIZARD_CHORE_CATEGORIES = ['Popular', 'Kitchen', 'Around the house', 'Laundry', 'Outdoors', 'Pets'];
+// 'Popular' isn't its own category below -- it's the pre-ticked-in-the-
+// mockup subset, cutting across every real category, matching screen 3's
+// own worked example (dishwasher/bins/counters ticked).
+const SETUP_WIZARD_POPULAR_NAMES = ['Empty the dishwasher', 'Take out the bins', 'Wipe the counters'];
+const SETUP_WIZARD_CHORES = [
+  { name: 'Empty the dishwasher', category: 'Kitchen', frequency: 'daily', size: 'medium' },
+  { name: 'Fill the dishwasher', category: 'Kitchen', frequency: 'daily', size: 'medium' },
+  { name: 'Set the table', category: 'Kitchen', frequency: 'daily', size: 'small' },
+  { name: 'Clear the table', category: 'Kitchen', frequency: 'daily', size: 'small' },
+  { name: 'Wipe the counters', category: 'Kitchen', frequency: 'daily', size: 'small' },
+  { name: 'Sweep the kitchen floor', category: 'Kitchen', frequency: 'timesPerWeek', timesPerWeekCount: 2, size: 'medium' },
+  { name: 'Take out the bins', category: 'Kitchen', frequency: 'weekly', size: 'small' },
+  { name: 'Sort the recycling', category: 'Kitchen', frequency: 'weekly', size: 'small' },
+  { name: 'Hoover the living room', category: 'Around the house', frequency: 'weekly', size: 'medium' },
+  { name: 'Dust the shelves', category: 'Around the house', frequency: 'weekly', size: 'small' },
+  { name: 'Change your bed sheets', category: 'Around the house', frequency: 'weekly', size: 'medium' },
+  { name: 'Tidy the playroom', category: 'Around the house', frequency: 'timesPerWeek', timesPerWeekCount: 2, size: 'medium' },
+  { name: 'Clean the bathroom sink', category: 'Around the house', frequency: 'weekly', size: 'medium' },
+  { name: 'Clean the toilet', category: 'Around the house', frequency: 'weekly', size: 'large' },
+  { name: 'Sort the washing', category: 'Laundry', frequency: 'timesPerWeek', timesPerWeekCount: 2, size: 'small' },
+  { name: 'Hang out the washing', category: 'Laundry', frequency: 'timesPerWeek', timesPerWeekCount: 2, size: 'medium' },
+  { name: 'Bring the washing in', category: 'Laundry', frequency: 'timesPerWeek', timesPerWeekCount: 2, size: 'small' },
+  { name: 'Fold and put away', category: 'Laundry', frequency: 'timesPerWeek', timesPerWeekCount: 2, size: 'medium' },
+  { name: 'Mow the lawn', category: 'Outdoors', frequency: 'weekly', size: 'large' },
+  { name: 'Weed the front garden', category: 'Outdoors', frequency: 'weekly', size: 'large' },
+  { name: 'Wash the car', category: 'Outdoors', frequency: 'occasional', size: 'large' },
+  { name: 'Sweep the drive', category: 'Outdoors', frequency: 'weekly', size: 'medium' },
+  { name: 'Bring the bins back in', category: 'Outdoors', frequency: 'weekly', size: 'small' },
+  { name: 'Walk the dog', category: 'Pets', frequency: 'daily', size: 'medium' },
+  { name: 'Feed the pet', category: 'Pets', frequency: 'daily', size: 'small' },
+  { name: 'Clean out the hutch', category: 'Pets', frequency: 'weekly', size: 'large' },
+  { name: 'Change the water bowl', category: 'Pets', frequency: 'daily', size: 'small' },
+];
+
 let wizardStep = 0;
-let wizardItems = STARTER_TEMPLATES.map((t) => ({ ...t }));
 let wizardSaveAsTemplates = true;
 // Kids added during THIS wizard visit but not yet sent to the server --
 // { name, username, credentialType, pin, password, allowanceCents } each.
@@ -6695,6 +6975,759 @@ let wizardSaveAsTemplates = true;
 // accounts behind (the previous per-add-immediate-commit design's exact
 // complaint). Reset to [] wherever the wizard is (re)started from step 0.
 let wizardDraftKids = [];
+
+// ---------------------------------------------------------------------
+// Chores/daily-tasks/sharing-out/money sub-flow (ADR-0042,
+// mockups/rebrand/choresapp-setup-wizard-spec.html) -- wizardStep === 3's
+// own internal 6-screen state machine. Everything below lives in memory
+// only; nothing reaches Firestore before Review ("Create it") commits it
+// in one pass, same principle ADR-0040 already established for the kids
+// step.
+// ---------------------------------------------------------------------
+let wizardChoreStep = 'howItWorks'; // 'howItWorks'|'dailyTasks'|'chores'|'sharingOut'|'money'|'review'
+let wizardChoreState = null;
+let wizardDraftIdCounter = 0;
+function nextWizardDraftId() { wizardDraftIdCounter += 1; return `draft${wizardDraftIdCounter}`; }
+
+const CHORE_WIZARD_STEP_ORDER = ['howItWorks', 'dailyTasks', 'chores', 'sharingOut', 'money', 'review'];
+function choreWizardVisibleSteps() {
+  return CHORE_WIZARD_STEP_ORDER.filter((s) => {
+    if (s === 'dailyTasks') return wizardChoreState.bonusEnabled;
+    if (s === 'sharingOut') return activeChildUids().length > 1;
+    return true;
+  });
+}
+function goToChoreWizardStep(step) { wizardChoreStep = step; renderWizardStep(); }
+function choreWizardBack() {
+  const visible = choreWizardVisibleSteps();
+  const idx = visible.indexOf(wizardChoreStep);
+  if (idx <= 0) { wizardStep = 2; renderWizardStep(); return; } // back out of the mega-step entirely
+  goToChoreWizardStep(visible[idx - 1]);
+}
+function choreWizardNext() {
+  const visible = choreWizardVisibleSteps();
+  const idx = visible.indexOf(wizardChoreStep);
+  goToChoreWizardStep(visible[idx + 1]);
+}
+
+// Rebuilds the whole sub-flow's state from scratch -- fresh defaults on a
+// brand-new family, or loaded from *current* family state on a re-run
+// ("Run setup wizard" from Settings, per the spec's "Re-running" row).
+// Best-effort on re-run: existing chores are read back as pre-checked
+// drafts with their real size/frequency/eligibility, but the exact
+// wizard-only bookkeeping (which library tab they came from, etc.)
+// doesn't survive a round trip through Firestore, which is fine -- none
+// of that affects what gets written back out.
+function resetWizardChoreState() {
+  wizardChoreStep = 'howItWorks';
+  const existingActiveChores = state.chores.filter((c) => c.active !== false);
+  const isRerun = existingActiveChores.length > 0;
+  const firstChild = state.members.find((m) => m.role === 'child');
+  const existingChoreNames = new Set(existingActiveChores.filter((c) => c.category !== 'dailyTask').map((c) => c.name.trim().toLowerCase()));
+
+  const dailyTaskDrafts = isRerun
+    ? existingActiveChores.filter((c) => c.category === 'dailyTask').map((c) => ({ id: c.id, name: c.name, checked: true, existing: true }))
+    : SETUP_WIZARD_DAILY_TASKS.map((t) => ({ id: nextWizardDraftId(), name: t.name, checked: t.checked, existing: false }));
+
+  // tabCategory is the library-browsing grouping (Kitchen/Laundry/...) --
+  // deliberately not named `category`, which on a real chore doc means
+  // 'chore'|'dailyTask' (see resolveChoreDueDateIds); every entry in
+  // choreDrafts is implicitly category:'chore' when it's actually
+  // written, so there's no risk of the two meanings colliding as long as
+  // this field stays named differently.
+  const libraryChoreDrafts = SETUP_WIZARD_CHORES
+    .filter((item) => !existingChoreNames.has(item.name.trim().toLowerCase()))
+    .map((item) => ({
+      id: nextWizardDraftId(), name: item.name, tabCategory: item.category,
+      icon: inferChoreIcon(item.name), frequency: item.frequency,
+      timesPerWeekCount: item.timesPerWeekCount, size: item.size,
+      checked: !isRerun && SETUP_WIZARD_POPULAR_NAMES.includes(item.name),
+      eligibleUids: undefined, existing: false,
+    }));
+  const existingChoreDrafts = existingActiveChores.filter((c) => c.category !== 'dailyTask').map((c) => ({
+    id: c.id, name: c.name, tabCategory: 'Custom', icon: c.icon,
+    frequency: c.frequency || 'weekly', timesPerWeekCount: c.timesPerWeekCount, size: resolveSize(c),
+    checked: true, existing: true,
+    eligibleUids: Array.isArray(c.eligibleUids) ? c.eligibleUids.slice() : undefined,
+  }));
+
+  wizardChoreState = {
+    isRerun,
+    bonusEnabled: isRerun ? !!(firstChild && firstChild.hotStreakBonus && firstChild.hotStreakBonus.enabled) : true,
+    dailyTaskDrafts,
+    choreDrafts: [...existingChoreDrafts, ...libraryChoreDrafts],
+    rotationMode: (state.family && state.family.settings && state.family.settings.rotationMode) || 'fair',
+    manualAssignments: {}, // choreDraft.id -> uid, manual mode only
+    sameForBoth: true,
+    baseWeeklyAllowanceCents: (firstChild && firstChild.baseWeeklyAllowanceCents) || 1500,
+    bonusAmountCents: (firstChild && firstChild.hotStreakBonus && firstChild.hotStreakBonus.amountCents) || 500,
+    perChildOverrides: {},
+  };
+  if (isRerun && wizardChoreState.rotationMode === 'manual') {
+    wizardChoreState.choreDrafts.forEach((draft) => {
+      if (!draft.existing) return;
+      const real = existingActiveChores.find((c) => c.id === draft.id);
+      if (real) wizardChoreState.manualAssignments[draft.id] = resolveBaseAssignee(real);
+    });
+  }
+}
+
+function choreWizardCurrency() { return (state.family && state.family.settings && state.family.settings.currency) || 'EUR'; }
+// Matches the info-box pattern already established elsewhere in this app
+// (e.g. the Hot Streak Bonus preview) -- .info isn't an actual styled
+// class here, this is.
+function renderInfoBox(text) {
+  return el('div', {
+    style: 'display:flex;align-items:center;gap:8px;margin-top:10px;padding:10px 12px;background:var(--panel2);border-radius:10px;font-size:0.82rem;',
+  }, [svgIcon('infoCircle', { size: 16, color: 'var(--accent2)' }), el('div', {}, text)]);
+}
+
+function renderChoreWizardStepDots(card) {
+  const visible = choreWizardVisibleSteps();
+  const idx = visible.indexOf(wizardChoreStep);
+  const bar = el('div', { style: 'display:flex;gap:4px;margin-bottom:16px;' });
+  visible.forEach((s, i) => {
+    bar.appendChild(el('div', { style: `flex:1;height:3px;border-radius:2px;background:${i <= idx ? 'var(--accent2)' : 'var(--border)'};` }));
+  });
+  card.appendChild(bar);
+}
+
+function renderChoreWizardNav(card, { onNext, nextLabel = 'Next', nextDisabled = false }) {
+  card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
+    el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: choreWizardBack }, 'Back'),
+    (() => {
+      const btn = el('button', { class: 'pill primary', style: 'flex:1;', type: 'button', onclick: onNext }, nextLabel);
+      btn.disabled = nextDisabled;
+      return btn;
+    })(),
+  ]));
+}
+
+function renderChoreWizardSubStep(content) {
+  const card = el('div', { class: 'wizard-card' });
+  renderChoreWizardStepDots(card);
+  content.appendChild(card);
+  if (wizardChoreStep === 'howItWorks') renderChoreWizardHowItWorks(card);
+  else if (wizardChoreStep === 'dailyTasks') renderChoreWizardDailyTasks(card);
+  else if (wizardChoreStep === 'chores') renderChoreWizardChores(card);
+  else if (wizardChoreStep === 'sharingOut') renderChoreWizardSharingOut(card);
+  else if (wizardChoreStep === 'money') renderChoreWizardMoney(card);
+  else if (wizardChoreStep === 'review') renderChoreWizardReview(card);
+}
+
+// ---- 1 · How it works ------------------------------------------------
+function renderChoreWizardHowItWorks(card) {
+  const currency = choreWizardCurrency();
+  card.appendChild(el('h1', {}, wizardChoreState.isRerun ? 'How the money works' : 'How the money works'));
+  card.appendChild(el('p', { class: 'muted' }, wizardChoreState.isRerun
+    ? 'A quick recap before you make changes.'
+    : 'Two kinds of job, two kinds of reward.'));
+
+  card.appendChild(el('div', { class: 'booking-card' }, [
+    el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;' }, [svgIcon('checkCircleWithRing', { size: 16, color: 'var(--accent2)' }), el('span', { style: 'font-weight:700;' }, 'Chores')]),
+    el('div', { class: 'muted' }, 'Bigger jobs -- the dishwasher, the bins, the lawn. Each one is worth part of the weekly allowance. Do them all, get the lot.'),
+  ]));
+  card.appendChild(el('div', { class: 'booking-card' }, [
+    el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;' }, [svgIcon('award', { size: 16, color: 'var(--accent2)' }), el('span', { style: 'font-weight:700;' }, 'Daily tasks')]),
+    el('div', { class: 'muted' }, 'Small things you expect anyway -- bed made, room tidy. Worth nothing on their own, but keeping them up every day earns a bonus on top.'),
+  ]));
+
+  const exampleAllowance = wizardChoreState.baseWeeklyAllowanceCents;
+  const exampleBonus = wizardChoreState.bonusEnabled ? wizardChoreState.bonusAmountCents : 0;
+  const exampleRows = [['Chores, all done', exampleAllowance]];
+  if (wizardChoreState.bonusEnabled) exampleRows.push(['Daily task bonus', exampleBonus]);
+  card.appendChild(el('div', { class: 'booking-card', style: 'background:var(--panel2);' }, [
+    el('div', { class: 'muted', style: 'font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px;' }, 'For example'),
+    ...exampleRows.map(([label, cents]) => el('div', { style: 'display:flex;justify-content:space-between;font-size:0.85rem;padding:2px 0;' }, [
+      el('span', { class: 'muted' }, label), el('span', { style: 'font-weight:600;' }, formatCents(cents, currency)),
+    ])),
+    el('div', { style: 'display:flex;justify-content:space-between;font-weight:700;padding-top:7px;margin-top:6px;border-top:1px solid var(--border);' }, [
+      el('span', {}, 'A perfect week'), el('span', {}, formatCents(exampleAllowance + exampleBonus, currency)),
+    ]),
+  ]));
+
+  card.appendChild(renderMoreToggle('Use the daily task bonus', wizardChoreState.bonusEnabled, (checked) => {
+    wizardChoreState.bonusEnabled = checked;
+    renderWizardStep();
+  }));
+  card.appendChild(el('p', { class: 'muted', style: 'font-size:0.78rem;margin-top:-8px;' }, 'You can turn this off and just use chores.'));
+
+  renderChoreWizardNav(card, { onNext: choreWizardNext });
+}
+
+// ---- 2 · Daily tasks ---------------------------------------------------
+function renderChoreWizardDailyTasks(card) {
+  card.appendChild(el('h1', {}, 'Daily tasks'));
+  card.appendChild(el('p', { class: 'muted' }, 'The everyday things you expect anyway.'));
+
+  const listWrap = el('div', {});
+  card.appendChild(listWrap);
+  function renderList() {
+    listWrap.innerHTML = '';
+    wizardChoreState.dailyTaskDrafts.forEach((draft) => {
+      const row = el('div', { class: 'booking-card', style: 'display:flex;align-items:center;gap:8px;' });
+      const cb = el('input', { type: 'checkbox', ...(draft.checked ? { checked: 'checked' } : {}) });
+      cb.addEventListener('change', () => { draft.checked = cb.checked; updateCount(); });
+      row.appendChild(cb);
+      row.appendChild(el('span', { style: 'flex:1;' }, draft.name));
+      listWrap.appendChild(row);
+    });
+  }
+  renderList();
+
+  const nameInput = el('input', { type: 'text', placeholder: 'e.g. Clean out the shed' });
+  const errorEl = el('p', { class: 'error-text', style: 'margin:0 0 8px;' });
+  errorEl.hidden = true;
+  const addBtn = el('button', {
+    type: 'button', class: 'pill small',
+    onclick: () => {
+      errorEl.hidden = true;
+      const name = nameInput.value.trim();
+      if (!name) return;
+      const dup = findChoreOrTaskByName(name, null, wizardChoreState.dailyTaskDrafts.map((d) => d.name));
+      if (dup) {
+        errorEl.textContent = dup.isDraft ? `You already have "${dup.name}" on this list.` : `"${dup.name}" already exists -- edit that one instead.`;
+        errorEl.hidden = false;
+        return;
+      }
+      wizardChoreState.dailyTaskDrafts.push({ id: nextWizardDraftId(), name, checked: true, existing: false });
+      nameInput.value = '';
+      renderList();
+      updateCount();
+    },
+  }, '+ Add');
+  card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-bottom:4px;' }, [nameInput, addBtn]));
+  card.appendChild(errorEl);
+
+  const countEl = el('p', { class: 'muted', style: 'font-size:0.82rem;' });
+  card.appendChild(countEl);
+  function updateCount() {
+    const n = wizardChoreState.dailyTaskDrafts.filter((d) => d.checked).length;
+    countEl.textContent = `These apply to every child. ${n} chosen.`;
+  }
+  updateCount();
+
+  renderChoreWizardNav(card, {
+    onNext: () => {
+      if (wizardChoreState.dailyTaskDrafts.filter((d) => d.checked).length === 0) {
+        // No selected daily tasks -- the bonus has nothing to reward, so
+        // turn it back off rather than carry an empty, meaningless config
+        // forward (the money screen would otherwise show a bonus for
+        // nothing).
+        wizardChoreState.bonusEnabled = false;
+      }
+      choreWizardNext();
+    },
+  });
+}
+
+// ---- 3 · Chores --------------------------------------------------------
+let wizardChoreLibraryTab = 'Popular';
+let wizardChoreLibrarySearch = '';
+function choreWizardFrequencyLabel(draft) {
+  if (draft.frequency === 'daily') return 'Every day';
+  if (draft.frequency === 'timesPerWeek') return `${draft.timesPerWeekCount || 2}x a week`;
+  if (draft.frequency === 'occasional') return 'Now and then';
+  return 'Weekly';
+}
+function renderChoreWizardChores(card) {
+  card.appendChild(el('h1', {}, 'Chores'));
+  card.appendChild(el('p', { class: 'muted' }, 'The jobs that earn the allowance.'));
+
+  const searchInput = el('input', { type: 'text', placeholder: 'Search…' });
+  searchInput.value = wizardChoreLibrarySearch;
+  card.appendChild(searchInput);
+
+  const tabRow = el('div', { class: 'sub-tabs' });
+  SETUP_WIZARD_CHORE_CATEGORIES.forEach((cat) => {
+    const btn = el('button', { type: 'button', class: `sub-tab-btn${wizardChoreLibraryTab === cat ? ' active' : ''}` }, cat);
+    btn.addEventListener('click', () => { wizardChoreLibraryTab = cat; renderWizardStep(); });
+    tabRow.appendChild(btn);
+  });
+  card.appendChild(tabRow);
+
+  const listWrap = el('div', {});
+  card.appendChild(listWrap);
+  function renderList() {
+    listWrap.innerHTML = '';
+    const q = wizardChoreLibrarySearch.trim().toLowerCase();
+    const visible = wizardChoreState.choreDrafts.filter((d) => {
+      if (q) return d.name.toLowerCase().includes(q);
+      if (wizardChoreLibraryTab === 'Popular') return SETUP_WIZARD_POPULAR_NAMES.includes(d.name) || d.tabCategory === 'Custom';
+      return d.tabCategory === wizardChoreLibraryTab || d.tabCategory === 'Custom';
+    });
+    if (visible.length === 0) listWrap.appendChild(el('div', { class: 'empty-state' }, 'No matches.'));
+    visible.forEach((draft) => {
+      const row = el('div', { class: 'booking-card', style: 'display:flex;align-items:center;gap:8px;' });
+      const cb = el('input', { type: 'checkbox', ...(draft.checked ? { checked: 'checked' } : {}) });
+      cb.addEventListener('change', () => { draft.checked = cb.checked; updateCount(); });
+      row.appendChild(cb);
+      row.appendChild(el('div', { style: 'flex:1;' }, [
+        el('div', { style: 'font-weight:600;' }, draft.name),
+        el('div', { class: 'muted', style: 'font-size:0.78rem;' }, `${choreWizardFrequencyLabel(draft)} · ${draft.size}`),
+      ]));
+      listWrap.appendChild(row);
+    });
+  }
+  searchInput.addEventListener('input', () => { wizardChoreLibrarySearch = searchInput.value; renderList(); });
+  renderList();
+
+  const nameInput = el('input', { type: 'text', placeholder: 'e.g. Clean out the shed', style: 'margin-top:6px;' });
+  const frequencySelect = el('select', {}, [
+    el('option', { value: 'daily' }, 'Daily'), el('option', { value: 'custom' }, 'Some days'),
+    el('option', { value: 'weekly', selected: 'selected' }, 'Weekly'), el('option', { value: 'occasional' }, 'Now and then'),
+  ]);
+  const sizeSelect = el('select', {}, [
+    el('option', { value: 'small' }, 'Small'), el('option', { value: 'medium', selected: 'selected' }, 'Medium'), el('option', { value: 'large' }, 'Large'),
+  ]);
+  const errorEl = el('p', { class: 'error-text', style: 'margin:0 0 8px;' });
+  errorEl.hidden = true;
+  const addBtn = el('button', {
+    type: 'button', class: 'pill small',
+    onclick: () => {
+      errorEl.hidden = true;
+      const name = nameInput.value.trim();
+      if (!name) return;
+      const dup = findChoreOrTaskByName(name, null, wizardChoreState.choreDrafts.filter((d) => d.checked).map((d) => d.name));
+      if (dup) {
+        errorEl.textContent = dup.isDraft ? `You already have "${dup.name}" chosen.` : `"${dup.name}" already exists -- edit that one instead.`;
+        errorEl.hidden = false;
+        return;
+      }
+      wizardChoreState.choreDrafts.push({
+        id: nextWizardDraftId(), name, tabCategory: 'Custom', icon: inferChoreIcon(name),
+        frequency: frequencySelect.value, size: sizeSelect.value, checked: true, existing: false, eligibleUids: undefined,
+      });
+      nameInput.value = '';
+      renderList();
+      updateCount();
+    },
+  }, 'Add it');
+  card.appendChild(el('label', {}, 'Write your own'));
+  card.appendChild(nameInput);
+  card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-bottom:8px;' }, [attachCustomSelect(frequencySelect), attachCustomSelect(sizeSelect)]));
+  card.appendChild(addBtn);
+  card.appendChild(errorEl);
+
+  const countEl = el('p', { class: 'muted', style: 'font-size:0.82rem;margin-top:8px;' });
+  card.appendChild(countEl);
+  function updateCount() {
+    const chosen = wizardChoreState.choreDrafts.filter((d) => d.checked);
+    const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+    const occurrences = chosen.reduce((sum, d) => sum + resolveChoreDueDateIds(d, weekDateIds).length, 0);
+    countEl.textContent = `${chosen.length} chosen · ${occurrences} jobs a week`;
+  }
+  updateCount();
+
+  renderChoreWizardNav(card, {
+    nextDisabled: wizardChoreState.choreDrafts.filter((d) => d.checked).length === 0,
+    onNext: () => {
+      if (wizardChoreState.choreDrafts.filter((d) => d.checked).length === 0) {
+        showAppAlert('Pick at least one chore to continue.');
+        return;
+      }
+      choreWizardNext();
+    },
+  });
+}
+
+// ---- 4 · Sharing out -----------------------------------------------
+function renderChoreWizardSharingOut(card) {
+  card.appendChild(el('h1', {}, 'Sharing out'));
+  card.appendChild(el('p', { class: 'muted' }, 'How chores get divided between your kids.'));
+
+  const chosen = wizardChoreState.choreDrafts.filter((d) => d.checked);
+  const activeUids = activeChildUids();
+
+  card.appendChild(renderWizardOptionCard({
+    icon: 'people', title: 'Share them out fairly', subtitle: 'The app decides each week and keeps it even over time.',
+    selected: wizardChoreState.rotationMode === 'fair',
+    onclick: () => { wizardChoreState.rotationMode = 'fair'; renderWizardStep(); },
+  }));
+  card.appendChild(renderWizardOptionCard({
+    icon: 'personPlus', title: "I'll decide", subtitle: "You give each chore to one child and it stays with them.",
+    selected: wizardChoreState.rotationMode === 'manual',
+    onclick: () => { wizardChoreState.rotationMode = 'manual'; renderWizardStep(); },
+  }));
+
+  if (wizardChoreState.rotationMode === 'fair') {
+    card.appendChild(el('p', { class: 'muted', style: 'font-size:0.75rem;font-weight:700;text-transform:uppercase;margin:14px 0 6px;' }, 'Next two weeks'));
+    // A genuine dry run -- computeFamilyRotationAssignments is pure, so
+    // calling it here previews exactly what advancing rotations would
+    // produce, without writing anything (see ADR-0042).
+    const previewChores = chosen.map((d) => ({
+      id: d.id, active: true, assignmentMode: 'rotating', size: d.size,
+      frequency: d.frequency, timesPerWeekCount: d.timesPerWeekCount,
+      rotation: { pool: resolveEligibleUids(d, activeUids), history: {} },
+    }));
+    const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+    const weekId = getIsoWeekId(new Date());
+    const assignments = computeFamilyRotationAssignments({ chores: previewChores, weekId, weekDateIds });
+    const previewWrap = el('div', {});
+    function renderPreview() {
+      previewWrap.innerHTML = '';
+      activeUids.forEach((uid) => {
+        const mine = assignments.filter((a) => a.uid === uid).map((a) => chosen.find((d) => d.id === a.choreId)).filter(Boolean);
+        const points = mine.reduce((sum, d) => sum + resolveSizeWeight(d), 0);
+        const row = el('div', {
+          class: 'booking-card', style: 'display:flex;align-items:center;gap:8px;cursor:pointer;',
+          onclick: () => openEligibilitySheet(mine[0] || chosen[0], { onChange: () => { renderWizardStep(); } }),
+        }, [
+          el('span', {
+            class: 'ca-avatar', style: `background:var(--ca-child-${childColorIdx(uid)});color:var(--ca-child-${childColorIdx(uid)}-ink);`,
+          }, memberLabel(uid).charAt(0).toUpperCase()),
+          el('div', { style: 'flex:1;' }, [
+            el('div', { style: 'font-weight:600;' }, `This week · ${points} points`),
+            el('div', { class: 'muted', style: 'font-size:0.78rem;' }, mine.map((d) => d.name).join(', ') || 'Nothing this week'),
+          ]),
+        ]);
+        previewWrap.appendChild(row);
+      });
+    }
+    renderPreview();
+    card.appendChild(previewWrap);
+    card.appendChild(renderInfoBox("Turns change over every Monday. A big job counts for more than a small one, so weeks won't always look equal -- it evens out over a month. Tap a row to change who's eligible for a chore."));
+  } else {
+    card.appendChild(el('p', { class: 'muted', style: 'font-size:0.75rem;font-weight:700;text-transform:uppercase;margin:14px 0 6px;' }, 'Who does what'));
+    chosen.forEach((draft) => {
+      const wrap = el('div', { class: 'booking-card' });
+      wrap.appendChild(el('div', { style: 'font-weight:600;margin-bottom:7px;display:flex;align-items:center;justify-content:space-between;' }, [
+        draft.name,
+        (() => {
+          const editBtn = el('button', { type: 'button', class: 'pill small' }, 'Who can do this');
+          editBtn.addEventListener('click', () => openEligibilitySheet(draft, { onChange: () => renderWizardStep() }));
+          return editBtn;
+        })(),
+      ]));
+      const chipsRow = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' });
+      const eligible = resolveEligibleUids(draft, activeUids);
+      eligible.forEach((uid) => {
+        const on = wizardChoreState.manualAssignments[draft.id] === uid;
+        const chip = el('button', { type: 'button', class: `pill small${on ? ' primary' : ''}` }, memberLabel(uid));
+        chip.addEventListener('click', () => { wizardChoreState.manualAssignments[draft.id] = uid; renderWizardStep(); });
+        chipsRow.appendChild(chip);
+      });
+      wrap.appendChild(chipsRow);
+      card.appendChild(wrap);
+    });
+    const pointsByUid = {};
+    chosen.forEach((d) => {
+      const uid = wizardChoreState.manualAssignments[d.id];
+      if (!uid) return;
+      pointsByUid[uid] = (pointsByUid[uid] || 0) + resolveSizeWeight(d);
+    });
+    card.appendChild(renderInfoBox(activeUids.map((uid) => `${memberLabel(uid)} ${pointsByUid[uid] || 0} points a week`).join(' · ')));
+  }
+
+  renderChoreWizardNav(card, {
+    nextDisabled: wizardChoreState.rotationMode === 'manual' && chosen.some((d) => !wizardChoreState.manualAssignments[d.id]),
+    onNext: () => {
+      if (wizardChoreState.rotationMode === 'manual' && chosen.some((d) => !wizardChoreState.manualAssignments[d.id])) {
+        showAppAlert('Give every chore an owner before continuing.');
+        return;
+      }
+      choreWizardNext();
+    },
+  });
+}
+
+// Bottom-sheet-style eligibility editor -- reused from both the Sharing
+// out preview (tap a row) and each chore's own chip-row in manual mode,
+// per mockups/rebrand/choresapp-setup-wizard-spec.html: "reachable in two
+// places." Re-renders the caller via onChange the instant something
+// changes, matching the spec's "recalculates behind the sheet" note.
+function openEligibilitySheet(draft, { onChange }) {
+  if (!draft) return;
+  const activeUids = activeChildUids();
+  const overlay = el('div', {
+    style: 'position:fixed;inset:0;background:rgba(11,74,38,.5);display:flex;align-items:flex-end;z-index:200;',
+  });
+  const sheet = el('div', { style: 'background:var(--panel, #fff);border-radius:18px 18px 0 0;padding:18px;width:100%;max-width:480px;margin:0 auto;' });
+  sheet.appendChild(el('div', { style: 'font-weight:700;margin-bottom:10px;' }, draft.name));
+  sheet.appendChild(el('label', {}, 'Who can do this'));
+  const chipsRow = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;' });
+  const noteEl = el('p', { class: 'muted', style: 'font-size:0.8rem;' });
+  function renderChips() {
+    chipsRow.innerHTML = '';
+    const eligible = new Set(Array.isArray(draft.eligibleUids) ? draft.eligibleUids : activeUids);
+    activeUids.forEach((uid) => {
+      const on = eligible.has(uid);
+      const chip = el('button', { type: 'button', class: `pill small${on ? ' primary' : ''}` }, memberLabel(uid));
+      chip.addEventListener('click', () => {
+        // Can't exclude everybody -- the last remaining eligible child
+        // can't be unticked (mockup's own explicit rule).
+        if (on && eligible.size === 1) return;
+        if (on) eligible.delete(uid); else eligible.add(uid);
+        draft.eligibleUids = activeUids.filter((u) => eligible.has(u));
+        if (wizardChoreState.manualAssignments[draft.id] && !eligible.has(wizardChoreState.manualAssignments[draft.id])) {
+          delete wizardChoreState.manualAssignments[draft.id];
+        }
+        renderChips();
+      });
+      chipsRow.appendChild(chip);
+    });
+    const eligibleList = activeUids.filter((u) => eligible.has(u));
+    noteEl.textContent = eligibleList.length === 1
+      ? `${memberLabel(eligibleList[0])} will always do it.`
+      : `${eligibleList.map(memberLabel).join(', ')} can be given this one.`;
+  }
+  renderChips();
+  sheet.appendChild(chipsRow);
+  sheet.appendChild(noteEl);
+  const doneBtn = el('button', {
+    type: 'button', class: 'pill primary', style: 'width:100%;margin-top:12px;',
+    onclick: () => { document.body.removeChild(overlay); if (onChange) onChange(); },
+  }, 'Done');
+  sheet.appendChild(doneBtn);
+  overlay.appendChild(sheet);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) { document.body.removeChild(overlay); if (onChange) onChange(); } });
+  document.body.appendChild(overlay);
+}
+
+// ---- 5 · The money -------------------------------------------------
+function renderChoreWizardMoney(card) {
+  const currency = choreWizardCurrency();
+  card.appendChild(el('h1', {}, 'The money'));
+  card.appendChild(el('p', { class: 'muted' }, 'Paid every Friday evening.'));
+
+  const activeUids = activeChildUids();
+  if (activeUids.length > 1) {
+    card.appendChild(renderMoreToggle('Same for both kids', wizardChoreState.sameForBoth, (checked) => {
+      wizardChoreState.sameForBoth = checked;
+      renderWizardStep();
+    }));
+  }
+
+  const targets = wizardChoreState.sameForBoth || activeUids.length <= 1 ? [null] : activeUids;
+  targets.forEach((uid) => {
+    const override = uid ? (wizardChoreState.perChildOverrides[uid] || {}) : {};
+    const allowanceCents = uid ? (override.baseWeeklyAllowanceCents != null ? override.baseWeeklyAllowanceCents : wizardChoreState.baseWeeklyAllowanceCents) : wizardChoreState.baseWeeklyAllowanceCents;
+    const bonusCents = uid ? (override.bonusAmountCents != null ? override.bonusAmountCents : wizardChoreState.bonusAmountCents) : wizardChoreState.bonusAmountCents;
+
+    if (uid) card.appendChild(el('p', { style: 'font-weight:700;margin:14px 0 4px;' }, memberLabel(uid)));
+
+    card.appendChild(el('label', {}, 'Weekly chore allowance'));
+    const allowanceInput = el('input', { type: 'number', min: '0', step: '0.01' });
+    allowanceInput.value = (allowanceCents / 100).toFixed(2);
+    const sizeValuesEl = el('p', { class: 'muted', style: 'font-size:0.78rem;margin-top:-4px;' });
+    function updateSizeValues() {
+      const chosen = wizardChoreState.choreDrafts.filter((d) => d.checked);
+      const cents = centsFromMajorUnits(allowanceInput.value);
+      const values = computeSizeValuesCents(chosen, cents);
+      sizeValuesEl.textContent = values.possiblePoints > 0
+        ? `Small ${formatCents(values.small, currency)} · Medium ${formatCents(values.medium, currency)} · Large ${formatCents(values.large, currency)}`
+        : 'Pick some chores to see per-size values.';
+    }
+    allowanceInput.addEventListener('input', () => {
+      const cents = centsFromMajorUnits(allowanceInput.value);
+      if (uid) { wizardChoreState.perChildOverrides[uid] = { ...wizardChoreState.perChildOverrides[uid], baseWeeklyAllowanceCents: cents }; }
+      else wizardChoreState.baseWeeklyAllowanceCents = cents;
+      updateSizeValues();
+      updatePerfectWeek();
+    });
+    card.appendChild(allowanceInput);
+    updateSizeValues();
+    card.appendChild(sizeValuesEl);
+
+    let bonusInput = null;
+    if (wizardChoreState.bonusEnabled) {
+      card.appendChild(el('label', {}, 'Daily task bonus'));
+      bonusInput = el('input', { type: 'number', min: '0', step: '0.01' });
+      bonusInput.value = (bonusCents / 100).toFixed(2);
+      bonusInput.addEventListener('input', () => {
+        const cents = centsFromMajorUnits(bonusInput.value);
+        if (uid) wizardChoreState.perChildOverrides[uid] = { ...wizardChoreState.perChildOverrides[uid], bonusAmountCents: cents };
+        else wizardChoreState.bonusAmountCents = cents;
+        updatePerfectWeek();
+      });
+      card.appendChild(bonusInput);
+      card.appendChild(el('p', { class: 'muted', style: 'font-size:0.78rem;margin-top:-4px;' }, 'On top, for keeping every daily task going all week.'));
+    }
+
+    const perfectWeekEl = el('p', { style: 'font-size:1rem;font-weight:700;margin:8px 0 0;' });
+    function updatePerfectWeek() {
+      const a = centsFromMajorUnits(allowanceInput.value);
+      const b = wizardChoreState.bonusEnabled && bonusInput ? centsFromMajorUnits(bonusInput.value) : 0;
+      perfectWeekEl.textContent = `A perfect week: ${formatCents(a + b, currency)}`;
+    }
+    updatePerfectWeek();
+    card.appendChild(perfectWeekEl);
+  });
+
+  card.appendChild(el('p', { class: 'muted', style: 'font-size:0.78rem;margin-top:10px;' }, 'About this much in a normal week -- some weeks hold a job or two more than others.'));
+
+  renderChoreWizardNav(card, { onNext: choreWizardNext });
+}
+
+// ---- 6 · Review ------------------------------------------------------
+function renderChoreWizardReview(card) {
+  const currency = choreWizardCurrency();
+  card.appendChild(el('h1', {}, 'Ready to go'));
+  card.appendChild(el('p', { class: 'muted' }, "Nothing's saved yet -- check it over."));
+
+  const chosenChores = wizardChoreState.choreDrafts.filter((d) => d.checked);
+  const chosenTasks = wizardChoreState.dailyTaskDrafts.filter((d) => d.checked);
+  const activeUids = activeChildUids();
+
+  activeUids.forEach((uid) => {
+    const allowanceCents = wizardChoreState.sameForBoth || activeUids.length <= 1
+      ? wizardChoreState.baseWeeklyAllowanceCents
+      : (wizardChoreState.perChildOverrides[uid] && wizardChoreState.perChildOverrides[uid].baseWeeklyAllowanceCents != null ? wizardChoreState.perChildOverrides[uid].baseWeeklyAllowanceCents : wizardChoreState.baseWeeklyAllowanceCents);
+    const bonusCents = !wizardChoreState.bonusEnabled ? 0 : (wizardChoreState.sameForBoth || activeUids.length <= 1
+      ? wizardChoreState.bonusAmountCents
+      : (wizardChoreState.perChildOverrides[uid] && wizardChoreState.perChildOverrides[uid].bonusAmountCents != null ? wizardChoreState.perChildOverrides[uid].bonusAmountCents : wizardChoreState.bonusAmountCents));
+    const choreCountForUid = wizardChoreState.rotationMode === 'manual'
+      ? chosenChores.filter((d) => wizardChoreState.manualAssignments[d.id] === uid).length
+      : chosenChores.filter((d) => resolveEligibleUids(d, activeUids).includes(uid)).length;
+
+    card.appendChild(el('div', { class: 'booking-card' }, [
+      el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;' }, [
+        el('span', { class: 'ca-avatar', style: `background:var(--ca-child-${childColorIdx(uid)});color:var(--ca-child-${childColorIdx(uid)}-ink);` }, memberLabel(uid).charAt(0).toUpperCase()),
+        el('div', { style: 'flex:1;' }, [
+          el('div', { style: 'font-weight:700;' }, memberLabel(uid)),
+          el('div', { class: 'muted', style: 'font-size:0.78rem;' }, `${choreCountForUid} chores · ${chosenTasks.length} daily tasks`),
+        ]),
+        el('span', { style: 'font-weight:700;' }, formatCents(allowanceCents + bonusCents, currency)),
+      ]),
+      el('div', { style: 'border-top:1px solid var(--border);padding-top:6px;font-size:0.78rem;' }, [
+        el('div', { style: 'display:flex;justify-content:space-between;' }, [el('span', { class: 'muted' }, 'Chores'), el('span', { class: 'muted' }, `up to ${formatCents(allowanceCents, currency)}`)]),
+        wizardChoreState.bonusEnabled ? el('div', { style: 'display:flex;justify-content:space-between;' }, [el('span', { class: 'muted' }, 'Daily task bonus'), el('span', { class: 'muted' }, formatCents(bonusCents, currency))]) : null,
+      ]),
+    ]));
+  });
+
+  card.appendChild(renderInfoBox('Miss a chore and that share comes off. Break the daily streak and the bonus goes.'));
+  const removedCount = [...wizardChoreState.choreDrafts, ...wizardChoreState.dailyTaskDrafts].filter((d) => d.existing && !d.checked).length;
+  if (removedCount > 0) {
+    card.appendChild(renderInfoBox(`${removedCount} existing item${removedCount === 1 ? '' : 's'} will be deactivated -- their history and any money already earned stays.`));
+  }
+
+  const errorEl = el('p', { class: 'error-text' });
+  errorEl.hidden = true;
+  card.appendChild(errorEl);
+
+  const commitBtn = el('button', {
+    class: 'pill primary', style: 'width:100%;margin-top:10px;', type: 'button',
+    onclick: async () => {
+      commitBtn.disabled = true;
+      errorEl.hidden = true;
+      try {
+        await commitChoreWizard();
+        wizardStep = 4;
+        renderWizardStep();
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      } finally {
+        commitBtn.disabled = false;
+      }
+    },
+  }, 'Create it');
+  card.appendChild(commitBtn);
+  card.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-top:8px;', type: 'button', onclick: choreWizardBack }, 'Change something'));
+}
+
+// The one screen that writes -- everything above this point lived only in
+// wizardChoreState. Deactivates (never deletes) any existing chore/daily
+// task the admin unticked on a re-run, so history and money already
+// earned survive; creates every chosen item fresh; seeds rotation for
+// fair-mode chores exactly as the pool the Sharing-out preview already
+// showed; writes settings.rotationMode and each child's allowance/bonus.
+async function commitChoreWizard() {
+  const { addDoc, updateDoc, doc: fsDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+  const activeUids = activeChildUids();
+  const weekId = getIsoWeekId(new Date());
+
+  // Deactivate anything existing that got unticked.
+  const allDrafts = [...wizardChoreState.choreDrafts, ...wizardChoreState.dailyTaskDrafts];
+  for (const draft of allDrafts) {
+    if (draft.existing && !draft.checked) {
+      await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${draft.id}`), { active: false, updatedAt: serverTimestamp() });
+    }
+  }
+
+  // Daily tasks -- always eachMember, every active child, no size/schedule.
+  for (const draft of wizardChoreState.dailyTaskDrafts) {
+    if (!draft.checked || draft.existing) continue;
+    await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
+      name: draft.name.trim(), icon: null, description: '',
+      category: 'dailyTask', assignmentMode: 'eachMember', assignedTo: activeUids,
+      frequency: 'daily', active: true, createdBy: state.user.uid,
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    });
+  }
+
+  // Chores -- fair (rotating, pool = eligible) or manual (fixed, one owner).
+  for (const draft of wizardChoreState.choreDrafts) {
+    if (!draft.checked || draft.existing) continue;
+    const eligible = resolveEligibleUids(draft, activeUids);
+    let assignmentMode, assignedTo, rotation;
+    if (wizardChoreState.rotationMode === 'fair') {
+      assignmentMode = 'rotating';
+      assignedTo = eligible;
+      const first = eligible[0];
+      const history = {};
+      eligible.forEach((uid) => { history[uid] = { timesAssigned: uid === first ? 1 : 0, lastAssignedWeekId: uid === first ? weekId : null }; });
+      rotation = { pool: eligible, history, currentAssigneeUid: first || null, currentAssigneeWeekId: first ? weekId : null };
+    } else {
+      assignmentMode = 'fixed';
+      assignedTo = [wizardChoreState.manualAssignments[draft.id]].filter(Boolean);
+    }
+    await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
+      name: draft.name.trim(), icon: draft.icon || null, description: '',
+      category: 'chore', assignmentMode, assignedTo,
+      ...(rotation ? { rotation } : {}),
+      ...(eligible.length !== activeUids.length ? { eligibleUids: eligible } : {}),
+      frequency: draft.frequency,
+      ...(draft.frequency === 'custom' ? { scheduledDays: draft.scheduledDays || [] } : {}),
+      ...(draft.frequency === 'timesPerWeek' ? { timesPerWeekCount: draft.timesPerWeekCount || 2 } : {}),
+      size: draft.size, active: true, createdBy: state.user.uid,
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    });
+    if (wizardSaveAsTemplates) {
+      await addDoc(fsCollection(db, `families/${state.familyId}/choreTemplates`), {
+        name: draft.name.trim(), icon: draft.icon || null, description: '',
+        active: true, createdBy: state.user.uid, createdAt: serverTimestamp(),
+      });
+    }
+  }
+
+  await updateDoc(fsDoc(db, `families/${state.familyId}`), {
+    settings: { ...(state.family.settings || {}), rotationMode: wizardChoreState.rotationMode },
+  });
+
+  for (const uid of activeUids) {
+    const override = wizardChoreState.perChildOverrides[uid] || {};
+    const allowanceCents = wizardChoreState.sameForBoth ? wizardChoreState.baseWeeklyAllowanceCents : (override.baseWeeklyAllowanceCents != null ? override.baseWeeklyAllowanceCents : wizardChoreState.baseWeeklyAllowanceCents);
+    const bonusCents = wizardChoreState.sameForBoth ? wizardChoreState.bonusAmountCents : (override.bonusAmountCents != null ? override.bonusAmountCents : wizardChoreState.bonusAmountCents);
+    const taskChoreIds = []; // filled in below once daily task docs exist
+    await updateDoc(fsDoc(db, `families/${state.familyId}/members/${uid}`), {
+      baseWeeklyAllowanceCents: allowanceCents,
+      hotStreakBonus: {
+        enabled: wizardChoreState.bonusEnabled,
+        amountCents: wizardChoreState.bonusEnabled ? bonusCents : 0,
+        taskChoreIds,
+      },
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  // taskChoreIds needs the just-created dailyTask docs' real ids -- read
+  // them back once, then fill in every child's hotStreakBonus in a
+  // second pass, rather than trying to thread addDoc's returned refs
+  // through the loop above (simpler to reason about, and this only ever
+  // runs once, at commit).
+  if (wizardChoreState.bonusEnabled) {
+    const { getDocs, query, where } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+    const dailySnap = await getDocs(query(fsCollection(db, `families/${state.familyId}/chores`), where('category', '==', 'dailyTask'), where('active', '==', true)));
+    const taskChoreIds = dailySnap.docs.map((d) => d.id);
+    for (const uid of activeUids) {
+      await updateDoc(fsDoc(db, `families/${state.familyId}/members/${uid}`), {
+        'hotStreakBonus.taskChoreIds': taskChoreIds,
+      });
+    }
+  }
+}
 
 function renderWizardProgress() {
   const bar = document.getElementById('wizardProgress');
@@ -6954,85 +7987,8 @@ function renderWizardStep() {
   }
 
   if (wizardStep === 3) {
-    const card = el('div', { class: 'wizard-card' });
-    card.appendChild(el('h1', {}, 'Quick-setup chores'));
-    card.appendChild(el('p', { class: 'muted' }, 'A starting list -- uncheck anything you don\'t want, edit names/icons, or add your own. Rotating chores default to sharing fairly among all your kids.'));
-
-    wizardItems.forEach((item, idx) => {
-      const row = el('div', { style: 'display:flex;gap:6px;align-items:center;margin-bottom:6px;' });
-      const cb = el('input', { type: 'checkbox', ...(item.checked ? { checked: 'checked' } : {}) });
-      cb.addEventListener('change', () => { item.checked = cb.checked; });
-      const iconInput = renderIconPicker(resolveIconPickerValue(item.icon));
-      iconInput.style.marginBottom = '0';
-      iconInput.addEventListener('change', () => { item.icon = iconInput.value; });
-      const nameInput = el('input', { type: 'text', style: 'margin-bottom:0;' });
-      nameInput.value = item.name;
-      nameInput.addEventListener('input', () => { item.name = nameInput.value; });
-      row.appendChild(cb); row.appendChild(attachCustomSelect(iconInput)); row.appendChild(nameInput);
-      card.appendChild(row);
-      card.appendChild(el('div', { class: 'muted', style: 'margin:-4px 0 6px 26px;' }, item.category === 'dailyTask' ? 'Daily task — everyone does their own' : 'Chore — rotates fairly'));
-    });
-
-    card.appendChild(el('button', {
-      class: 'pill small', type: 'button', style: 'margin-bottom:10px;',
-      onclick: () => {
-        wizardItems.push({ name: '', icon: '', description: '', category: 'chore', assignmentMode: 'rotating', frequency: 'weekly', checked: true });
-        renderWizardStep();
-      },
-    }, '+ Add custom item'));
-
-    const saveTemplatesRow = el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:10px;' });
-    const saveTemplatesCb = el('input', { type: 'checkbox', ...(wizardSaveAsTemplates ? { checked: 'checked' } : {}) });
-    saveTemplatesCb.addEventListener('change', () => { wizardSaveAsTemplates = saveTemplatesCb.checked; });
-    saveTemplatesRow.appendChild(saveTemplatesCb);
-    saveTemplatesRow.appendChild(el('span', {}, 'Also save these as quick-pick templates'));
-    card.appendChild(saveTemplatesRow);
-
-    const nav = el('div', { style: 'display:flex;gap:8px;' }, [
-      el('button', { class: 'pill', style: 'flex:1;', onclick: () => { wizardStep -= 1; renderWizardStep(); } }, 'Back'),
-      el('button', {
-        class: 'pill primary', style: 'flex:1;',
-        onclick: async () => {
-          const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-          const children = state.members.filter((m) => m.role === 'child');
-          const childUids = children.map((m) => m.uid);
-          const weekId = getIsoWeekId(new Date());
-
-          for (const item of wizardItems) {
-            if (!item.checked || !item.name.trim()) continue;
-            let assignedTo, rotation;
-            if (item.assignmentMode === 'eachMember') {
-              assignedTo = childUids;
-            } else if (item.assignmentMode === 'rotating') {
-              assignedTo = childUids;
-              const first = childUids[0];
-              const history = {};
-              childUids.forEach((uid) => { history[uid] = { timesAssigned: uid === first ? 1 : 0, lastAssignedWeekId: uid === first ? weekId : null }; });
-              rotation = { pool: childUids, history, currentAssigneeUid: first || null, currentAssigneeWeekId: first ? weekId : null };
-            } else {
-              assignedTo = ['any'];
-            }
-            await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
-              name: item.name.trim(), icon: item.icon || null, description: item.description || '',
-              category: item.category, assignmentMode: item.assignmentMode, assignedTo,
-              ...(rotation ? { rotation } : {}),
-              frequency: item.frequency, active: true, createdBy: state.user.uid,
-              createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-            });
-            if (wizardSaveAsTemplates) {
-              await addDoc(fsCollection(db, `families/${state.familyId}/choreTemplates`), {
-                name: item.name.trim(), icon: item.icon || null, description: item.description || '',
-                active: true, createdBy: state.user.uid, createdAt: serverTimestamp(),
-              });
-            }
-          }
-          wizardStep = 4;
-          renderWizardStep();
-        },
-      }, 'Save and continue'),
-    ]);
-    card.appendChild(nav);
-    content.appendChild(card);
+    if (!wizardChoreState) resetWizardChoreState();
+    renderChoreWizardSubStep(content);
     return;
   }
 
