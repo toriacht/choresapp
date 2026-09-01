@@ -5010,45 +5010,110 @@ function renderAdminDashboard() {
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
   const children = state.members.filter((m) => m.role === 'child' && m.active !== false);
 
-  // ---- Waiting on you ----
+  // ---- Waiting on you (ADR-0052: three variants of one section --
+  // first-run, caught-up, busy -- rather than three separate screens) ----
   const familyNeedsReview = state.choreLog.filter((e) => e.status === 'done');
   const pendingPayouts = state.payouts.filter((p) => p.status === 'pending');
-  const waitingCards = [];
-
-  if (familyNeedsReview.length > 0) {
-    const perChild = children
-      .map((c) => ({ c, count: familyNeedsReview.filter((e) => e.memberUid === c.uid).length }))
-      .filter((x) => x.count > 0);
-    waitingCards.push(el('div', {
-      class: 'ca-card ca-card--waiting', style: 'cursor:pointer;', onclick: () => switchTab('managechores'),
-    }, el('div', { class: 'ca-row' }, [
-      el('div', { class: 'ca-row__grow' }, [
-        el('p', { class: 'ca-title' }, `${familyNeedsReview.length} chore${familyNeedsReview.length === 1 ? '' : 's'} to review`),
-        el('p', { class: 'ca-meta' }, perChild.map((x) => `${memberLabel(x.c.uid)} ${x.count}`).join(' · ')),
+  // First-run wins outright: nothing else can happen for a child until
+  // they've signed in at least once, so that's what the top slot is about
+  // -- not a review queue they can't yet be part of. Scoped to PIN
+  // children only (see kidAuth.js's signInWithPin) -- a legacy password
+  // child never sets firstSignedInAt and simply never shows this card, a
+  // safe no-op rather than a gap, since PIN is the only credential type
+  // offered to new children today.
+  const notYetSignedInChildren = children.filter((c) => c.credentialType === 'pin' && !c.firstSignedInAt);
+  if (notYetSignedInChildren.length > 0) {
+    container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:0;' }, 'One thing left'));
+    notYetSignedInChildren.forEach((child) => {
+      const colorIdx = childColorIdx(child.uid);
+      container.appendChild(el('div', { class: 'ca-card ca-card--waiting' }, [
+        el('div', { class: 'ca-row', style: 'margin-bottom:10px;' }, [
+          el('span', {
+            class: 'ca-avatar', style: `background:var(--ca-child-${colorIdx});color:var(--ca-child-${colorIdx}-ink);`,
+          }, (child.displayName || '?').charAt(0).toUpperCase()),
+          el('div', { class: 'ca-row__grow' }, [
+            el('p', { class: 'ca-title' }, `Get ${child.displayName || 'them'} signed in`),
+            el('p', { class: 'ca-meta' }, 'Nothing happens until they do'),
+          ]),
+        ]),
+        el('div', { style: 'background:var(--ca-wash, #F4F6F4);border-radius:9px;padding:10px 12px;margin-bottom:11px;display:flex;font-size:0.8rem;' }, [
+          el('span', { style: 'flex:1;color:var(--ca-ink-3);' }, 'Username'),
+          el('span', { style: 'font-weight:600;' }, child.usernameLocal || '—'),
+        ]),
+        el('div', { style: 'display:flex;gap:8px;' }, [
+          el('button', {
+            type: 'button', class: 'ca-btn ca-btn--primary', style: 'flex:1;',
+            onclick: () => openKid(child.uid),
+          }, 'View sign-in details'),
+          el('button', {
+            type: 'button', class: 'ca-btn ca-btn--secondary', style: 'flex:0 0 auto;',
+            onclick: async () => {
+              try {
+                await navigator.clipboard.writeText(child.usernameLocal || '');
+              } catch (err) { /* clipboard permission denied -- non-critical, no feedback needed */ }
+            },
+          }, 'Copy username'),
+        ]),
+      ]));
+    });
+    container.appendChild(el('p', { class: 'ca-section' }, 'Later on'));
+    container.appendChild(el('div', { class: 'ca-card' }, [
+      el('div', { class: 'ca-row', style: 'cursor:pointer;padding:8px 0;', onclick: () => switchTab('kids') }, [
+        el('i', { class: 'ti ti-user-plus', style: 'color:var(--ca-ink-3);' }),
+        el('span', { class: 'ca-row__grow', style: 'margin-left:8px;' }, 'Add another child'),
+        el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);' }),
       ]),
-      el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);margin-top:3px;' }),
-    ])));
-  }
-  if (pendingPayouts.length > 0) {
-    const total = pendingPayouts.reduce((s, p) => s + p.totalAmountCents, 0);
+      el('div', { class: 'ca-row', style: 'cursor:pointer;padding:8px 0;', onclick: () => switchTab('settings') }, [
+        el('i', { class: 'ti ti-users', style: 'color:var(--ca-ink-3);' }),
+        el('span', { class: 'ca-row__grow', style: 'margin-left:8px;' }, 'Invite another parent'),
+        el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);' }),
+      ]),
+    ]));
+  } else {
+    const waitingCards = [];
+    if (familyNeedsReview.length > 0) {
+      const perChild = children
+        .map((c) => ({ c, count: familyNeedsReview.filter((e) => e.memberUid === c.uid).length }))
+        .filter((x) => x.count > 0);
+      waitingCards.push(el('div', {
+        class: 'ca-card ca-card--waiting', style: 'cursor:pointer;', onclick: () => switchTab('managechores'),
+      }, el('div', { class: 'ca-row' }, [
+        el('div', { class: 'ca-row__grow' }, [
+          el('p', { class: 'ca-title' }, `${familyNeedsReview.length} chore${familyNeedsReview.length === 1 ? '' : 's'} to review`),
+          el('p', { class: 'ca-meta' }, perChild.map((x) => `${memberLabel(x.c.uid)} ${x.count}`).join(' · ')),
+        ]),
+        el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);margin-top:3px;' }),
+      ])));
+    }
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const payoutDay = dayNames[(state.family && state.family.settings && state.family.settings.payoutDayOfWeek) ?? 5];
-    waitingCards.push(el('div', {
-      class: 'ca-card ca-card--waiting', style: 'cursor:pointer;', onclick: openPayoutApprovalModal,
-    }, el('div', { class: 'ca-row' }, [
-      el('div', { class: 'ca-row__grow' }, [
-        el('p', { class: 'ca-title' }, "This week's payout"),
-        el('p', { class: 'ca-meta' }, `${formatCents(total, currency)} to ${pendingPayouts.length === 1 ? memberLabel(pendingPayouts[0].memberUid) : `${pendingPayouts.length} kids`} · ${payoutDay}`),
-      ]),
-      el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);margin-top:3px;' }),
-    ])));
-  }
-  if (waitingCards.length > 0) {
-    container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:0;' }, 'Waiting on you'));
-    waitingCards.forEach((c) => container.appendChild(c));
-  } else {
-    container.appendChild(el('div', { class: 'ca-card ca-card--quiet', style: 'text-align:center;' },
-      el('p', { class: 'ca-body', style: 'color:var(--ca-ink-3);' }, "Nothing waiting on you right now.")));
+    if (pendingPayouts.length > 0) {
+      const total = pendingPayouts.reduce((s, p) => s + p.totalAmountCents, 0);
+      waitingCards.push(el('div', {
+        class: 'ca-card ca-card--waiting', style: 'cursor:pointer;', onclick: openPayoutApprovalModal,
+      }, el('div', { class: 'ca-row' }, [
+        el('div', { class: 'ca-row__grow' }, [
+          el('p', { class: 'ca-title' }, "This week's payout"),
+          el('p', { class: 'ca-meta' }, `${formatCents(total, currency)} to ${pendingPayouts.length === 1 ? memberLabel(pendingPayouts[0].memberUid) : `${pendingPayouts.length} kids`} · ${payoutDay}`),
+        ]),
+        el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);margin-top:3px;' }),
+      ])));
+    }
+    if (waitingCards.length > 0) {
+      container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:0;' }, 'Waiting on you'));
+      waitingCards.forEach((c) => container.appendChild(c));
+    } else {
+      // ADR-0052 caught-up state -- replaces the old flat "Nothing
+      // waiting on you right now" sentence with an explicit all-clear.
+      const payoutHour = (state.family && state.family.settings && state.family.settings.payoutHour) ?? 18;
+      const hour12 = ((payoutHour + 11) % 12) + 1;
+      const payoutTime = `${hour12}${payoutHour < 12 || payoutHour === 24 ? 'am' : 'pm'}`;
+      container.appendChild(el('div', { class: 'ca-card ca-card--quiet', style: 'text-align:center;' }, [
+        el('p', { style: 'margin:0;font-size:1.1rem;' }, '✓'),
+        el('p', { class: 'ca-body', style: 'font-weight:600;margin:6px 0 2px;' }, "You're all caught up"),
+        el('p', { class: 'ca-meta' }, `Next payout ${payoutDay} at ${payoutTime}`),
+      ]));
+    }
   }
 
   // ---- Kids ----
