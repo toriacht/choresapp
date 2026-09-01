@@ -8821,7 +8821,7 @@ let addWizard = null;
 // into the reassign flow with clear, already-declared intent.
 function openChoreWizard() {
   adminWizardKind = 'chore';
-  choreWizard = { step: 'mode', mode: null, type: null };
+  choreWizard = { step: 'options', mode: null, type: null, scopeUid: 'family' };
   showScreen('adminWizard');
   renderAdminWizardStep();
 }
@@ -8831,7 +8831,7 @@ function openChoreWizard() {
 // single-child-family skip (see the TYPE/INFO steps' goTo conditions).
 function openRunWizard(presetScopeUid) {
   adminWizardKind = 'run';
-  runWizard = { step: 0, type: null, scopeUid: presetScopeUid || 'family' };
+  runWizard = { type: null, scopeUid: presetScopeUid || 'family', pending: new Map(), viaChoreWizard: false };
   showScreen('adminWizard');
   renderAdminWizardStep();
 }
@@ -8882,24 +8882,15 @@ function renderWizardOptionCard({ icon, title, subtitle, selected, onclick }) {
   ]);
 }
 
-// A single "icon + label ... value" row for the wizard's Current summary
-// step -- an icon-labeled list reads clearer at this narrow width than a
-// 2-column number-tile grid did, and matches the mockup's summary screen.
-function summaryStatRow(icon, value, label) {
-  return el('div', { class: 'summary-stat-row' }, [
-    el('div', { class: 'wizard-option-icon' }, svgIcon(icon, { size: 16 })),
-    el('div', { style: 'flex:1;' }, label),
-    el('div', { style: 'font-weight:700;' }, String(value)),
-  ]);
-}
-
 // ---------------------------------------------------------------------
-// Unified "Chore wizard" chooser (in front of the reassign/add flows
-// below) -- two steps (Mode, then Type), then hands off. Deliberately
-// thin: no reassign/add logic is duplicated here, this only decides
-// which existing flow to hand off to and pre-seeds its starting state.
-// "Both" is only offered for Reassign -- addWizard (and the starter
-// library it's built on) is architecturally single-category per run.
+// Unified "Chore wizard" chooser (ADR-0053) -- ONE screen (mode + who +
+// covering, all on one card) in front of the reassign/add flows below,
+// then hands off directly with no separate confirmation/summary detour.
+// Deliberately thin: no reassign/add logic is duplicated here, this only
+// decides which existing flow to hand off to and pre-seeds its starting
+// state. "Both" is only offered for Reassign -- addWizard (and the
+// starter library it's built on) is architecturally single-category per
+// run.
 // ---------------------------------------------------------------------
 const CHORE_WIZARD_TYPE_OPTIONS = [
   ['chores', 'broom', 'Chores only', 'Assign or reassign chores'],
@@ -8908,51 +8899,65 @@ const CHORE_WIZARD_TYPE_OPTIONS = [
 ];
 
 function renderChoreWizardStep() {
-  renderAdminWizardProgress(2, choreWizard.step === 'mode' ? 0 : 1);
+  renderAdminWizardProgress(2, choreWizard.step === 'options' ? 0 : 1);
   const content = document.getElementById('adminWizardContent');
   content.innerHTML = '';
 
-  if (choreWizard.step === 'mode') {
+  if (choreWizard.step === 'options') {
     const card = el('div', { class: 'wizard-card' });
     card.appendChild(el('h1', {}, 'Chore wizard'));
     card.appendChild(el('p', { class: 'muted' }, 'What would you like to do?'));
-    const options = [
+    const modeOptions = [
       ['reassign', 'people', 'Reassign existing', 'Change who does what, or their schedule'],
       ['add', 'plus', 'Add new', 'Add chores or basics to your list'],
       ['startFresh', 'circleMinus', 'Start fresh', 'Clear everything and rebuild from scratch'],
     ];
     const optionsWrap = el('div', {});
-    options.forEach(([value, icon, title, subtitle]) => {
+    modeOptions.forEach(([value, icon, title, subtitle]) => {
       optionsWrap.appendChild(renderWizardOptionCard({
         icon, title, subtitle, selected: choreWizard.mode === value,
-        onclick: () => { choreWizard.mode = value; choreWizard.step = 'type'; renderChoreWizardStep(); },
+        onclick: () => { choreWizard.mode = value; renderChoreWizardStep(); },
       }));
     });
     card.appendChild(optionsWrap);
-    card.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-top:6px;', type: 'button', onclick: closeAdminWizard }, 'Cancel'));
-    content.appendChild(card);
-    return;
-  }
 
-  if (choreWizard.step === 'type') {
-    const card = el('div', { class: 'wizard-card' });
-    card.appendChild(el('h1', {}, 'Chore wizard'));
-    card.appendChild(el('p', { class: 'muted' }, 'Chores, basics, or both?'));
-    const options = choreWizard.mode === 'reassign'
-      ? CHORE_WIZARD_TYPE_OPTIONS
-      : CHORE_WIZARD_TYPE_OPTIONS.filter(([value]) => value !== 'both');
-    const optionsWrap = el('div', {});
-    options.forEach(([value, icon, title, subtitle]) => {
-      optionsWrap.appendChild(renderWizardOptionCard({
-        icon, title, subtitle, selected: choreWizard.type === value,
-        onclick: () => { choreWizard.type = value; handOffChoreWizard(); },
-      }));
-    });
-    card.appendChild(optionsWrap);
-    card.appendChild(el('button', {
-      class: 'pill', style: 'width:100%;margin-top:6px;', type: 'button',
-      onclick: () => { choreWizard.step = 'mode'; renderChoreWizardStep(); },
-    }, 'Back'));
+    // "Who is this for" -- reassign only, and only worth asking with more
+    // than one active child (same skip condition the old SCOPE step used).
+    const activeChildren = runWizardActiveChildren();
+    if (choreWizard.mode === 'reassign' && activeChildren.length > 1) {
+      card.appendChild(el('p', { class: 'lbl', style: 'margin-top:16px;' }, 'Who is this for'));
+      const scopeTabs = el('div', { class: 'day-tabs' });
+      [['family', 'Everyone'], ...activeChildren.map((c) => [c.uid, c.displayName || c.email])].forEach(([value, label]) => {
+        scopeTabs.appendChild(el('button', {
+          type: 'button', class: `sub-tab-btn${choreWizard.scopeUid === value ? ' active' : ''}`,
+          onclick: () => { choreWizard.scopeUid = value; renderChoreWizardStep(); },
+        }, label));
+      });
+      card.appendChild(scopeTabs);
+    }
+
+    if (choreWizard.mode) {
+      card.appendChild(el('p', { class: 'lbl', style: 'margin-top:16px;' }, 'Covering'));
+      const typeTabs = el('div', { class: 'day-tabs' });
+      const typeOptions = choreWizard.mode === 'reassign'
+        ? CHORE_WIZARD_TYPE_OPTIONS
+        : CHORE_WIZARD_TYPE_OPTIONS.filter(([value]) => value !== 'both');
+      typeOptions.forEach(([value, , title]) => {
+        typeTabs.appendChild(el('button', {
+          type: 'button', class: `sub-tab-btn${choreWizard.type === value ? ' active' : ''}`,
+          onclick: () => { choreWizard.type = value; renderChoreWizardStep(); },
+        }, title));
+      });
+      card.appendChild(typeTabs);
+    }
+
+    const continueBtn = el('button', { class: 'pill primary', style: 'width:100%;margin-top:16px;', type: 'button', onclick: handOffChoreWizard }, 'Continue');
+    continueBtn.disabled = !(choreWizard.mode && choreWizard.type);
+    card.appendChild(continueBtn);
+    if (choreWizard.mode) {
+      card.appendChild(el('p', { class: 'muted', style: 'text-align:center;font-size:0.8rem;margin:8px 0 0;' }, 'Nothing changes until you save.'));
+    }
+    card.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-top:6px;', type: 'button', onclick: closeAdminWizard }, 'Cancel'));
     content.appendChild(card);
     return;
   }
@@ -8963,20 +8968,17 @@ function renderChoreWizardStep() {
   }
 }
 
-// Reassign hands off into runWizard already past its own (now redundant
-// for this path) TYPE step -- runWizard.type is pre-seeded from here, and
-// its TYPE step is only ever reached directly via the per-child shortcut
-// (openRunWizard(uid)), never via this chooser. Add hands off into
-// addWizard exactly as its own Quick Action used to. Start fresh continues
-// into its own confirm step below before doing anything.
+// Reassign hands off straight into runWizard's review screen (ADR-0053) --
+// no separate SCOPE/INFO/SUMMARY screens, since "who"/"covering" were
+// already answered above and the count/reassurance now live on the review
+// screen itself. Add hands off into addWizard exactly as its own Quick
+// Action used to. Start fresh continues into its own confirm step below
+// before doing anything.
 function handOffChoreWizard() {
   const category = choreWizard.type === 'dailyTasks' ? 'dailyTask' : 'chore';
   if (choreWizard.mode === 'reassign') {
     adminWizardKind = 'run';
-    runWizard = {
-      step: runWizardActiveChildren().length <= 1 ? RUN_WIZARD_STEP.INFO : RUN_WIZARD_STEP.SCOPE,
-      type: choreWizard.type, scopeUid: 'family',
-    };
+    runWizard = { type: choreWizard.type, scopeUid: choreWizard.scopeUid, pending: new Map(), viaChoreWizard: true };
     renderAdminWizardStep();
   } else if (choreWizard.mode === 'add') {
     openAddWizard(category);
@@ -9012,7 +9014,7 @@ function renderStartFreshConfirmStep(content) {
   card.appendChild(el('div', { style: 'display:flex;gap:8px;' }, [
     el('button', {
       class: 'pill', style: 'flex:1;', type: 'button',
-      onclick: () => { choreWizard.step = 'type'; renderChoreWizardStep(); },
+      onclick: () => { choreWizard.step = 'options'; renderChoreWizardStep(); },
     }, 'Cancel'),
     el('button', {
       class: 'pill danger', style: 'flex:1;', type: 'button',
@@ -9038,9 +9040,6 @@ function renderStartFreshConfirmStep(content) {
   content.appendChild(card);
 }
 
-const RUN_WIZARD_STEP = { TYPE: 0, SCOPE: 1, INFO: 2, SUMMARY: 3, ITEMS: 4, DONE: 5 };
-const RUN_WIZARD_STEP_COUNT = 6;
-
 function runWizardActiveChildren() {
   return state.members.filter((m) => m.role === 'child' && m.active !== false);
 }
@@ -9055,249 +9054,273 @@ function runWizardScopedChores() {
     && (runWizard.scopeUid === 'family' || resolvePool(c, activeChildUids()).includes(runWizard.scopeUid)));
 }
 
+// ADR-0053: two screens, not six. `runWizard.type === null` only happens
+// via the direct per-child shortcut (openRunWizard(uid)) -- the chore
+// wizard's own Screen 1 already asks "covering" before handing off, so
+// runWizard.type arrives pre-set in that path and this covering-only
+// screen is skipped entirely. `runWizard.done` gates the final success
+// screen, reached only after a real batched save (see
+// renderRunWizardReviewScreen), not by simply navigating forward.
 function renderRunWizardStep() {
-  renderAdminWizardProgress(RUN_WIZARD_STEP_COUNT, runWizard.step);
   const content = document.getElementById('adminWizardContent');
   content.innerHTML = '';
-  const goTo = (step) => { runWizard.step = step; renderRunWizardStep(); };
-
-  if (runWizard.step === RUN_WIZARD_STEP.TYPE) {
-    const card = el('div', { class: 'wizard-card' });
-    card.appendChild(el('h1', {}, 'Assign chore wizard'));
-    card.appendChild(el('p', { class: 'muted' }, 'What would you like to configure?'));
-    const options = [
-      ['chores', 'broom', 'Chores only', 'Assign or reassign chores'],
-      ['dailyTasks', 'calendarCheck', 'Basics only', 'Assign or reassign basics'],
-      ['both', 'checkCircleWithRing', 'Both chores & basics', 'Configure everything'],
-    ];
-    const optionsWrap = el('div', {});
-    options.forEach(([value, icon, title, subtitle]) => {
-      optionsWrap.appendChild(renderWizardOptionCard({
-        icon, title, subtitle, selected: runWizard.type === value,
-        // Tapping an option advances immediately (no separate "Next" tap) --
-        // a single-choice step re-rendering itself in place to show a
-        // selection, then requiring a second tap on a below-the-fold "Next"
-        // button, read as broken/unresponsive. See ADR-0030 amendment.
-        onclick: () => {
-          runWizard.type = value;
-          // Single-child families have nothing meaningful to "scope" --
-          // skip straight past the scope step. Same skip when a scope was
-          // already preset (opened from a child's own admin page) -- it's
-          // already answered.
-          goTo(runWizard.scopeUid !== 'family' || runWizardActiveChildren().length <= 1
-            ? RUN_WIZARD_STEP.INFO : RUN_WIZARD_STEP.SCOPE);
-        },
-      }));
-    });
-    card.appendChild(optionsWrap);
-    card.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-top:6px;', type: 'button', onclick: closeAdminWizard }, 'Cancel'));
-    content.appendChild(card);
+  if (runWizard.done) {
+    renderAdminWizardProgress(2, 1);
+    renderRunWizardDoneScreen(content);
     return;
   }
-
-  if (runWizard.step === RUN_WIZARD_STEP.SCOPE) {
-    const children = runWizardActiveChildren();
-    const card = el('div', { class: 'wizard-card' });
-    card.appendChild(el('h1', {}, 'Who is this for?'));
-    card.appendChild(el('p', { class: 'muted' }, 'You can run the wizard for the whole family or just one child.'));
-    const optionsWrap = el('div', {});
-    optionsWrap.appendChild(renderWizardOptionCard({
-      icon: 'people', title: 'Whole family', subtitle: 'All children', selected: runWizard.scopeUid === 'family',
-      onclick: () => { runWizard.scopeUid = 'family'; goTo(RUN_WIZARD_STEP.INFO); },
-    }));
-    children.forEach((child) => {
-      optionsWrap.appendChild(renderWizardOptionCard({
-        icon: 'person', title: child.displayName || child.email, selected: runWizard.scopeUid === child.uid,
-        onclick: () => { runWizard.scopeUid = child.uid; goTo(RUN_WIZARD_STEP.INFO); },
-      }));
-    });
-    card.appendChild(optionsWrap);
-    card.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-top:6px;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.TYPE) }, 'Back'));
-    content.appendChild(card);
-    card.appendChild(el('div', {
-      style: 'display:flex;gap:8px;align-items:flex-start;margin-top:14px;padding:10px 12px;background:var(--panel2);border-radius:10px;font-size:0.82rem;',
-    }, [
-      svgIcon('infoCircle', { size: 16, color: 'var(--accent2)' }),
-      el('div', {}, 'Running for one child will only affect their chores and/or basics.'),
-    ]));
+  if (runWizard.type === null) {
+    renderAdminWizardProgress(2, 0);
+    renderRunWizardCoveringScreen(content);
     return;
   }
-
-  if (runWizard.step === RUN_WIZARD_STEP.INFO) {
-    const card = el('div', { class: 'wizard-card' });
-    card.appendChild(el('h1', {}, 'What happens when you run this wizard?'));
-    if (runWizard.scopeUid !== 'family') {
-      const child = state.members.find((m) => m.uid === runWizard.scopeUid);
-      card.appendChild(el('div', {
-        style: 'padding:10px 12px;background:var(--panel2);border-radius:10px;margin-bottom:14px;',
-      }, [
-        el('div', { style: 'font-weight:700;' }, `This will apply to ${child ? (child.displayName || child.email) : 'this child'} only`),
-        el('div', { class: 'muted', style: 'font-size:0.85rem;margin-top:4px;' },
-          `Only their chores and/or basics will be updated. Shared (round-robin) chores will stay as they are unless you change them.`),
-      ]));
-    }
-    [
-      ['Preserve by default', 'Round-robin assignments and current schedules will be preserved.'],
-      ['You can still change things', 'You can update assignments, frequencies, or remove a child from shared chores if needed.'],
-      ['Changes apply to selected scope', 'Only the selected child (or the whole family) will be affected.'],
-    ].forEach(([title, body]) => {
-      card.appendChild(el('div', { class: 'booking-card' }, [
-        el('div', { style: 'font-weight:700;' }, title),
-        el('div', { class: 'muted' }, body),
-      ]));
-    });
-    card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
-      el('button', {
-        class: 'pill', style: 'flex:1;', type: 'button',
-        onclick: () => goTo(runWizard.scopeUid !== 'family' || runWizardActiveChildren().length <= 1
-          ? RUN_WIZARD_STEP.TYPE : RUN_WIZARD_STEP.SCOPE),
-      }, 'Back'),
-      el('button', { class: 'pill primary', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.SUMMARY) }, 'Continue'),
-    ]));
-    content.appendChild(card);
-    return;
-  }
-
-  if (runWizard.step === RUN_WIZARD_STEP.SUMMARY) {
-    const scoped = runWizardScopedChores();
-    const chores = scoped.filter((c) => (c.category || 'chore') !== 'dailyTask');
-    const dailyTasks = scoped.filter((c) => (c.category || 'chore') === 'dailyTask');
-    const rotatingCount = chores.filter((c) => resolveAssignmentMode(c) === 'rotating').length;
-    const appliedToAll = dailyTasks.filter((c) => (c.assignedTo || []).includes('any')).length;
-
-    const card = el('div', { class: 'wizard-card' });
-    card.appendChild(el('h1', {}, 'Current summary'));
-    card.appendChild(el('p', { class: 'muted' }, 'This is what\'s currently configured.'));
-    if (runWizard.type !== 'dailyTasks') {
-      card.appendChild(el('div', { class: 'ring-heading' }, 'Chores'));
-      card.appendChild(summaryStatRow('broom', chores.length, 'Active chores'));
-      card.appendChild(summaryStatRow('people', rotatingCount, 'Round-robin chores'));
-    }
-    if (runWizard.type !== 'chores') {
-      card.appendChild(el('div', { class: 'ring-heading', style: 'margin-top:10px;' }, 'Basics'));
-      card.appendChild(summaryStatRow('calendarCheck', dailyTasks.length, 'Basics'));
-      card.appendChild(summaryStatRow('people', appliedToAll, 'Applied to all'));
-    }
-    if (scoped.length === 0) {
-      card.appendChild(el('div', { class: 'empty-state' }, 'Nothing in scope yet -- add some from "Add chores/basics to library" first.'));
-    }
-    card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
-      el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.INFO) }, 'Back'),
-      el('button', {
-        class: 'pill primary', style: 'flex:1;', type: 'button',
-        onclick: () => goTo(RUN_WIZARD_STEP.ITEMS),
-      }, 'Start wizard'),
-    ]));
-    content.appendChild(card);
-    return;
-  }
-
-  if (runWizard.step === RUN_WIZARD_STEP.ITEMS) {
-    const scoped = runWizardScopedChores();
-    const card = el('div', { class: 'wizard-card' });
-    card.appendChild(el('h1', {}, 'Review assignments'));
-    card.appendChild(el('p', { class: 'muted' }, runWizard.scopeUid === 'family'
-      ? 'Adjust anything that needs to change -- everything else stays as it is.'
-      : 'You can only add or remove this child here -- everyone else\'s assignments are untouched.'));
-    content.appendChild(card);
-
-    if (scoped.length === 0) {
-      content.appendChild(el('div', { class: 'empty-state' }, 'Nothing in scope.'));
-    }
-    ['chore', 'dailyTask'].forEach((cat) => {
-      const items = scoped.filter((c) => (c.category || 'chore') === cat);
-      if (items.length === 0) return;
-      content.appendChild(el('h2', { style: 'margin-top:10px;' }, cat === 'dailyTask' ? 'Basics' : 'Chores'));
-      items.forEach((chore) => content.appendChild(runWizardItemRow(chore)));
-    });
-
-    content.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
-      el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.SUMMARY) }, 'Back'),
-      el('button', { class: 'pill primary', style: 'flex:1;', type: 'button', onclick: () => goTo(RUN_WIZARD_STEP.DONE) }, 'Finish'),
-    ]));
-    return;
-  }
-
-  if (runWizard.step === RUN_WIZARD_STEP.DONE) {
-    const child = runWizard.scopeUid !== 'family' ? state.members.find((m) => m.uid === runWizard.scopeUid) : null;
-    content.appendChild(el('div', { class: 'wizard-card', style: 'text-align:center;' }, [
-      svgIcon('checkCircleWithRing', { size: 56, color: 'var(--accent2)' }),
-      el('h1', { style: 'margin-top:14px;' }, "You're all set!"),
-      el('p', { class: 'muted' }, 'Your setup has been updated.'),
-      el('div', { class: 'booking-card', style: 'text-align:left;' }, [
-        runWizard.type !== 'dailyTasks' ? el('div', {}, [svgIcon('check', { size: 14, color: 'var(--success)' }), ' Chores updated']) : null,
-        runWizard.type !== 'chores' ? el('div', {}, [svgIcon('check', { size: 14, color: 'var(--success)' }), ' Basics updated']) : null,
-        el('div', { class: 'muted', style: 'margin-top:6px;' }, `Scope: ${child ? (child.displayName || child.email) : 'Whole family'}`),
-      ]),
-      el('button', {
-        class: 'pill outline', style: 'width:100%;margin-top:10px;', type: 'button',
-        onclick: () => { closeAdminWizard(); switchTab('managechores'); },
-      }, 'View results'),
-      el('button', { class: 'pill primary', style: 'width:100%;margin-top:8px;', type: 'button', onclick: closeAdminWizard }, 'Done'),
-    ]));
-  }
+  renderAdminWizardProgress(2, 1);
+  renderRunWizardReviewScreen(content);
 }
 
-// Single-child-scope's simpler "does this child do this?" toggle -- see
-// RUN_WIZARD_STEP.ITEMS. Whole-family scope instead reuses the full
-// mode/pool editor (renderEditAssignmentBody) directly, since there's no
-// "just one child" constraint to enforce there.
-function runWizardItemRow(chore) {
-  const mode = resolveAssignmentMode(chore);
-  const label = choreLabel(chore);
-  const card = el('div', { class: 'booking-card' });
+function renderRunWizardCoveringScreen(content) {
+  const card = el('div', { class: 'wizard-card' });
+  card.appendChild(el('h1', {}, 'Assign chore wizard'));
+  card.appendChild(el('p', { class: 'muted' }, 'What would you like to configure?'));
+  const options = [
+    ['chores', 'broom', 'Chores only', 'Assign or reassign chores'],
+    ['dailyTasks', 'calendarCheck', 'Basics only', 'Assign or reassign basics'],
+    ['both', 'checkCircleWithRing', 'Both chores & basics', 'Configure everything'],
+  ];
+  const optionsWrap = el('div', {});
+  options.forEach(([value, icon, title, subtitle]) => {
+    optionsWrap.appendChild(renderWizardOptionCard({
+      icon, title, subtitle, selected: false,
+      onclick: () => { runWizard.type = value; renderRunWizardStep(); },
+    }));
+  });
+  card.appendChild(optionsWrap);
+  card.appendChild(el('button', { class: 'pill', style: 'width:100%;margin-top:6px;', type: 'button', onclick: closeAdminWizard }, 'Cancel'));
+  content.appendChild(card);
+}
 
-  if (runWizard.scopeUid === 'family') {
-    card.appendChild(el('div', { style: 'font-weight:600;margin-bottom:8px;' }, [label]));
-    card.appendChild(renderEditAssignmentBody(chore));
-    return card;
+// The single review-and-save screen -- folds in what used to be three
+// separate screens (Who is this for/What happens/Current summary) as a
+// header line and one info note, and replaces N chores' worth of
+// independent Save buttons with one writeBatch commit (same pattern
+// approveAllChoreLogEntries already uses for the chore-review queue).
+// Nothing is written to Firestore until that one Save is pressed.
+function renderRunWizardReviewScreen(content) {
+  const scoped = runWizardScopedChores();
+  const chores = scoped.filter((c) => (c.category || 'chore') !== 'dailyTask');
+  const dailyTasks = scoped.filter((c) => (c.category || 'chore') === 'dailyTask');
+  const scopeLabel = runWizard.scopeUid === 'family' ? 'everyone' : memberLabel(runWizard.scopeUid);
+  const countLabel = [
+    chores.length > 0 ? `${chores.length} chore${chores.length === 1 ? '' : 's'}` : null,
+    dailyTasks.length > 0 ? `${dailyTasks.length} basic${dailyTasks.length === 1 ? '' : 's'}` : null,
+  ].filter(Boolean).join(' · ') || 'Nothing yet';
+
+  const card = el('div', { class: 'wizard-card' });
+  card.appendChild(el('h1', {}, 'Who does what'));
+  card.appendChild(el('p', { class: 'muted' }, `${countLabel} · ${scopeLabel}`));
+  content.appendChild(card);
+
+  content.appendChild(el('div', {
+    style: 'display:flex;gap:8px;align-items:flex-start;margin:10px 0 14px;padding:10px 12px;background:var(--panel2);border-radius:10px;font-size:0.82rem;',
+  }, [
+    svgIcon('infoCircle', { size: 16, color: 'var(--accent2)' }),
+    el('div', {}, [
+      el('div', {}, "Changes to a rotation's lineup take effect from next Monday."),
+      el('div', { style: 'margin-top:2px;' }, 'Nothing changes until you save.'),
+    ]),
+  ]));
+
+  if (scoped.length === 0) {
+    content.appendChild(el('div', { class: 'empty-state' }, 'Nothing in scope -- add some chores or basics first.'));
   }
 
-  const pool = resolvePool(chore, activeChildUids());
-  const scopedUid = runWizard.scopeUid;
-  const included = pool.includes(scopedUid);
-  const modeLabel = mode === 'rotating' ? 'Rotates with the family'
-    : mode === 'fixed' ? 'Fixed to one person'
-    : mode === 'sharedAny' ? 'Shared with the family' : 'Everyone does their own';
-  const cb = el('input', { type: 'checkbox', ...(included ? { checked: 'checked' } : {}) });
-  const errorEl = el('p', { class: 'error-text', style: 'margin:4px 0 0;' });
-  errorEl.hidden = true;
+  const saveBtn = el('button', { class: 'pill primary', style: 'flex:1;', type: 'button' }, 'No changes yet');
+  function updateSaveButton() {
+    const n = runWizard.pending.size;
+    saveBtn.textContent = n === 0 ? 'No changes yet' : `Save ${n} change${n === 1 ? '' : 's'}`;
+    saveBtn.disabled = n === 0;
+  }
 
-  cb.addEventListener('change', async () => {
-    cb.disabled = true;
+  ['chore', 'dailyTask'].forEach((cat) => {
+    const items = scoped.filter((c) => (c.category || 'chore') === cat);
+    if (items.length === 0) return;
+    content.appendChild(el('h2', { style: 'margin-top:10px;' }, cat === 'dailyTask' ? 'Basics' : 'Chores'));
+    items.forEach((chore) => content.appendChild(
+      runWizard.scopeUid === 'family' ? runWizardFamilyRow(chore, updateSaveButton) : runWizardScopedRow(chore, updateSaveButton)
+    ));
+  });
+
+  const errorEl = el('p', { class: 'error-text' });
+  errorEl.hidden = true;
+  content.appendChild(errorEl);
+
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
     errorEl.hidden = true;
     try {
-      const newAssignedTo = mode === 'fixed'
-        ? (cb.checked ? [scopedUid] : [])
-        : (cb.checked ? [...pool.filter((uid) => uid !== scopedUid), scopedUid] : pool.filter((uid) => uid !== scopedUid));
-
-      if (!cb.checked && pool.length > 1) {
-        const proceed = await showAppConfirm(
-          `"${chore.name}" is currently shared with the family. If you remove it for ${memberLabel(scopedUid)}:\n\n`
-          + `• ${memberLabel(scopedUid)} will no longer be part of it.\n`
-          + `• The rotation order for others may change.`,
-          { title: 'Remove from shared chore', confirmLabel: 'Yes, remove', danger: true }
-        );
-        if (!proceed) { cb.checked = true; cb.disabled = false; return; }
-      }
-
-      const payload = computeAssignmentUpdatePayload(chore, mode, newAssignedTo);
-      const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-      await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), payload);
+      const { writeBatch, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      const batch = writeBatch(db);
+      runWizard.pending.forEach(({ chore, mode, assignedTo, size }) => {
+        const payload = { ...computeAssignmentUpdatePayload(chore, mode, assignedTo), size };
+        batch.update(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), payload);
+      });
+      await batch.commit();
+      runWizard.pending.clear();
+      runWizard.done = true;
+      renderRunWizardStep();
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.hidden = false;
-      cb.checked = !cb.checked;
-    } finally {
-      cb.disabled = false;
+      saveBtn.disabled = false;
     }
+  });
+
+  content.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
+    el('button', {
+      class: 'pill', style: 'flex:1;', type: 'button',
+      onclick: () => {
+        runWizard.pending.clear();
+        if (runWizard.viaChoreWizard) { adminWizardKind = 'chore'; choreWizard.step = 'options'; renderAdminWizardStep(); }
+        else { runWizard.type = null; renderRunWizardStep(); }
+      },
+    }, 'Back'),
+    saveBtn,
+  ]));
+  updateSaveButton();
+}
+
+function renderRunWizardDoneScreen(content) {
+  const child = runWizard.scopeUid !== 'family' ? state.members.find((m) => m.uid === runWizard.scopeUid) : null;
+  content.appendChild(el('div', { class: 'wizard-card', style: 'text-align:center;' }, [
+    svgIcon('checkCircleWithRing', { size: 56, color: 'var(--accent2)' }),
+    el('h1', { style: 'margin-top:14px;' }, "You're all set!"),
+    el('p', { class: 'muted' }, 'Your setup has been updated.'),
+    el('div', { class: 'booking-card', style: 'text-align:left;' }, [
+      runWizard.type !== 'dailyTasks' ? el('div', {}, [svgIcon('check', { size: 14, color: 'var(--success)' }), ' Chores updated']) : null,
+      runWizard.type !== 'chores' ? el('div', {}, [svgIcon('check', { size: 14, color: 'var(--success)' }), ' Basics updated']) : null,
+      el('div', { class: 'muted', style: 'margin-top:6px;' }, `Scope: ${child ? (child.displayName || child.email) : 'Whole family'}`),
+    ]),
+    el('button', {
+      class: 'pill outline', style: 'width:100%;margin-top:10px;', type: 'button',
+      onclick: () => { closeAdminWizard(); switchTab('managechores'); },
+    }, 'View results'),
+    el('button', { class: 'pill primary', style: 'width:100%;margin-top:8px;', type: 'button', onclick: closeAdminWizard }, 'Done'),
+  ]));
+}
+
+// Whole-family scope's row -- collapsed by default, showing a one-line
+// summary; expands into the mode/pool/size editor built from the same
+// primitives renderEditAssignmentBody itself uses. Deliberately NOT a
+// call into renderEditAssignmentBody, whose own immediate-save buttons
+// and error UI are wired for its other, unrelated call site (the Manage
+// Chores tab's standalone per-chore editing, which keeps its existing
+// behavior unchanged). Edits here only ever update runWizard.pending --
+// no Firestore write happens until the review screen's one Save button
+// is pressed.
+function runWizardFamilyRow(chore, updateSaveButton) {
+  const currentMode = resolveAssignmentMode(chore);
+  const currentAssignedTo = resolvePool(chore, activeChildUids());
+  const currentSize = resolveSize(chore);
+  const edit = { mode: currentMode, assignedTo: currentAssignedTo.slice(), size: currentSize };
+
+  function summaryText() {
+    let who;
+    if (edit.mode === 'rotating') who = `Rotates among ${edit.assignedTo.map(memberLabel).join(', ') || 'no one'}`;
+    else if (edit.mode === 'sharedAny') who = `Shared: ${edit.assignedTo.map(memberLabel).join(', ') || 'no one'}`;
+    else if (edit.mode === 'eachMember') who = `Everyone: ${edit.assignedTo.map(memberLabel).join(', ') || 'no one'}`;
+    else who = `Fixed to ${edit.assignedTo[0] ? memberLabel(edit.assignedTo[0]) : 'no one'}`;
+    return `${who} · ${SIZE_LABELS[edit.size]}`;
+  }
+
+  function markDirty() {
+    const changed = edit.mode !== currentMode || edit.size !== currentSize
+      || edit.assignedTo.length !== currentAssignedTo.length
+      || edit.assignedTo.some((uid) => !currentAssignedTo.includes(uid));
+    if (changed) runWizard.pending.set(chore.id, { chore, mode: edit.mode, assignedTo: edit.assignedTo, size: edit.size });
+    else runWizard.pending.delete(chore.id);
+    titleEl.textContent = `${chore.name} — ${summaryText()}`;
+    updateSaveButton();
+  }
+
+  const titleEl = el('span', {}, `${chore.name} — ${summaryText()}`);
+  const wrap = el('div', { class: 'more-item' });
+  wrap.appendChild(el('button', {
+    type: 'button', class: 'more-item-title-row',
+    onclick: () => wrap.classList.toggle('expanded'),
+  }, [titleEl, el('span', { class: 'more-item-chevron' }, '›')]));
+
+  const body = el('div', { class: 'more-item-body' });
+  const modeSelect = el('select', {}, [
+    el('option', { value: 'fixed' }, 'One specific person'),
+    el('option', { value: 'rotating' }, 'Rotates fairly among a group'),
+    el('option', { value: 'sharedAny' }, 'Shared -- any one of a group'),
+    el('option', { value: 'eachMember' }, 'Everyone does their own'),
+  ]);
+  modeSelect.value = edit.mode;
+  updateModeOptionsForCategory(modeSelect, chore.category || 'chore');
+  const poolWrap = el('div', {});
+  function refreshPool() {
+    const checkedUids = modeSelect.value === currentMode ? new Set(currentAssignedTo) : new Set(activeChildUids());
+    renderPoolControl(poolWrap, modeSelect.value, checkedUids);
+    edit.assignedTo = readPoolControl(poolWrap, modeSelect.value);
+  }
+  modeSelect.addEventListener('change', () => { edit.mode = modeSelect.value; refreshPool(); markDirty(); });
+  poolWrap.addEventListener('change', () => { edit.assignedTo = readPoolControl(poolWrap, edit.mode); markDirty(); });
+  refreshPool();
+
+  const sizeSelect = el('select', {}, Object.entries(SIZE_LABELS).map(([value, sizeLabel]) => el('option', { value }, sizeLabel)));
+  sizeSelect.value = edit.size;
+  sizeSelect.addEventListener('change', () => { edit.size = sizeSelect.value; markDirty(); });
+
+  body.appendChild(el('label', { style: 'margin:0;' }, 'Who does it'));
+  body.appendChild(attachCustomSelect(modeSelect));
+  body.appendChild(poolWrap);
+  body.appendChild(el('label', { style: 'margin:10px 0 0;' }, 'Size'));
+  body.appendChild(attachCustomSelect(sizeSelect));
+  wrap.appendChild(body);
+  return wrap;
+}
+
+// Single-child scope's simpler "does this child do this?" toggle -- same
+// as before, except toggling now only updates runWizard.pending instead
+// of writing to Firestore immediately.
+function runWizardScopedRow(chore, updateSaveButton) {
+  const mode = resolveAssignmentMode(chore);
+  const label = choreLabel(chore);
+  const pool = resolvePool(chore, activeChildUids());
+  const scopedUid = runWizard.scopeUid;
+  const currentIncluded = pool.includes(scopedUid);
+  const modeLabel = mode === 'rotating' ? 'Rotates with the family'
+    : mode === 'fixed' ? 'Fixed to one person'
+    : mode === 'sharedAny' ? 'Shared with the family' : 'Everyone does their own';
+  const cb = el('input', { type: 'checkbox', ...(currentIncluded ? { checked: 'checked' } : {}) });
+  const card = el('div', { class: 'booking-card' });
+
+  cb.addEventListener('change', async () => {
+    if (!cb.checked && pool.length > 1) {
+      const proceed = await showAppConfirm(
+        `"${chore.name}" is currently shared with the family. If you remove it for ${memberLabel(scopedUid)}:\n\n`
+        + `• ${memberLabel(scopedUid)} will no longer be part of it.\n`
+        + `• The rotation order for others may change.`,
+        { title: 'Remove from shared chore', confirmLabel: 'Yes, remove', danger: true }
+      );
+      if (!proceed) { cb.checked = true; return; }
+    }
+    if (cb.checked === currentIncluded) {
+      runWizard.pending.delete(chore.id);
+    } else {
+      const newAssignedTo = mode === 'fixed'
+        ? (cb.checked ? [scopedUid] : [])
+        : (cb.checked ? [...pool.filter((uid) => uid !== scopedUid), scopedUid] : pool.filter((uid) => uid !== scopedUid));
+      runWizard.pending.set(chore.id, { chore, mode, assignedTo: newAssignedTo, size: resolveSize(chore) });
+    }
+    updateSaveButton();
   });
 
   card.appendChild(el('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:10px;' }, [
     el('div', {}, [el('div', { style: 'font-weight:600;' }, [label]), el('div', { class: 'muted' }, modeLabel)]),
     cb,
   ]));
-  card.appendChild(errorEl);
   return card;
 }
 
