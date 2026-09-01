@@ -4038,9 +4038,21 @@ function renderDashboard() {
   const todayCard = el('div', { class: 'ca-card' });
   todayCard.appendChild(el('p', { class: 'ca-section', style: 'margin-top:0;' }, 'Today'));
   if (todayStreakItems.length > 0) {
+    // The "Motivation" section's streak nudge: "the streak line does the
+    // nudging, not the money" -- a concrete day count and a named loss
+    // ("one more to keep it") lands harder than a euro figure. Only the
+    // two states the spec gives copy for; a streak that's never started
+    // (0) or already secured for today falls back to the original text.
+    const brokenDateId = hotStreak ? findHotStreakBrokenDateId(hotStreak) : null;
+    let basicsSubtitle = hotStreak ? `Keeps your ${formatCents(hotStreak.amountCents, currency)} bonus going` : null;
+    if (hotStreak && brokenDateId) {
+      basicsSubtitle = 'Start a new streak today';
+    } else if (hotStreak && hotStreak.streak > 0 && todayStreakDone < todayStreakItems.length) {
+      basicsSubtitle = `${hotStreak.streak} day${hotStreak.streak === 1 ? '' : 's'} going — one more to keep it`;
+    }
     todayCard.appendChild(el('div', { class: 'ca-row', style: 'margin-bottom:6px;' }, [
       el('p', { class: 'ca-body ca-row__grow' }, `Basics · ${todayStreakDone} of ${todayStreakItems.length}`),
-      hotStreak ? el('p', { class: 'ca-meta' }, `Keeps your ${formatCents(hotStreak.amountCents, currency)} bonus going`) : null,
+      basicsSubtitle ? el('p', { class: 'ca-meta' }, basicsSubtitle) : null,
     ]));
     todayCard.appendChild(el('div', { class: 'ca-progress', style: 'margin-bottom:12px;' },
       el('span', { style: `width:${Math.round((todayStreakDone / todayStreakItems.length) * 100)}%` })));
