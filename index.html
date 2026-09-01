@@ -1329,6 +1329,42 @@ function computeWeeklyPointsForMember(memberUid) {
   return { possible, earned };
 }
 
+// ADR-0051: client-side mirror of functions/lib/settlement.js's
+// computeTypicalWeeklyPoints -- the fixed-rate payout's family-wide
+// fair-share denominator (NOT this member's own current-week actual
+// assignment, which is what computeWeeklyPointsForMember above still
+// returns). Every child-facing money screen that shows a euro-per-point
+// rate must read from THIS, not `possible`, or the live in-app figure
+// will disagree with what Friday's real settlement actually pays --
+// see renderEarnings/renderExtraJobBlockedBody call sites. Only
+// fixed/rotating chores divide their points across the pool (resolvePool
+// already returns a size-1 pool for 'fixed', so dividing there is a
+// no-op); sharedAny/eachMember get full, undivided weight per pool
+// member, exactly mirroring how possible/earned already treat them --
+// see the backend's identical comment for why dividing those would be a
+// bug, not a feature.
+function computeTypicalWeeklyPoints() {
+  const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+  const pool0 = activeChildUids();
+  const typicalByUid = {};
+
+  state.chores.forEach((chore) => {
+    if (chore.active === false || chore.category === 'dailyTask') return;
+    const pool = resolvePool(chore, pool0);
+    if (pool.length === 0) return;
+
+    const dueDateIds = resolveChoreDueDateIds(chore, weekDateIds);
+    if (dueDateIds.length === 0) return;
+
+    const points = dueDateIds.length * resolveSizeWeight(chore);
+    const mode = resolveAssignmentMode(chore);
+    const share = (mode === 'fixed' || mode === 'rotating') ? points / pool.length : points;
+    pool.forEach((uid) => { typicalByUid[uid] = (typicalByUid[uid] || 0) + share; });
+  });
+
+  return typicalByUid;
+}
+
 // Live per-size euro value for the setup wizard's Review screen
 // ("What one chore is worth" -- mockups/rebrand/choresapp-setup-wizard-
 // spec_updated.html: "Small €0.88 · medium €1.76 · large €2.65" for a
@@ -3562,18 +3598,24 @@ function computePendingPaymentLines(memberUid, member) {
     alreadySettled = true;
   } else {
     // Settlement hasn't run for this week yet -- a live, still-changing
-    // projection of what it WOULD compute right now. Base is proportional
-    // to points earned vs. possible so far this week (see ADR-0037, which
-    // replaced ADR-0026's unconditional-base-plus-automatic-deduction
-    // model) -- a child with nothing assigned (possible === 0) still
-    // projects their full base, mirroring computeSettlementActions.
+    // projection of what it WOULD compute right now. ADR-0051: base is
+    // now earned points against a fixed, family-wide fair-share "typical"
+    // rate (computeTypicalWeeklyPoints), not this week's own possible --
+    // uncapped, so a heavy week can project over the full base. The
+    // `possible === 0` fallback (not `typical === 0`) is deliberate --
+    // see the identical comment in functions/lib/settlement.js's
+    // computeSettlementActions for why: a child with a real typical share
+    // but no turn yet this week must still project their full base, not €0.
     const fullBaseCents = member ? member.baseWeeklyAllowanceCents || 0 : 0;
     if (fullBaseCents > 0) {
       const { possible, earned } = computeWeeklyPointsForMember(memberUid);
-      const amountCents = possible > 0 ? Math.round((earned / possible) * fullBaseCents) : fullBaseCents;
+      const typical = computeTypicalWeeklyPoints()[memberUid] || 0;
+      const amountCents = possible === 0
+        ? fullBaseCents
+        : (typical > 0 ? Math.round((earned / typical) * fullBaseCents) : fullBaseCents);
       if (amountCents > 0) {
         baseLine = {
-          label: possible > 0 ? `Weekly allowance — ${earned}/${possible} points` : 'Weekly allowance',
+          label: possible === 0 ? 'Weekly allowance' : `Weekly allowance — ${earned}/${Math.round(typical * 10) / 10} typical points`,
           cents: amountCents, pending: true,
         };
       }
@@ -4385,15 +4427,15 @@ function renderExtraJobClaimBody(container, currency) {
 
 // The blocked state (ADR-0050) -- names what's blocking, lists it,
 // keeps it tappable and priced, and explains it opens on its own. Value
-// per chore uses the same value-per-point rate as the wizard's own size
-// preview (computeSizeValuesCents) and the "Make it bigger" section on
-// See the maths -- base allowance divided by this week's possible
-// points, so the price shown here is consistent with what finishing it
-// would actually be worth.
+// per chore uses the same fixed, family-wide typical-week rate (ADR-0051)
+// as the "Make it bigger" section on See the maths -- base allowance
+// divided by this member's typical points, not this week's own possible,
+// so the price shown here always matches what Friday's real settlement
+// would actually pay for it.
 function renderExtraJobBlockedBody(container, currency, blockingItems) {
-  const { possible } = computeWeeklyPointsForMember(state.user.uid);
+  const typical = computeTypicalWeeklyPoints()[state.user.uid] || 0;
   const fullBaseCents = (state.member && state.member.baseWeeklyAllowanceCents) || 0;
-  const valuePerPointCents = possible > 0 ? fullBaseCents / possible : 0;
+  const valuePerPointCents = typical > 0 ? fullBaseCents / typical : 0;
 
   container.appendChild(el('p', { class: 'ca-body' }, 'Extra jobs open up once your own chores are done.'));
   const checklist = el('div', { class: 'ca-card' });
@@ -4744,7 +4786,14 @@ function renderEarnings() {
   const weekProgress = computeWeekProgressForMember(state.user.uid);
   const weeklyPoints = computeWeeklyPointsForMember(state.user.uid);
   const fullBaseCents = state.member.baseWeeklyAllowanceCents || 0;
-  const valuePerPointCents = weeklyPoints.possible > 0 ? fullBaseCents / weeklyPoints.possible : 0;
+  // ADR-0051: the euro-per-point rate is fixed from this member's typical
+  // (family-wide fair-share) points, not this week's own possible -- the
+  // completion text/bar just below deliberately stay on `possible`
+  // (weeklyPoints.earned/possible can never exceed 100%; typical can be
+  // legitimately over/under 100% by design, which isn't what a completion
+  // bar should show).
+  const typicalPoints = computeTypicalWeeklyPoints()[state.user.uid] || 0;
+  const valuePerPointCents = typicalPoints > 0 ? fullBaseCents / typicalPoints : 0;
 
   const choresCard = el('div', { class: 'ca-card' }, [
     el('div', { class: 'ca-row' }, [
