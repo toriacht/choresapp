@@ -856,6 +856,8 @@
     <section class="tab-page" data-page="chores" id="page-chores" hidden></section>
     <section class="tab-page" data-page="extras" id="page-extras" hidden></section>
     <section class="tab-page" data-page="earnings" id="page-earnings" hidden></section>
+    <section class="tab-page" data-page="earningitback" id="page-earningitback" hidden></section>
+    <section class="tab-page" data-page="yourweek" id="page-yourweek" hidden></section>
     <section class="tab-page" data-page="more" id="page-more" hidden></section>
     <section class="tab-page" data-page="admindashboard" id="page-admindashboard" hidden></section>
     <section class="tab-page" data-page="kids" id="page-kids" hidden></section>
@@ -1703,6 +1705,7 @@ const CHILD_TABS = ['dashboard', 'chores', 'extras', 'earnings', 'more'];
 const ADMIN_TABS = ['admindashboard', 'kids', 'managechores', 'allactivity', 'settings'];
 const TITLES = {
   dashboard: 'Dashboard', chores: 'Chores', extras: 'Extras', earnings: 'Earnings', more: 'More',
+  earningitback: 'Earning it back', yourweek: 'Your week',
   admindashboard: 'Admin Dashboard', kids: 'Kids', managechores: 'Chores', allactivity: 'Money', settings: 'Settings',
 };
 
@@ -3445,6 +3448,7 @@ function renderCurrentTab() {
   const renderers = {
     dashboard: renderDashboard, chores: renderChores, extras: renderExtras,
     earnings: renderEarnings, more: renderMore,
+    earningitback: renderEarningItBack, yourweek: renderYourWeek,
     admindashboard: renderAdminDashboard, kids: renderKids, managechores: renderManageChores,
     allactivity: renderAllActivity, settings: renderSettings,
   };
@@ -3586,17 +3590,55 @@ function computePendingPaymentLines(memberUid, member) {
 // just a single pass/fail) since display needs the day-by-day dot row too
 // -- pure, display-only, matches the server's exact logic (see ADR-0027) so
 // nothing shown here ever disagrees with what the real weekly evaluation
-// will find.
+// will find. `done`/`total` (ADR-0050) are a pure display addition for the
+// child-facing per-day strip ("2 of 3 basics done") -- they don't change
+// `allDone`, which stays the exact all-or-nothing qualification the actual
+// bonus payout (computeHotStreakLongestTrailingRun) is based on.
 function computeHotStreakDayStatus(taskChoreIds, weekDateIds, memberUid, daySwaps) {
   return weekDateIds.map((dateId) => {
-    const allDone = taskChoreIds.length > 0 && taskChoreIds.every((choreId) => {
+    const done = taskChoreIds.filter((choreId) => {
       const executingUid = resolveEffectiveAssigneeForDate(choreId, memberUid, dateId, daySwaps);
       return state.choreLog.some(
         (e) => e.choreId === choreId && e.memberUid === executingUid && e.dateId === dateId && e.status === 'approved'
       );
-    });
-    return { dateId, allDone };
+    }).length;
+    const total = taskChoreIds.length;
+    return { dateId, allDone: total > 0 && done === total, done, total };
   });
+}
+
+// The most recent day (strictly before today) the streak broke on, or
+// null if it's been a perfect run so far this week -- shared by "See the
+// maths" and "Your week" (ADR-0050), both of which show a "Streak
+// stopped on <day>" line next to the same per-day strip.
+function findHotStreakBrokenDateId(hotStreak) {
+  const priorDays = hotStreak.weekDateIds.filter((d) => d < hotStreak.todayDateId);
+  return [...priorDays].reverse().find((d) => !hotStreak.hitDateIds.has(d)) || null;
+}
+
+// The M-T-W-T-F-S-S per-day strip -- solid = done, dashed/washed = a
+// broken past day, mint = today in progress, plain wash = not reached
+// yet. Shared by "See the maths" and "Your week" (ADR-0050); this is the
+// first CHILD-facing render of it -- previously only the admin's Basics
+// bonus settings preview (renderHotStreakBonusBody) showed a day row, and
+// that one stays boolean-only (an admin configuring the bonus doesn't
+// need the count, just whether each day qualified).
+function renderHotStreakDayStrip(dayStatus, todayDateId) {
+  const dayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  return el('div', { class: 'ca-row', style: 'gap:4px;margin-top:var(--ca-space-2);' },
+    dayStatus.map((d, i) => {
+      const isToday = d.dateId === todayDateId;
+      const isFuture = d.dateId > todayDateId;
+      const bg = isFuture ? 'var(--ca-wash)' : d.allDone ? 'var(--ca-positive)' : isToday ? 'var(--ca-mint)' : 'var(--ca-wash)';
+      const fg = d.allDone ? '#fff' : 'var(--ca-ink-3)';
+      return el('div', {
+        style: `flex:1;text-align:center;padding:6px 0;border-radius:8px;background:${bg};color:${fg};`
+          + `${!d.allDone && !isFuture ? 'border:1px dashed var(--ca-ink-4);' : ''}`,
+      }, [
+        el('div', { style: 'font-weight:700;font-size:var(--ca-text-sm);' }, isFuture ? '' : `${d.done}/${d.total}`),
+        el('div', { style: 'font-size:var(--ca-text-xs);margin-top:2px;' }, dayLetters[i]),
+      ]);
+    }));
 }
 
 // This member's Hot Streak Bonus program (ADR-0027, members/{uid}.hotStreakBonus)
@@ -3653,6 +3695,28 @@ function moneyLineIcon(positive) {
   }, svgIcon(positive ? 'plus' : 'minus', { size: 16 }));
 }
 
+// ADR-0050: extra jobs (both the general "want to earn more?" claim/
+// propose flow and earn-it-back specifically) are gated behind this
+// child's OWN outstanding chores -- per-child, never affected by a
+// sibling. Reuses getDayViewItems(todayDateId)'s existing `actionable`
+// flag rather than computeWeekProgressForMember, deliberately: that
+// function's `satisfied` is "at least one approved entry this week,"
+// which is right for progress bars but wrong here -- a daily chore done
+// once on Monday would read as permanently satisfied all week, silently
+// unlocking extras despite Wednesday's occurrence sitting undone.
+// `actionable` already means exactly "this child needs to act on this
+// TODAY" -- requires today's date, excludes anything already marked
+// done/approved, and excludes a chore swapped away today (not this
+// child's job right now). A past, unclaimed daily chore-day is never
+// actionable once the day has passed (actionable requires dateId ===
+// today), so it can never block -- matching the confirmed rule that
+// expired work shouldn't hold the door shut, without needing any
+// separate expiry-detection logic.
+function computeExtraJobGateStatus() {
+  const blockingItems = getDayViewItems(getIsoDateId(new Date())).filter((item) => item.actionable);
+  return { blocked: blockingItems.length > 0, blockingItems };
+}
+
 // ---------------------------------------------------------------------
 // "Earn it back" (mockups/earn-it-back-mock.png) -- a child can offer to
 // do an extra task to offset a deduction, right from the activity line it
@@ -3692,6 +3756,21 @@ function renderEarnItBackBlock(tx, currency) {
     return el('div', { style: 'margin-top:8px;padding:8px 12px;background:var(--panel2);border-radius:8px;font-size:0.82rem;' }, [
       el('span', { style: 'font-weight:600;' }, 'Earn-it-back request sent'),
       el('span', { class: 'muted' }, ` — ${pending.description}, awaiting approval`),
+    ]);
+  }
+
+  // ADR-0050: earning it back is gated the same as any other extra job --
+  // a child's own outstanding chores come first.
+  if (computeExtraJobGateStatus().blocked) {
+    return el('div', {
+      style: 'margin-top:8px;padding:8px 12px;background:var(--panel2);border-radius:8px;'
+        + 'display:flex;align-items:center;justify-content:space-between;gap:10px;',
+    }, [
+      el('span', { style: 'font-size:0.82rem;color:var(--muted);' }, 'Finish your chores first'),
+      el('button', {
+        type: 'button', class: 'ca-btn ca-btn--sm ca-btn--secondary',
+        onclick: () => switchTab('earningitback'),
+      }, 'See what\'s left'),
     ]);
   }
 
@@ -3893,10 +3972,10 @@ function renderDashboard() {
   }
   container.appendChild(todayCard);
 
-  // ---- This week (tap through to Chores) ----
+  // ---- This week (tap through to the Your week drill-down, ADR-0050) ----
   const weekWaiting = weekProgress.pendingCount || 0;
   container.appendChild(el('div', {
-    class: 'ca-card', style: 'cursor:pointer;', onclick: () => switchTab('chores'),
+    class: 'ca-card', style: 'cursor:pointer;', onclick: () => switchTab('yourweek'),
   }, el('div', { class: 'ca-row' }, [
     el('div', { class: 'ca-row__grow' }, [
       el('p', { class: 'ca-title' }, 'This week'),
@@ -3931,6 +4010,61 @@ function renderDashboard() {
     el('div', { class: 'ca-row__grow' }, [
       el('p', { class: 'ca-title' }, 'Want to earn more?'),
       el('p', { class: 'ca-meta' }, 'Ask for an extra job'),
+    ]),
+    el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);' }),
+  ])));
+}
+
+// ADR-0050: "Your week" -- reached from the Dashboard's "This week" card.
+// Not a bottom-nav tab (same reachable-but-unlisted pattern as the admin
+// Extras tab) -- the bottom nav stays visible to leave. Basics strip
+// first (the per-day count is the thing a child broke-streak actually
+// wants to know), then chores broken down by state, then a link through
+// to the full money breakdown.
+function renderYourWeek() {
+  const container = document.getElementById('page-yourweek');
+  container.innerHTML = '';
+
+  const hotStreak = computeHotStreakSummary(state.user.uid);
+  if (hotStreak) {
+    container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:0;' }, 'Basics · streak'));
+    const dayStatus = computeHotStreakDayStatus(hotStreak.taskChoreIds, hotStreak.weekDateIds, state.user.uid, acceptedDaySwaps());
+    const brokenDateId = findHotStreakBrokenDateId(hotStreak);
+    container.appendChild(el('div', { class: 'ca-card' }, [
+      renderHotStreakDayStrip(dayStatus, hotStreak.todayDateId),
+      el('p', { class: 'ca-meta', style: 'margin-top:var(--ca-space-3);' },
+        brokenDateId
+          ? `Streak stopped on ${new Date(`${brokenDateId}T00:00:00Z`).toLocaleDateString(undefined, { weekday: 'long', timeZone: 'UTC' })}. Finish today and you're back on for the rest of the week.`
+          : "Perfect so far this week -- keep it going."),
+    ]));
+  }
+
+  const weekProgress = computeWeekProgressForMember(state.user.uid);
+  const approvedCount = weekProgress.items.filter((item) => item.satisfied).length;
+  const waitingCount = weekProgress.items.filter((item) => item.pending).length;
+  const stillToDoCount = weekProgress.total - approvedCount - waitingCount;
+  container.appendChild(el('p', { class: 'ca-section' }, 'Chores · allowance'));
+  const choresCard = el('div', { class: 'ca-card' }, [
+    el('div', { class: 'ca-row' }, [
+      el('p', { class: 'ca-title ca-row__grow' }, `${weekProgress.done} of ${weekProgress.total} done`),
+    ]),
+    el('div', { class: 'ca-progress', style: 'margin-top:var(--ca-space-2);' },
+      el('span', { style: `width:${weekProgress.pointsTotal === 0 ? 0 : Math.round((weekProgress.pointsDone / weekProgress.pointsTotal) * 100)}%` })),
+    el('div', { class: 'ca-row', style: 'margin-top:var(--ca-space-3);padding-top:var(--ca-space-2);border-top:var(--ca-hairline);font-size:var(--ca-text-sm);color:var(--ca-ink-3);' }, [
+      el('span', { style: 'flex:1;' }, `Approved ${approvedCount}`),
+      el('span', { style: 'flex:1;' }, `Waiting on a parent ${waitingCount}`),
+      el('span', { style: 'flex:1;' }, `Still to do ${stillToDoCount}`),
+    ]),
+  ]);
+  container.appendChild(choresCard);
+
+  container.appendChild(el('div', {
+    class: 'ca-card ca-card--quiet', style: 'cursor:pointer;margin-top:var(--ca-space-4);', onclick: () => switchTab('earnings'),
+  }, el('div', { class: 'ca-row' }, [
+    el('i', { class: 'ti ti-calculator', style: 'font-size:17px;color:var(--ca-green-700);' }),
+    el('div', { class: 'ca-row__grow' }, [
+      el('p', { class: 'ca-title' }, 'See the maths'),
+      el('p', { class: 'ca-meta' }, 'What this is worth so far'),
     ]),
     el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);' }),
   ])));
@@ -4184,15 +4318,15 @@ function renderChores() {
 // ---------------------------------------------------------------------
 // Extras tab (child: claim/propose; admin: approve) -- was "Jobs"
 // ---------------------------------------------------------------------
-function renderExtras() {
-  const container = document.getElementById('page-extras');
-  container.innerHTML = '';
-  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
-
-  if (state.role === 'child') {
+// The child claim/propose body (ADR-0050) -- shared by renderExtras()'s
+// own "Want to earn more?" section and the Earning-it-back screen's
+// unlocked state, since once the gate opens they're the exact same
+// content, just reached from a different headline. Kept as a plain
+// container-appending function (not a returned node) to match every
+// other render* helper in this file.
+function renderExtraJobClaimBody(container, currency) {
     const activeCatalog = state.catalog.filter((c) => c.active !== false);
 
-    container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:0;' }, 'Want to earn more?'));
     if (activeCatalog.length > 0) {
       container.appendChild(el('p', { class: 'ca-body' }, 'Ask a parent for one of these, or something else.'));
       const ideasCard = el('div', { class: 'ca-card' });
@@ -4247,6 +4381,53 @@ function renderExtras() {
       descInput.value = ''; amountInput.value = '';
     });
     container.appendChild(form);
+}
+
+// The blocked state (ADR-0050) -- names what's blocking, lists it,
+// keeps it tappable and priced, and explains it opens on its own. Value
+// per chore uses the same value-per-point rate as the wizard's own size
+// preview (computeSizeValuesCents) and the "Make it bigger" section on
+// See the maths -- base allowance divided by this week's possible
+// points, so the price shown here is consistent with what finishing it
+// would actually be worth.
+function renderExtraJobBlockedBody(container, currency, blockingItems) {
+  const { possible } = computeWeeklyPointsForMember(state.user.uid);
+  const fullBaseCents = (state.member && state.member.baseWeeklyAllowanceCents) || 0;
+  const valuePerPointCents = possible > 0 ? fullBaseCents / possible : 0;
+
+  container.appendChild(el('p', { class: 'ca-body' }, 'Extra jobs open up once your own chores are done.'));
+  const checklist = el('div', { class: 'ca-card' });
+  blockingItems.forEach((item, i) => {
+    if (i > 0) checklist.appendChild(el('div', { style: 'border-top:var(--ca-hairline);margin:var(--ca-space-2) 0;' }));
+    const priceCents = Math.round(resolveSizeWeight(item.chore) * valuePerPointCents);
+    checklist.appendChild(el('div', { class: 'ca-row' }, [
+      el('i', { class: 'ti ti-circle', style: 'color:var(--ca-ink-4);font-size:15px;' }),
+      el('p', { class: 'ca-title ca-row__grow' }, item.chore.name),
+      priceCents > 0 ? el('p', { style: 'margin:0;font-weight:600;color:var(--ca-positive);' }, formatCents(priceCents, currency)) : null,
+    ]));
+  });
+  container.appendChild(checklist);
+
+  container.appendChild(el('div', { class: 'ca-card ca-card--muted', style: 'margin-top:var(--ca-space-4);text-align:center;' }, [
+    el('i', { class: 'ti ti-lock', style: 'font-size:20px;color:var(--ca-ink-4);' }),
+    el('p', { class: 'ca-title', style: 'margin-top:var(--ca-space-2);color:var(--ca-ink-3);' }, 'Extra jobs'),
+    el('p', { class: 'ca-meta' }, `${blockingItems.length} chore${blockingItems.length === 1 ? '' : 's'} to go. These open up on their own -- nobody has to let you in.`),
+  ]));
+}
+
+function renderExtras() {
+  const container = document.getElementById('page-extras');
+  container.innerHTML = '';
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+
+  if (state.role === 'child') {
+    container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:0;' }, 'Want to earn more?'));
+    const gate = computeExtraJobGateStatus();
+    if (gate.blocked) {
+      renderExtraJobBlockedBody(container, currency, gate.blockingItems);
+    } else {
+      renderExtraJobClaimBody(container, currency);
+    }
   }
 
   if (state.role === 'admin') {
@@ -4468,6 +4649,52 @@ function renderExtraJobCard(job, currency) {
 }
 
 // ---------------------------------------------------------------------
+// "Earning it back" screen (child) -- ADR-0050. Reached from the "Earn it
+// back" prompt on an eligible deduction (Earnings tab) and from See the
+// maths' locked earn-it-back card. Not a bottom-nav tab -- same
+// reachable-but-unlisted pattern as the admin Extras tab -- so there's no
+// dedicated back control; the bottom nav stays visible to leave.
+// Deliberately reuses renderExtraJobBlockedBody/renderExtraJobClaimBody
+// verbatim rather than duplicating their content under a second name --
+// once the gate opens, "earning it back" and "wanting to earn more" are
+// the exact same claim/propose flow, just reached from a different
+// headline and framed against a specific number.
+function renderEarningItBack() {
+  const container = document.getElementById('page-earningitback');
+  container.innerHTML = '';
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+
+  const weekId = getIsoWeekId(new Date());
+  const openDeductions = state.ledger.filter((tx) => tx.weekId === weekId && isEarnBackEligible(tx)).filter((tx) => {
+    const related = state.extraJobs.filter((j) => j.relatedDeductionLedgerId === tx.id);
+    return !related.some((j) => j.status === 'paid' || j.status === 'proposed');
+  });
+  const earnableCents = openDeductions.reduce((sum, tx) => sum + Math.abs(tx.amountCents), 0);
+
+  if (earnableCents === 0) {
+    container.appendChild(el('div', { class: 'ca-empty' }, [
+      el('span', { class: 'ca-empty__icon' }, el('i', { class: 'ti ti-circle-check' })),
+      el('p', { class: 'ca-empty__title' }, 'Nothing to earn back right now'),
+    ]));
+    return;
+  }
+
+  const gate = computeExtraJobGateStatus();
+  const summaryCard = el('div', { class: 'ca-card' }, [
+    el('p', { style: 'margin:0;font-size:var(--ca-text-2xl);font-weight:600;letter-spacing:-.02em;' }, formatCents(earnableCents, currency)),
+    el('p', { class: 'ca-meta' }, 'You could earn back'),
+    !gate.blocked ? el('p', { class: 'ca-meta', style: 'color:var(--ca-positive);margin-top:var(--ca-space-1);' }, 'All your chores are done') : null,
+  ]);
+  container.appendChild(summaryCard);
+
+  if (gate.blocked) {
+    renderExtraJobBlockedBody(container, currency, gate.blockingItems);
+  } else {
+    renderExtraJobClaimBody(container, currency);
+  }
+}
+
+// ---------------------------------------------------------------------
 // Earnings tab (child) -- own ledger only; admin equivalent is All Activity
 // ---------------------------------------------------------------------
 // Child Money tab -- "See the maths" lands here (Dashboard now just links
@@ -4480,10 +4707,10 @@ function renderEarnings() {
   container.innerHTML = '';
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
 
-  const { lines: pendingLines, thisWeekLedger, alreadySettled, awaitingApproval } =
+  const { baseLine, extraLines, thisWeekLedger, alreadySettled, awaitingApproval } =
     computePendingPaymentLines(state.user.uid, state.member);
   const totalCents = thisWeekLedger.reduce((s, tx) => s + tx.amountCents, 0)
-    + pendingLines.reduce((s, l) => s + l.cents, 0);
+    + (baseLine ? baseLine.cents : 0) + extraLines.reduce((s, l) => s + l.cents, 0);
 
   const balanceCard = el('div', { class: 'ca-card' });
   balanceCard.appendChild(el('div', { class: 'ca-row' }, [
@@ -4496,33 +4723,158 @@ function renderEarnings() {
   ]));
   container.appendChild(balanceCard);
 
-  const calcLines = [
-    ...thisWeekLedger.map((tx) => ({
-      label: tx.note || tx.type.replace(/_/g, ' '), cents: tx.amountCents, pending: false, createdBy: tx.createdBy,
-    })),
-    ...pendingLines,
-  ];
-  if (calcLines.length > 0) {
-    const calcBody = el('div', {});
-    calcLines.forEach((line) => {
-      const positive = line.cents >= 0;
-      calcBody.appendChild(el('div', { class: 'ca-row', style: 'padding:var(--ca-space-2) 0;border-bottom:var(--ca-hairline);' }, [
+  // ADR-0050: "See the maths" -- four distinct cards (chores, basics
+  // bonus, extra jobs, taken off) instead of one flat interleaved list,
+  // so the total is checkable at a glance, plus "Make it bigger":
+  // reachable amounts a child could still add this week. Every figure
+  // here reuses existing computations (computeWeekProgressForMember,
+  // computeWeeklyPointsForMember, computeHotStreakSummary/DayStatus,
+  // isEarnBackEligible) -- no new money math, just organizing what
+  // already gets computed elsewhere into the spec's layout.
+  function settledOrPendingAmount(type) {
+    if (alreadySettled) {
+      const tx = thisWeekLedger.find((t) => t.type === type);
+      return tx ? tx.amountCents : 0;
+    }
+    if (type === 'weekly_payout') return baseLine ? baseLine.cents : 0;
+    const line = extraLines.find((l) => l.label && l.label.startsWith('Basics bonus'));
+    return line ? line.cents : 0;
+  }
+
+  const weekProgress = computeWeekProgressForMember(state.user.uid);
+  const weeklyPoints = computeWeeklyPointsForMember(state.user.uid);
+  const fullBaseCents = state.member.baseWeeklyAllowanceCents || 0;
+  const valuePerPointCents = weeklyPoints.possible > 0 ? fullBaseCents / weeklyPoints.possible : 0;
+
+  const choresCard = el('div', { class: 'ca-card' }, [
+    el('div', { class: 'ca-row' }, [
+      el('div', { class: 'ca-row__grow' }, [
+        el('p', { class: 'ca-title' }, 'Chores'),
+        el('p', { class: 'ca-meta' }, `${weekProgress.done} of ${weekProgress.total} done · ${weeklyPoints.earned} of ${weeklyPoints.possible} points`),
+      ]),
+      el('p', { style: 'margin:0;font-weight:600;' }, `${formatCents(settledOrPendingAmount('weekly_payout'), currency)} of ${formatCents(fullBaseCents, currency)}`),
+    ]),
+    el('div', { class: 'ca-progress', style: 'margin-top:var(--ca-space-2);' },
+      el('span', { style: `width:${weeklyPoints.possible === 0 ? 0 : Math.round((weeklyPoints.earned / weeklyPoints.possible) * 100)}%` })),
+    valuePerPointCents > 0 ? el('div', { class: 'ca-row', style: 'margin-top:var(--ca-space-3);padding-top:var(--ca-space-2);border-top:var(--ca-hairline);font-size:var(--ca-text-sm);color:var(--ca-ink-3);' }, [
+      el('span', { style: 'flex:1;' }, `Small ${formatCents(Math.round(valuePerPointCents), currency)}`),
+      el('span', { style: 'flex:1;' }, `Medium ${formatCents(Math.round(valuePerPointCents * 2), currency)}`),
+      el('span', { style: 'flex:1;' }, `Large ${formatCents(Math.round(valuePerPointCents * 3), currency)}`),
+    ]) : null,
+  ]);
+  container.appendChild(choresCard);
+
+  const hotStreak = computeHotStreakSummary(state.user.uid);
+  let brokenDateId = null;
+  if (hotStreak) {
+    const dayStatus = computeHotStreakDayStatus(hotStreak.taskChoreIds, hotStreak.weekDateIds, state.user.uid, acceptedDaySwaps());
+    brokenDateId = findHotStreakBrokenDateId(hotStreak);
+    const strip = renderHotStreakDayStrip(dayStatus, hotStreak.todayDateId);
+    const bonusCard = el('div', { class: 'ca-card' }, [
+      el('div', { class: 'ca-row' }, [
         el('div', { class: 'ca-row__grow' }, [
-          el('p', { class: 'ca-body', style: 'margin:0;' }, line.label),
-          line.createdBy ? el('p', { class: 'ca-meta' }, `Taken off by ${memberLabel(line.createdBy)}`)
-            : line.pending ? el('p', { class: 'ca-meta' }, line.awaitingApproval ? 'Awaiting approval' : 'Pending') : null,
+          el('p', { class: 'ca-title' }, 'Basics bonus'),
+          brokenDateId ? el('p', { class: 'ca-meta' }, `Streak stopped on ${new Date(`${brokenDateId}T00:00:00Z`).toLocaleDateString(undefined, { weekday: 'long', timeZone: 'UTC' })}`) : null,
         ]),
-        el('p', { style: `margin:0;font-weight:600;color:${positive ? 'var(--ca-positive)' : 'var(--ca-danger-fg)'};` },
-          `${positive ? '+' : ''}${formatCents(line.cents, currency)}`),
-      ]));
-    });
-    calcBody.appendChild(el('div', {
-      class: 'ca-row', style: 'padding-top:var(--ca-space-3);font-weight:700;',
-    }, [
-      el('p', { class: 'ca-row__grow', style: 'margin:0;' }, alreadySettled ? "This week's total" : 'Projected total'),
-      el('p', { style: 'margin:0;' }, formatCents(totalCents, currency)),
+        el('p', { style: `margin:0;font-weight:600;${settledOrPendingAmount('streak_bonus') === 0 ? 'color:var(--ca-ink-4);' : ''}` },
+          `${formatCents(settledOrPendingAmount('streak_bonus'), currency)} of ${formatCents(hotStreak.amountCents, currency)}`),
+      ]),
+      strip,
+    ]);
+    container.appendChild(bonusCard);
+  }
+
+  const extraJobLines = thisWeekLedger.filter((tx) => tx.type === 'extra_job_credit');
+  const extraJobsCents = extraJobLines.reduce((s, tx) => s + tx.amountCents, 0);
+  container.appendChild(el('div', { class: 'ca-card' }, [
+    el('div', { class: 'ca-row' }, [
+      el('div', { class: 'ca-row__grow' }, [
+        el('p', { class: 'ca-title' }, 'Extra jobs'),
+        el('p', { class: 'ca-meta' }, extraJobLines.length === 0 ? 'None this week' : extraJobLines.map((tx) => tx.note).join(', ')),
+      ]),
+      el('p', { style: 'margin:0;font-weight:600;' }, formatCents(extraJobsCents, currency)),
+    ]),
+  ]));
+
+  const takenOffLines = thisWeekLedger.filter((tx) => isEarnBackEligible(tx));
+  if (takenOffLines.length > 0) {
+    const takenOffCents = takenOffLines.reduce((s, tx) => s + tx.amountCents, 0);
+    container.appendChild(el('div', { class: 'ca-card' }, [
+      el('div', { class: 'ca-row', style: 'margin-bottom:var(--ca-space-2);' }, [
+        el('div', { class: 'ca-row__grow' }, [
+          el('p', { class: 'ca-title' }, 'Taken off'),
+          el('p', { class: 'ca-meta' }, `${takenOffLines.length} thing${takenOffLines.length === 1 ? '' : 's'}`),
+        ]),
+        el('p', { style: 'margin:0;font-weight:600;color:var(--ca-danger-fg);' }, formatCents(takenOffCents, currency)),
+      ]),
+      ...takenOffLines.map((tx) => el('div', {
+        class: 'ca-row', style: 'font-size:var(--ca-text-sm);color:var(--ca-ink-3);padding-top:var(--ca-space-1);border-top:var(--ca-hairline);',
+      }, [
+        el('span', { style: 'flex:1;' }, `${tx.note || 'Deduction'}${tx.createdBy ? ` · by ${memberLabel(tx.createdBy)}` : ''}`),
+        el('span', {}, formatCents(tx.amountCents, currency)),
+      ])),
     ]));
-    container.appendChild(makeExpandable('See the maths', calcBody));
+  }
+
+  container.appendChild(el('div', { class: 'ca-card ca-card--quiet', style: 'text-align:center;' }, [
+    el('p', { style: 'margin:0;font-size:var(--ca-text-lg);font-weight:600;' }, alreadySettled ? "This week's total" : "You'll get"),
+    el('p', { style: 'margin:2px 0 0;font-size:var(--ca-text-2xl);font-weight:700;' }, formatCents(totalCents, currency)),
+    !alreadySettled ? el('p', { class: 'ca-meta' }, 'Paid on Friday') : null,
+  ]));
+
+  // ---- Make it bigger ----
+  const makeItBiggerCards = [];
+  const remainingItems = weekProgress.items.filter((item) => !item.satisfied && !item.pending);
+  const remainingPoints = remainingItems.reduce((sum, item) => sum + resolveSizeWeight(item.chore), 0);
+  if (remainingItems.length > 0 && remainingPoints > 0 && valuePerPointCents > 0) {
+    makeItBiggerCards.push(el('div', { class: 'ca-card' }, el('div', { class: 'ca-row' }, [
+      el('i', { class: 'ti ti-list-check', style: 'font-size:17px;color:var(--ca-green-700);' }),
+      el('div', { class: 'ca-row__grow' }, [
+        el('p', { class: 'ca-title' }, `Finish your ${remainingItems.length} chore${remainingItems.length === 1 ? '' : 's'}`),
+        el('p', { class: 'ca-meta' }, `Worth ${formatCents(Math.round(remainingPoints * valuePerPointCents), currency)} more`),
+      ]),
+      el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);' }),
+    ])));
+  }
+  if (hotStreak && brokenDateId) {
+    const todayIdx = hotStreak.weekDateIds.indexOf(hotStreak.todayDateId);
+    const daysRemaining = 7 - todayIdx;
+    const restartCents = Math.round(hotStreak.amountCents * (daysRemaining / 7));
+    if (restartCents > 0) {
+      makeItBiggerCards.push(el('div', { class: 'ca-card' }, el('div', { class: 'ca-row' }, [
+        el('i', { class: 'ti ti-flame', style: 'font-size:17px;color:var(--ca-green-700);' }),
+        el('div', { class: 'ca-row__grow' }, [
+          el('p', { class: 'ca-title' }, 'Restart your basics'),
+          el('p', { class: 'ca-meta' }, `${daysRemaining} day${daysRemaining === 1 ? '' : 's'} left · worth up to ${formatCents(restartCents, currency)}`),
+        ]),
+        el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);' }),
+      ])));
+    }
+  }
+  if (takenOffLines.length > 0) {
+    const gate = computeExtraJobGateStatus();
+    const openDeductions = takenOffLines.filter((tx) => {
+      const related = state.extraJobs.filter((j) => j.relatedDeductionLedgerId === tx.id);
+      return !related.some((j) => j.status === 'paid' || j.status === 'proposed');
+    });
+    const earnableCents = openDeductions.reduce((sum, tx) => sum + Math.abs(tx.amountCents), 0);
+    if (earnableCents > 0) {
+      makeItBiggerCards.push(el('div', {
+        class: `ca-card ${gate.blocked ? 'ca-card--muted' : ''}`, style: gate.blocked ? '' : 'cursor:pointer;',
+        onclick: gate.blocked ? null : () => switchTab('earningitback'),
+      }, el('div', { class: 'ca-row' }, [
+        el('i', { class: `ti ${gate.blocked ? 'ti-lock' : 'ti-coin'}`, style: `font-size:17px;color:${gate.blocked ? 'var(--ca-ink-4)' : 'var(--ca-green-700)'};` }),
+        el('div', { class: 'ca-row__grow' }, [
+          el('p', { class: 'ca-title', style: gate.blocked ? 'color:var(--ca-ink-3);' : '' }, `Earn back the ${formatCents(earnableCents, currency)}`),
+          el('p', { class: 'ca-meta' }, gate.blocked ? 'Finish your chores first' : 'See how'),
+        ]),
+        !gate.blocked ? el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);' }) : null,
+      ])));
+    }
+  }
+  if (makeItBiggerCards.length > 0) {
+    container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:var(--ca-space-5);' }, 'Make it bigger'));
+    makeItBiggerCards.forEach((c) => container.appendChild(c));
   }
 
   if (state.ledger.length === 0) {
