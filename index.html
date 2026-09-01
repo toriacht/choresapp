@@ -4391,7 +4391,16 @@ function renderExtras() {
         event.preventDefault();
         logError.hidden = true;
         try {
-          await callLogDeduction({ memberUid: childSelect.value, catalogItemId: itemSelect.value });
+          const result = await callLogDeduction({ memberUid: childSelect.value, catalogItemId: itemSelect.value });
+          // ADR-0048: the deduction still went through, just clamped to
+          // this week's remaining room -- a popup notice, not the inline
+          // error-text element, since nothing here needs fixing/correcting.
+          if (result.data.capped) {
+            const msg = result.data.appliedAmountCents > 0
+              ? `Only ${formatCents(result.data.appliedAmountCents, currency)} of the usual ${formatCents(result.data.requestedAmountCents, currency)} was deducted -- that's as much as can come off this week.`
+              : "That's as much as can come off this week -- nothing more can be deducted until next week.";
+            await showAppAlert(msg, { title: 'Deduction capped', icon: 'infoCircle', tint: 'accent2' });
+          }
         } catch (err) {
           logError.textContent = err.message;
           logError.hidden = false;
@@ -5172,7 +5181,23 @@ function openAdjustMoneyModal(child) {
       render();
       return;
     }
-    lastResult = { amountCentsAbs, mode, note, targets, failedCount: failed.length };
+    // ADR-0048: a deduction can clamp differently per child (different base
+    // allowances / different amounts already deducted this week), so the
+    // success screen needs the real per-child applied amount, not a single
+    // shared number. A credit is never capped -- perChild stays null.
+    const perChild = mode === 'deduct'
+      ? targets.map((memberUid, i) => {
+          const r = results[i];
+          if (r.status !== 'fulfilled') return null;
+          return {
+            memberUid,
+            appliedAmountCents: r.value.data.appliedAmountCents,
+            requestedAmountCents: r.value.data.requestedAmountCents,
+            capped: r.value.data.capped,
+          };
+        }).filter(Boolean)
+      : null;
+    lastResult = { amountCentsAbs, mode, note, targets, failedCount: failed.length, perChild };
     step = 'success';
     render();
   }
@@ -5207,18 +5232,38 @@ function openAdjustMoneyModal(child) {
 
     if (lastResult) {
       const positive = lastResult.mode === 'add';
-      const label = lastResult.targets.length > 1
-        ? `${positive ? 'Added' : 'Deducted'} ${formatCents(lastResult.amountCentsAbs, currency)} to every child`
-        : `${positive ? 'Added' : 'Deducted'} ${formatCents(lastResult.amountCentsAbs, currency)}`;
-      body.appendChild(el('div', { class: 'booking-card', style: `text-align:left;border-left-color:${positive ? 'var(--success)' : 'var(--danger)'};` }, [
-        el('div', { class: 'row' }, [
-          el('div', {}, [
-            el('div', { style: 'font-weight:700;' }, label),
-            el('div', { class: 'muted' }, lastResult.note),
+      const anyCapped = !!(lastResult.perChild && lastResult.perChild.some((p) => p.capped));
+      if (lastResult.perChild && lastResult.targets.length > 1 && anyCapped) {
+        // A single shared amount would be wrong for at least one child once
+        // clamping can differ per child (ADR-0048) -- break it down instead.
+        body.appendChild(el('div', { class: 'booking-card', style: 'text-align:left;border-left-color:var(--danger);' }, [
+          el('div', { style: 'font-weight:700;margin-bottom:6px;' }, 'Deducted (some capped)'),
+          ...lastResult.perChild.map((p) => el('div', { class: 'row', style: 'padding:2px 0;' }, [
+            el('div', {}, memberLabel(p.memberUid)),
+            el('div', { class: 'muted' }, p.appliedAmountCents > 0
+              ? `${formatCents(p.appliedAmountCents, currency)}${p.capped ? ' (capped)' : ''}`
+              : 'Capped -- nothing more this week'),
+          ])),
+          el('div', { class: 'muted', style: 'margin-top:6px;' }, lastResult.note),
+        ]));
+      } else {
+        const shownAmountCents = lastResult.perChild && lastResult.perChild[0]
+          ? lastResult.perChild[0].appliedAmountCents
+          : lastResult.amountCentsAbs;
+        const label = lastResult.targets.length > 1
+          ? `${positive ? 'Added' : 'Deducted'} ${formatCents(shownAmountCents, currency)} to every child`
+          : `${positive ? 'Added' : 'Deducted'} ${formatCents(shownAmountCents, currency)}`;
+        body.appendChild(el('div', { class: 'booking-card', style: `text-align:left;border-left-color:${positive ? 'var(--success)' : 'var(--danger)'};` }, [
+          el('div', { class: 'row' }, [
+            el('div', {}, [
+              el('div', { style: 'font-weight:700;' }, label),
+              el('div', { class: 'muted' }, lastResult.note),
+              anyCapped ? el('div', { class: 'muted' }, "Capped -- that's as much as could come off this week") : null,
+            ]),
+            el('div', { class: 'muted' }, `Today, ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`),
           ]),
-          el('div', { class: 'muted' }, `Today, ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`),
-        ]),
-      ]));
+        ]));
+      }
     }
 
     body.appendChild(el('button', {
@@ -6874,6 +6919,19 @@ function renderSettings() {
   });
   const currencyBody = el('div', {}, [el('label', {}, 'Currency'), attachCustomSelect(currencySelect)]);
   container.appendChild(makeExpandable('Currency', currencyBody));
+  // ADR-0048: how much of a child's base allowance deductions can eat into
+  // in a single week -- never carries into the next week, since the cap
+  // check only ever sums the CURRENT week's ledger rows.
+  const deductionCapSelect = el('select', {}, [25, 40, 50, 60, 75, 90, 100].map((p) => el('option', { value: String(p) }, `${p}%`)));
+  deductionCapSelect.value = String((state.family && state.family.settings && state.family.settings.deductionCapPercent) ?? 60);
+  deductionCapSelect.addEventListener('change', async () => {
+    const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+    await updateDoc(fsDoc(db, `families/${state.familyId}`), {
+      settings: { ...(state.family.settings || {}), deductionCapPercent: Number(deductionCapSelect.value) },
+    });
+  });
+  const deductionCapBody = el('div', {}, [el('label', {}, 'Most that can come off'), attachCustomSelect(deductionCapSelect)]);
+  container.appendChild(makeExpandable('Most that can come off', deductionCapBody));
   if (state.members.filter((m) => m.role === 'child').length > 1) {
     container.appendChild(makeExpandable('Sharing chores out', renderRotationModeBody()));
   }
