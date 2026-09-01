@@ -1017,7 +1017,14 @@ function getIsoDateId(date) {
   return date.toISOString().slice(0, 10);
 }
 function resolveLogEntryId({ chore, choreId, uid, weekId, dateId }) {
-  return chore.frequency === 'daily'
+  // Matches functions/lib/choreLog.js's resolveLogEntryId exactly -- this
+  // mirror had drifted (was 'daily'-only) before ADR-0054 brought it back
+  // in line, which matters for the optimistic local entry this id is used
+  // to key (see applyOptimisticChoreLogEntry's call sites): a 'custom'/
+  // 'timesPerWeek' chore's optimistic entry was landing on the wrong
+  // (weekId-scoped) id, different from the real dateId-scoped doc the
+  // backend actually writes.
+  return (chore.frequency === 'daily' || chore.frequency === 'custom' || chore.frequency === 'timesPerWeek' || chore.frequency === 'everyNDays')
     ? `${dateId}_${choreId}_${uid}`
     : `${weekId}_${choreId}_${uid}`;
 }
@@ -1201,7 +1208,32 @@ function resolveChoreDueDateIds(chore, weekDateIds) {
     const count = Math.max(1, chore.timesPerWeekCount || 1);
     return Array(count).fill(weekDateIds[weekDateIds.length - 1]);
   }
+  if (chore.frequency === 'everyNDays') {
+    const n = Math.max(2, chore.everyNDaysCount || 2);
+    const anchor = chore.scheduleAnchorDateId;
+    if (!anchor) return [];
+    return weekDateIds.filter((d) => d >= anchor && daysBetweenDateIds(anchor, d) % n === 0);
+  }
   return [weekDateIds[weekDateIds.length - 1]];
+}
+// ADR-0054: pure date-id arithmetic for the 'everyNDays' recurrence --
+// mirrors functions/lib/choreLog.js's helpers of the same name exactly.
+function daysBetweenDateIds(a, b) {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+}
+function addDaysToDateId(dateId, days) {
+  const d = new Date(Date.parse(`${dateId}T00:00:00Z`));
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+// The spec's "preview is not optional" -- the next `count` real calendar
+// dates an 'everyNDays' chore is due, starting from fromDateId (inclusive).
+function computeNextEveryNDaysDueDateIds(chore, fromDateId, count) {
+  const n = Math.max(2, chore.everyNDaysCount || 2);
+  const anchor = chore.scheduleAnchorDateId;
+  if (!anchor) return [];
+  const firstK = Math.max(0, Math.ceil(daysBetweenDateIds(anchor, fromDateId) / n));
+  return Array.from({ length: count }, (_, i) => addDaysToDateId(anchor, (firstK + i) * n));
 }
 function resolveInstanceExpiryDateId(chore, dueDateId, weekDateIds) {
   const sameDayOnly = chore.category === 'dailyTask' || chore.frequency === 'daily';
@@ -1265,7 +1297,7 @@ function computeFamilyRotationAssignments({ chores, weekId, weekDateIds }) {
 }
 function computeChoreInstanceCredit({ chore, dueDateIds, weekDateIds, approvedEntryDateIds }) {
   const weight = resolveSizeWeight(chore);
-  const dateScoped = chore.frequency === 'daily' || chore.frequency === 'custom';
+  const dateScoped = chore.frequency === 'daily' || chore.frequency === 'custom' || chore.frequency === 'everyNDays';
   if (!dateScoped) {
     const earnedCount = Math.min(approvedEntryDateIds.length, dueDateIds.length);
     return { possible: dueDateIds.length * weight, earned: earnedCount * weight };
@@ -1288,7 +1320,7 @@ function resolveApprovedEntryDateIdsForMember({ chore, memberUid, mode, pool, we
       .map((e) => e.dateId || chore.id);
   }
   if (mode === 'eachMember') {
-    const dateScoped = chore.frequency === 'daily' || chore.frequency === 'custom';
+    const dateScoped = chore.frequency === 'daily' || chore.frequency === 'custom' || chore.frequency === 'everyNDays';
     return state.choreLog
       .filter((e) => {
         if (e.choreId !== chore.id || e.status !== 'approved') return false;
@@ -1353,10 +1385,21 @@ function computeTypicalWeeklyPoints() {
     const pool = resolvePool(chore, pool0);
     if (pool.length === 0) return;
 
-    const dueDateIds = resolveChoreDueDateIds(chore, weekDateIds);
-    if (dueDateIds.length === 0) return;
+    // ADR-0054: an 'everyNDays' chore's due-date count fluctuates week to
+    // week (unlike every other frequency, which is constant by
+    // construction) -- use the long-run average (7/N) here so `typical`
+    // stays fixed, matching functions/lib/settlement.js's identical fix.
+    let occurrenceCount;
+    if (chore.frequency === 'everyNDays') {
+      if (!chore.scheduleAnchorDateId) return;
+      occurrenceCount = 7 / Math.max(2, chore.everyNDaysCount || 2);
+    } else {
+      const dueDateIds = resolveChoreDueDateIds(chore, weekDateIds);
+      if (dueDateIds.length === 0) return;
+      occurrenceCount = dueDateIds.length;
+    }
 
-    const points = dueDateIds.length * resolveSizeWeight(chore);
+    const points = occurrenceCount * resolveSizeWeight(chore);
     const mode = resolveAssignmentMode(chore);
     const share = (mode === 'fixed' || mode === 'rotating') ? points / pool.length : points;
     pool.forEach((uid) => { typicalByUid[uid] = (typicalByUid[uid] || 0) + share; });
@@ -6507,6 +6550,7 @@ function renderFrequencySelect() {
     el('option', { value: 'daily' }, 'Recurring -- every day'),
     el('option', { value: 'custom' }, 'Recurring -- specific days (e.g. Mon/Wed/Fri)'),
     el('option', { value: 'timesPerWeek' }, 'Recurring -- a few times a week, any days'),
+    el('option', { value: 'everyNDays' }, 'Recurring -- every few days'),
     el('option', { value: 'occasional' }, 'Occasional -- no fixed schedule, never counts as missed'),
     el('option', { value: 'once' }, 'One-off -- this week only, then done'),
   ]);
@@ -6519,6 +6563,40 @@ function renderTimesPerWeekSelect() {
   const select = el('select', {}, [2, 3, 4, 5, 6].map((n) => el('option', { value: String(n) }, `${n} times a week`)));
   select.value = '2';
   return select;
+}
+// Only shown for frequency:'everyNDays' (ADR-0054) -- the fixed cadence in
+// days. Same closed-choice pattern as renderTimesPerWeekSelect above, just
+// relabeled; 2-14 covers every real cadence a parent would plausibly want
+// without an open-ended number input.
+function renderEveryNDaysSelect() {
+  const select = el('select', {}, Array.from({ length: 13 }, (_, i) => i + 2).map((n) => el('option', { value: String(n) }, `Every ${n} days`)));
+  select.value = '2';
+  return select;
+}
+// The spec's "preview is not optional" for 'everyNDays' -- a one-line
+// "Next: Tue 2, Thu 4, Sat 6" computed from a fresh anchor of today, kept
+// deliberately plain-text rather than the mockup's full preview card
+// (ADR-0054 is the recurrence engine pass; the unified picker UI is a
+// later pass). Both call sites seed a throwaway chore object with today as
+// the anchor, since the real scheduleAnchorDateId isn't assigned until
+// creation -- the cadence (N) is the only thing being previewed here.
+function renderEveryNDaysPreview(everyNDaysSelect) {
+  const preview = el('p', { class: 'muted', style: 'font-size:0.78rem;margin:-4px 0 10px;' });
+  function refresh() {
+    const todayId = getIsoDateId(new Date());
+    const dates = computeNextEveryNDaysDueDateIds(
+      { everyNDaysCount: Number(everyNDaysSelect.value), scheduleAnchorDateId: todayId }, todayId, 4
+    );
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const labels = dates.map((d) => {
+      const day = new Date(`${d}T00:00:00Z`);
+      return `${dayNames[day.getUTCDay()]} ${day.getUTCDate()}`;
+    });
+    preview.textContent = `Next: ${labels.join(', ')}`;
+  }
+  everyNDaysSelect.addEventListener('change', refresh);
+  refresh();
+  return preview;
 }
 // Only shown for frequency:'occasional' (ADR-0033) -- an optional bonus
 // paid the moment this chore's completion is approved, no separate claim
@@ -6567,11 +6645,16 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   const scheduledDaysWrap = el('div', { style: 'display:flex;gap:6px;margin-bottom:10px;', hidden: true }, dayButtons);
   const timesPerWeekSelect = renderTimesPerWeekSelect();
   const timesPerWeekWrap = el('div', { hidden: true }, [el('label', {}, 'How many times a week?'), attachCustomSelect(timesPerWeekSelect)]);
+  const everyNDaysSelect = renderEveryNDaysSelect();
+  const everyNDaysWrap = el('div', { hidden: true }, [
+    el('label', {}, 'How many days apart?'), attachCustomSelect(everyNDaysSelect), renderEveryNDaysPreview(everyNDaysSelect),
+  ]);
   const bonusInput = renderBonusInput();
   const bonusWrap = el('div', { hidden: true }, bonusInput);
   function updateScheduledDaysVisibility() {
     scheduledDaysWrap.hidden = frequencySelect.value !== 'custom';
     timesPerWeekWrap.hidden = frequencySelect.value !== 'timesPerWeek';
+    everyNDaysWrap.hidden = frequencySelect.value !== 'everyNDays';
     bonusWrap.hidden = frequencySelect.value !== 'occasional';
   }
   frequencySelect.addEventListener('change', () => { updateScheduledDaysVisibility(); updateSubmitEnabled(); });
@@ -6677,6 +6760,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   form.appendChild(attachCustomSelect(frequencySelect));
   form.appendChild(scheduledDaysWrap);
   form.appendChild(timesPerWeekWrap);
+  form.appendChild(everyNDaysWrap);
   form.appendChild(bonusWrap);
   form.appendChild(el('label', {}, 'Size'));
   form.appendChild(attachCustomSelect(sizeSelect));
@@ -6721,6 +6805,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       frequency: frequencySelect.value,
       ...(frequencySelect.value === 'custom' ? { scheduledDays } : {}),
       ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
+      ...(frequencySelect.value === 'everyNDays' ? { everyNDaysCount: Number(everyNDaysSelect.value), scheduleAnchorDateId: getIsoDateId(new Date()) } : {}),
       ...(frequencySelect.value === 'occasional' ? { bonusCents: centsFromMajorUnits(bonusInput.value) } : {}),
       size: sizeSelect.value,
       active: true,
@@ -7034,6 +7119,9 @@ function renderActiveChores(container) {
       if (chore.frequency === 'timesPerWeek') {
         assignedLabel += ` — ${chore.timesPerWeekCount || 1}x a week, any days`;
       }
+      if (chore.frequency === 'everyNDays') {
+        assignedLabel += ` — every ${chore.everyNDaysCount || 2} days`;
+      }
       if (chore.frequency === 'occasional' && chore.bonusCents > 0) {
         assignedLabel += ` — +${formatCents(chore.bonusCents, currency)} bonus when done`;
       }
@@ -7100,6 +7188,26 @@ function renderActiveChores(container) {
         }, 'Save');
         card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:10px;' }, [
           el('label', { style: 'margin:0;' }, 'Times/week'), attachCustomSelect(editTimesSelect), saveTimesBtn,
+        ]));
+      }
+      // Edit-in-place, same pattern as 'timesPerWeek' above (ADR-0054) --
+      // only the cadence (N) is editable here, not the anchor date, which
+      // stays fixed from creation (full anchor control is a later pass).
+      if (chore.frequency === 'everyNDays') {
+        const editEveryNDaysSelect = renderEveryNDaysSelect();
+        editEveryNDaysSelect.value = String(chore.everyNDaysCount || 2);
+        const saveEveryNDaysBtn = el('button', {
+          type: 'button', class: 'pill primary small',
+          onclick: async () => {
+            saveEveryNDaysBtn.disabled = true;
+            try {
+              const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+              await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { everyNDaysCount: Number(editEveryNDaysSelect.value) });
+            } catch (err) { showAppAlert(err.message); } finally { saveEveryNDaysBtn.disabled = false; }
+          },
+        }, 'Save');
+        card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:10px;' }, [
+          el('label', { style: 'margin:0;' }, 'Every N days'), attachCustomSelect(editEveryNDaysSelect), saveEveryNDaysBtn,
         ]));
       }
       if (chore.frequency === 'occasional') {
@@ -8034,6 +8142,7 @@ let wizardChoreLibrarySearch = '';
 function choreWizardFrequencyLabel(draft) {
   if (draft.frequency === 'daily') return 'Every day';
   if (draft.frequency === 'timesPerWeek') return `${draft.timesPerWeekCount || 2}x a week`;
+  if (draft.frequency === 'everyNDays') return `Every ${draft.everyNDaysCount || 2} days`;
   if (draft.frequency === 'occasional') return 'Now and then';
   return 'Weekly';
 }
@@ -8090,6 +8199,7 @@ function renderChoreWizardChores(card) {
     el('option', { value: 'daily' }, 'Daily'), el('option', { value: 'custom' }, 'Some days'),
     el('option', { value: 'weekly', selected: 'selected' }, 'Weekly'),
     el('option', { value: 'timesPerWeek' }, 'A few times a week, any days'),
+    el('option', { value: 'everyNDays' }, 'Every few days'),
     el('option', { value: 'occasional' }, 'Now and then'),
   ]);
   const sizeSelect = el('select', {}, [
@@ -8099,7 +8209,14 @@ function renderChoreWizardChores(card) {
   const timesPerWeekWrap = el('div', { hidden: true, style: 'margin-bottom:8px;' }, [
     el('label', {}, 'How many times a week?'), attachCustomSelect(timesPerWeekSelect),
   ]);
-  frequencySelect.addEventListener('change', () => { timesPerWeekWrap.hidden = frequencySelect.value !== 'timesPerWeek'; });
+  const everyNDaysSelect = renderEveryNDaysSelect();
+  const everyNDaysWrap = el('div', { hidden: true, style: 'margin-bottom:8px;' }, [
+    el('label', {}, 'How many days apart?'), attachCustomSelect(everyNDaysSelect), renderEveryNDaysPreview(everyNDaysSelect),
+  ]);
+  frequencySelect.addEventListener('change', () => {
+    timesPerWeekWrap.hidden = frequencySelect.value !== 'timesPerWeek';
+    everyNDaysWrap.hidden = frequencySelect.value !== 'everyNDays';
+  });
   const errorEl = el('p', { class: 'error-text', style: 'margin:0 0 8px;' });
   errorEl.hidden = true;
   const addBtn = el('button', {
@@ -8118,6 +8235,7 @@ function renderChoreWizardChores(card) {
         id: nextWizardDraftId(), name, tabCategory: 'Custom', icon: inferChoreIcon(name),
         frequency: frequencySelect.value, size: sizeSelect.value, checked: true, existing: false, eligibleUids: undefined,
         ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
+        ...(frequencySelect.value === 'everyNDays' ? { everyNDaysCount: Number(everyNDaysSelect.value), scheduleAnchorDateId: getIsoDateId(new Date()) } : {}),
       });
       nameInput.value = '';
       renderList();
@@ -8128,6 +8246,7 @@ function renderChoreWizardChores(card) {
   card.appendChild(nameInput);
   card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-bottom:8px;' }, [attachCustomSelect(frequencySelect), attachCustomSelect(sizeSelect)]));
   card.appendChild(timesPerWeekWrap);
+  card.appendChild(everyNDaysWrap);
   card.appendChild(addBtn);
   card.appendChild(errorEl);
 
@@ -8451,6 +8570,7 @@ async function commitChoreWizard() {
       frequency: draft.frequency,
       ...(draft.frequency === 'custom' ? { scheduledDays: draft.scheduledDays || [] } : {}),
       ...(draft.frequency === 'timesPerWeek' ? { timesPerWeekCount: draft.timesPerWeekCount || 2 } : {}),
+      ...(draft.frequency === 'everyNDays' ? { everyNDaysCount: draft.everyNDaysCount || 2, scheduleAnchorDateId: draft.scheduleAnchorDateId || getIsoDateId(new Date()) } : {}),
       size: draft.size, active: true, createdBy: state.user.uid,
       createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     });
@@ -9513,6 +9633,13 @@ function renderAddWizardStep() {
     ]);
     card.appendChild(timesPerWeekWrap);
 
+    const everyNDaysSelect = renderEveryNDaysSelect();
+    if (draft.everyNDaysCount) everyNDaysSelect.value = String(draft.everyNDaysCount);
+    const everyNDaysWrap = el('div', { hidden: draft.frequency !== 'everyNDays' }, [
+      el('label', {}, 'How many days apart?'), attachCustomSelect(everyNDaysSelect), renderEveryNDaysPreview(everyNDaysSelect),
+    ]);
+    card.appendChild(everyNDaysWrap);
+
     const bonusInput = renderBonusInput();
     if (draft.bonusCents) bonusInput.value = (draft.bonusCents / 100).toFixed(2);
     const bonusWrap = el('div', { hidden: draft.frequency !== 'occasional' }, bonusInput);
@@ -9520,6 +9647,7 @@ function renderAddWizardStep() {
 
     frequencySelect.addEventListener('change', () => {
       timesPerWeekWrap.hidden = frequencySelect.value !== 'timesPerWeek';
+      everyNDaysWrap.hidden = frequencySelect.value !== 'everyNDays';
       bonusWrap.hidden = frequencySelect.value !== 'occasional';
     });
 
@@ -9551,6 +9679,7 @@ function renderAddWizardStep() {
           name: nameInput.value.trim(), icon: iconInput.value.trim() || null, description: descInput.value.trim(),
           frequency: frequencySelect.value, size: sizeSelect ? sizeSelect.value : 'medium', mode: modeSelect.value,
           ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
+          ...(frequencySelect.value === 'everyNDays' ? { everyNDaysCount: Number(everyNDaysSelect.value), scheduleAnchorDateId: draft.scheduleAnchorDateId || getIsoDateId(new Date()) } : {}),
           ...(frequencySelect.value === 'occasional' ? { bonusCents: centsFromMajorUnits(bonusInput.value) } : {}),
         };
         addWizard.screen = 'assignment'; addWizard.step = 1;
@@ -9605,6 +9734,7 @@ function renderAddWizardStep() {
             ...(payload.rotation ? { rotation: payload.rotation } : {}),
             frequency: draft.frequency, size: draft.size,
             ...(draft.frequency === 'timesPerWeek' ? { timesPerWeekCount: draft.timesPerWeekCount } : {}),
+            ...(draft.frequency === 'everyNDays' ? { everyNDaysCount: draft.everyNDaysCount, scheduleAnchorDateId: draft.scheduleAnchorDateId } : {}),
             ...(draft.frequency === 'occasional' ? { bonusCents: draft.bonusCents || 0 } : {}),
             active: true, createdBy: state.user.uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
           });
