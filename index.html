@@ -975,7 +975,6 @@ const callAdjustBalance = httpsCallable(functions, 'adjustBalance');
 const callLogDeduction = httpsCallable(functions, 'logDeduction');
 const callWarnAboutDeduction = httpsCallable(functions, 'warnAboutDeduction');
 const callApproveWeeklyPayout = httpsCallable(functions, 'approveWeeklyPayout');
-const callDeclineWeeklyPayout = httpsCallable(functions, 'declineWeeklyPayout');
 const callRegisterFcmToken = httpsCallable(functions, 'registerFcmToken');
 const callUnregisterFcmToken = httpsCallable(functions, 'unregisterFcmToken');
 const callAddFamilyMember = httpsCallable(functions, 'addFamilyMember');
@@ -3347,6 +3346,7 @@ let selectedKidUid = null;
 // Kids tab section.
 function openKid(uid) {
   selectedKidUid = uid;
+  kidDetailSubTab = 'chores';
   switchTab('kids');
 }
 
@@ -4633,7 +4633,7 @@ function renderAdminDashboard() {
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const payoutDay = dayNames[(state.family && state.family.settings && state.family.settings.payoutDayOfWeek) ?? 5];
     waitingCards.push(el('div', {
-      class: 'ca-card ca-card--waiting', style: 'cursor:pointer;', onclick: () => switchTab('kids'),
+      class: 'ca-card ca-card--waiting', style: 'cursor:pointer;', onclick: openPayoutApprovalModal,
     }, el('div', { class: 'ca-row' }, [
       el('div', { class: 'ca-row__grow' }, [
         el('p', { class: 'ca-title' }, "This week's payout"),
@@ -4732,11 +4732,10 @@ function computeChildAttentionCount(uid) {
 
 // ---------------------------------------------------------------------
 // Kids tab (admin) -- one chip per child (mirrors the child Chores tab's
-// day-chip row), each expanding into that child's full management view:
-// approvals, deductions, bonuses, payout approval, and activity. This is
-// the one place in the admin UI that actually mutates a child's state --
-// the Admin Dashboard itself only reads and quick-approves (see
-// renderAdminDashboard).
+// day-chip row), each expanding into that child's full management view,
+// split into Chores/Money sub-tabs (see renderKidDetailBody, ADR-0049).
+// Payout approval itself now lives in the unified openPayoutApprovalModal,
+// reachable from here or the Admin Dashboard's own summary card.
 // ---------------------------------------------------------------------
 function renderKids() {
   const container = document.getElementById('page-kids');
@@ -4759,7 +4758,7 @@ function renderKids() {
     chipRow.appendChild(el('button', {
       type: 'button',
       class: `day-chip${child.uid === selectedKidUid ? ' active' : ''}`,
-      onclick: () => { selectedKidUid = child.uid; renderKids(); },
+      onclick: () => { selectedKidUid = child.uid; kidDetailSubTab = 'chores'; renderKids(); },
     }, [
       el('div', { class: 'day-chip-date' }, [
         el('span', {
@@ -4775,6 +4774,8 @@ function renderKids() {
 
   renderKidDetailBody(container, selectedKidUid);
 }
+
+let kidDetailSubTab = 'chores';
 
 function renderKidDetailBody(container, uid) {
   const child = state.members.find((m) => m.uid === uid);
@@ -4802,79 +4803,123 @@ function renderKidDetailBody(container, uid) {
     renderKebabMenu([{ label: `Assign chores for ${child.displayName || child.email}`, onclick: () => openRunWizard(uid) }]),
   ])));
 
+  // Sign-in controls don't fit either sub-tab below (not chore status,
+  // not money) -- staying always visible beats hiding account/security
+  // controls behind a tap (ADR-0049).
   container.appendChild(makeExpandable('+ Sign-in username', renderUsernameManagementForm(child, uid)));
   container.appendChild(makeExpandable('+ Sign-in method', renderCredentialManagementForm(child, uid)));
-  container.appendChild(renderEditableAllowanceCard(child, currency));
-  container.appendChild(makeExpandable('+ Basics bonus', renderHotStreakBonusBody(child)));
-  container.appendChild(makeExpandable(
-    `+ Add a chore or basic for ${child.displayName || child.email}`,
-    renderChoreForm({ presetChildUid: uid })
-  ));
 
-  // One list grouped by state -- Waiting on you, Still to do, Done -- not a
-  // separate "Chores to review" queue plus a flat "This week's chores"
-  // list underneath (which repeated the same waiting entries in both
-  // places). Per the doc: "The five outstanding chores are now the first
-  // thing visible rather than the last. Completed work collapses."
+  // ADR-0049: split into Chores/Money, same pattern as renderManageChores's
+  // own Active/Library sub-tabs -- the allowance editor, Adjust money, and
+  // payout/ledger history no longer sit wedged between chore-status
+  // sections on one long scroll ("a viewing screen is mostly controls").
+  const subTabs = el('div', { class: 'sub-tabs' }, [
+    el('button', {
+      type: 'button', class: `sub-tab-btn ${kidDetailSubTab === 'chores' ? 'active' : ''}`,
+      onclick: () => { kidDetailSubTab = 'chores'; renderKids(); },
+    }, 'Chores'),
+    el('button', {
+      type: 'button', class: `sub-tab-btn ${kidDetailSubTab === 'money' ? 'active' : ''}`,
+      onclick: () => { kidDetailSubTab = 'money'; renderKids(); },
+    }, 'Money'),
+  ]);
+  container.appendChild(subTabs);
+
+  if (kidDetailSubTab === 'money') {
+    renderKidDetailMoneyBody(container, uid, child, currency);
+    return;
+  }
+  renderKidDetailChoresBody(container, uid, progress);
+}
+
+// Chores sub-tab: what's assigned to this child and its state -- not a
+// separate "Chores to review" queue plus a flat "This week's chores" list
+// underneath (which repeated the same waiting entries in both places).
+// Per the doc: "The five outstanding chores are now the first thing
+// visible rather than the last. Completed work collapses." Adding a chore
+// itself isn't here -- per ADR-0049, that lives only in the family-wide
+// Chores tab now (renderActiveChores/renderChoreForm already support
+// assigning to one specific child via the same pool picker).
+function renderKidDetailChoresBody(container, uid, progress) {
   const needsReview = state.choreLog.filter((e) => e.status === 'done' && e.memberUid === uid);
   const stillToDo = progress.items.filter((item) => !item.satisfied && !item.pending);
   const done = progress.items.filter((item) => item.satisfied);
-  if (needsReview.length > 0 || progress.items.length > 0) {
-    container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:var(--ca-space-5);' }, `Waiting on you · ${needsReview.length}`));
-    if (needsReview.length > 0) {
-      needsReview.forEach((entry) => container.appendChild(renderChoreReviewCard(entry)));
-    } else {
-      container.appendChild(el('p', { class: 'ca-meta' }, 'Nothing waiting.'));
-    }
+  if (needsReview.length === 0 && progress.items.length === 0) {
+    container.appendChild(el('p', { class: 'ca-meta', style: 'margin-top:var(--ca-space-4);' }, 'Nothing assigned yet.'));
+    return;
+  }
 
-    if (stillToDo.length > 0) {
-      container.appendChild(el('p', { class: 'ca-section' }, `Still to do · ${stillToDo.length}`));
-      stillToDo.forEach((item) => {
-        const card = el('div', { class: 'ca-card' }, el('div', { class: 'ca-row' }, [
-          el('i', { class: `ti ${item.rejectedEntry ? 'ti-refresh' : 'ti-circle'}`, style: 'color:var(--ca-ink-4);font-size:15px;' }),
+  container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:var(--ca-space-4);' }, `Waiting on you · ${needsReview.length}`));
+  if (needsReview.length > 0) {
+    needsReview.forEach((entry) => container.appendChild(renderChoreReviewCard(entry)));
+  } else {
+    container.appendChild(el('p', { class: 'ca-meta' }, 'Nothing waiting.'));
+  }
+
+  if (stillToDo.length > 0) {
+    container.appendChild(el('p', { class: 'ca-section' }, `Still to do · ${stillToDo.length}`));
+    stillToDo.forEach((item) => {
+      // A swap can move this week's turn away from this child -- only
+      // fixed/rotating items can ever diverge (sharedAny/eachMember always
+      // execute as this child), so the label only shows when it's true.
+      const wrongTurn = item.executingUid && item.executingUid !== uid;
+      const card = el('div', { class: 'ca-card' }, el('div', { class: 'ca-row' }, [
+        el('i', { class: `ti ${item.rejectedEntry ? 'ti-refresh' : 'ti-circle'}`, style: 'color:var(--ca-ink-4);font-size:15px;' }),
+        el('div', { class: 'ca-row__grow' }, [
+          el('p', { class: 'ca-title' }, item.chore.name),
+          wrongTurn ? el('p', { class: 'ca-meta' }, `${memberLabel(item.executingUid)}'s turn`) : null,
+          item.rejectedEntry && item.rejectedEntry.reviewNote
+            ? el('p', { class: 'ca-meta' }, `You said: ${item.rejectedEntry.reviewNote}`)
+            : (item.rejectedEntry ? el('span', { class: 'ca-badge ca-badge--redo' }, 'sent back') : null),
+        ]),
+      ]));
+      container.appendChild(card);
+    });
+  }
+
+  if (done.length > 0) {
+    container.appendChild(el('p', { class: 'ca-section' }, `Done · ${done.length}`));
+    const doneShowLimit = 2;
+    let doneExpanded = false;
+    const doneWrap = el('div', {});
+    function renderDoneWrap() {
+      doneWrap.innerHTML = '';
+      const visible = doneExpanded ? done : done.slice(0, doneShowLimit);
+      visible.forEach((item) => {
+        const approvedEntry = state.choreLog.find((e) =>
+          e.choreId === item.chore.id && e.memberUid === item.executingUid && e.status === 'approved');
+        doneWrap.appendChild(el('div', { class: 'ca-card ca-card--muted' }, el('div', { class: 'ca-row' }, [
+          el('i', { class: 'ti ti-circle-check', style: 'color:var(--ca-positive);font-size:15px;' }),
           el('div', { class: 'ca-row__grow' }, [
-            el('p', { class: 'ca-title' }, item.chore.name),
-            item.rejectedEntry && item.rejectedEntry.reviewNote
-              ? el('p', { class: 'ca-meta' }, `You said: ${item.rejectedEntry.reviewNote}`)
-              : (item.rejectedEntry ? el('span', { class: 'ca-badge ca-badge--redo' }, 'sent back') : null),
-          ]),
-        ]));
-        container.appendChild(card);
-      });
-    }
-
-    if (done.length > 0) {
-      container.appendChild(el('p', { class: 'ca-section' }, `Done · ${done.length}`));
-      const doneShowLimit = 2;
-      let doneExpanded = false;
-      const doneWrap = el('div', {});
-      function renderDoneWrap() {
-        doneWrap.innerHTML = '';
-        const visible = doneExpanded ? done : done.slice(0, doneShowLimit);
-        visible.forEach((item) => {
-          doneWrap.appendChild(el('div', { class: 'ca-card ca-card--muted' }, el('div', { class: 'ca-row' }, [
-            el('i', { class: 'ti ti-circle-check', style: 'color:var(--ca-positive);font-size:15px;' }),
             el('p', { class: 'ca-title', style: 'color:var(--ca-ink-3);font-weight:500;' }, item.chore.name),
-          ])));
-        });
-        if (!doneExpanded && done.length > doneShowLimit) {
-          doneWrap.appendChild(el('p', { style: 'text-align:center;margin:var(--ca-space-2) 0 0;' },
-            el('button', {
-              type: 'button', class: 'ca-link', style: 'font-size:var(--ca-text-sm);',
-              onclick: () => { doneExpanded = true; renderDoneWrap(); },
-            }, `Show ${done.length - doneShowLimit} more`)));
-        }
+            approvedEntry && approvedEntry.reviewedAt
+              ? el('p', { class: 'ca-meta' }, `Approved ${approvedEntry.reviewedAt.toDate().toLocaleDateString(undefined, { weekday: 'short' })}`)
+              : null,
+          ]),
+        ])));
+      });
+      if (!doneExpanded && done.length > doneShowLimit) {
+        doneWrap.appendChild(el('p', { style: 'text-align:center;margin:var(--ca-space-2) 0 0;' },
+          el('button', {
+            type: 'button', class: 'ca-link', style: 'font-size:var(--ca-text-sm);',
+            onclick: () => { doneExpanded = true; renderDoneWrap(); },
+          }, `Show ${done.length - doneShowLimit} more`)));
       }
-      renderDoneWrap();
-      container.appendChild(doneWrap);
     }
+    renderDoneWrap();
+    container.appendChild(doneWrap);
   }
+}
 
-  const suggestedJobs = state.extraJobs.filter((j) => j.proposedBy === uid && j.status === 'proposed');
-  if (suggestedJobs.length > 0) {
-    container.appendChild(el('p', { class: 'ca-section' }, 'Extra jobs suggested'));
-    suggestedJobs.forEach((job) => container.appendChild(renderExtraJobCard(job, currency)));
-  }
+// Money sub-tab: the allowance rate, ad hoc adjustments, this week's
+// payout, and history -- everything that's a money *decision* rather than
+// a chore status. Basics bonus lives here too, grouped with the allowance
+// editor (ADR-0044's own placement reasoning: "alongside their
+// allowance"), and extra jobs a child proposed move here from the Chores
+// tab since a proposed job is a money ask, not assigned work.
+function renderKidDetailMoneyBody(container, uid, child, currency) {
+  container.appendChild(makeExpandable('+ Basics bonus', renderHotStreakBonusBody(child)));
+  container.appendChild(renderEditableAllowanceCard(child, currency));
 
   container.appendChild(el('div', {
     class: 'ca-card', style: 'cursor:pointer;margin-top:var(--ca-space-4);', onclick: () => openAdjustMoneyModal(child),
@@ -4887,6 +4932,10 @@ function renderKidDetailBody(container, uid) {
     el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);' }),
   ])));
 
+  // Approve/Decline moved to the unified payout-approval modal (ADR-0049)
+  // -- Decline no longer exists as a concept (replaced by Adjust, reusing
+  // openAdjustMoneyModal above), so this stays a read-only breakdown with
+  // a link out rather than a stub action row.
   container.appendChild(el('p', { class: 'ca-section' }, "This week's payout"));
   const payout = state.payouts.find((p) => p.memberUid === uid);
   if (!payout) {
@@ -4904,24 +4953,20 @@ function renderKidDetailBody(container, uid) {
       ]),
     ]);
     if (payout.status === 'pending') {
-      const actions = el('div', { class: 'ca-btn-row', style: 'margin-top:var(--ca-space-3);' });
-      actions.appendChild(el('button', {
-        type: 'button', class: 'ca-btn ca-btn--sm',
-        onclick: async () => {
-          try { await callApproveWeeklyPayout({ payoutId: payout.id }); } catch (err) { showAppAlert(err.message); }
-        },
-      }, 'Approve'));
-      actions.appendChild(el('button', {
-        type: 'button', class: 'ca-btn ca-btn--sm ca-btn--secondary',
-        onclick: async () => {
-          try { await callDeclineWeeklyPayout({ payoutId: payout.id }); } catch (err) { showAppAlert(err.message); }
-        },
-      }, 'Decline'));
-      card.appendChild(actions);
+      card.appendChild(el('button', {
+        type: 'button', class: 'ca-link', style: 'margin-top:var(--ca-space-3);',
+        onclick: openPayoutApprovalModal,
+      }, 'Review in payouts'));
     } else {
       card.appendChild(el('span', { class: 'ca-badge ca-badge--done', style: 'margin-top:var(--ca-space-2);' }, payout.status));
     }
     container.appendChild(card);
+  }
+
+  const suggestedJobs = state.extraJobs.filter((j) => j.proposedBy === uid && j.status === 'proposed');
+  if (suggestedJobs.length > 0) {
+    container.appendChild(el('p', { class: 'ca-section' }, 'Extra jobs suggested'));
+    suggestedJobs.forEach((job) => container.appendChild(renderExtraJobCard(job, currency)));
   }
 
   container.appendChild(el('p', { class: 'ca-section' }, 'Recent activity'));
@@ -5296,6 +5341,121 @@ function openAdjustMoneyModal(child) {
 
     wrap.appendChild(body);
     return wrap;
+  }
+
+  render();
+}
+
+// Screen 7 (payout approval) rebuild -- ADR-0049. Every pending payout on
+// one screen instead of buried one-at-a-time in each child's Kids tab
+// detail, Decline replaced by Adjust ("a parent who doesn't want to
+// approve €20 almost never wants to give nothing, they want to give €15
+// because the bins didn't go out"), plus a combined Approve-all action.
+// Adjust reuses openAdjustMoneyModal above rather than inventing a way to
+// edit a pending payout's own amount before approval -- nothing in the
+// spec designs that flow, and Adjust/Approve are independent additive
+// ledger writes against the same balanceCents field (approveWeeklyPayout
+// always credits from the payout doc's own captured actions/
+// totalAmountCents, never a recomputed live figure), so they compose
+// safely regardless of order.
+function openPayoutApprovalModal() {
+  const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+  const overlay = el('div', { class: 'modal-overlay' });
+  const cardWrap = el('div', { class: 'adjust-modal-card' });
+  overlay.appendChild(cardWrap);
+  document.body.appendChild(overlay);
+
+  const closeModal = () => overlay.remove();
+  overlay.addEventListener('click', (event) => { if (event.target === overlay) closeModal(); });
+
+  let busy = false;
+  let errorMsg = '';
+
+  async function approveOne(payoutId) {
+    busy = true; errorMsg = ''; render();
+    try { await callApproveWeeklyPayout({ payoutId }); } catch (err) { errorMsg = err.message; }
+    busy = false; render();
+  }
+
+  async function approveAll() {
+    busy = true; errorMsg = ''; render();
+    const pending = state.payouts.filter((p) => p.status === 'pending');
+    const results = await Promise.allSettled(pending.map((p) => callApproveWeeklyPayout({ payoutId: p.id })));
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length > 0) errorMsg = failed[0].reason.message;
+    busy = false; render();
+  }
+
+  function render() {
+    cardWrap.innerHTML = '';
+    const wrap = el('div', { style: 'display:flex;flex-direction:column;min-height:0;flex:1;' });
+    wrap.appendChild(el('div', { class: 'adjust-modal-header' }, [
+      el('button', { type: 'button', class: 'adjust-modal-back', onclick: closeModal }, '‹'),
+      el('div', { class: 'adjust-modal-title' }, "This week's payout"),
+    ]));
+
+    const body = el('div', { class: 'adjust-modal-body' });
+    // Per ADR-0049: settlement only stages this doc on Fridays -- nothing
+    // is credited until an admin approves it, so this states that
+    // directly rather than implying payouts happen automatically.
+    body.appendChild(el('p', { class: 'muted', style: 'margin:0 0 12px;' },
+      'Amounts were calculated Friday at 18:00. Nothing is paid until you approve it.'));
+
+    const pending = state.payouts.filter((p) => p.status === 'pending');
+    if (pending.length === 0) {
+      body.appendChild(el('div', { class: 'empty-state' }, 'Nothing waiting on approval right now.'));
+    } else {
+      pending.forEach((payout) => {
+        const child = state.members.find((m) => m.uid === payout.memberUid);
+        if (!child) return;
+        const colorIdx = childColorIdx(child.uid);
+        const progress = computeWeekProgressForMember(child.uid);
+        const lines = (payout.actions || []).map((a) => el('div', { class: 'row', style: 'font-size:0.8rem;color:var(--ink-3);' }, [
+          el('span', { style: 'flex:1;' }, a.note || ledgerTypeLabel(a)),
+          el('span', {}, formatSignedCents(a.amountCents, currency)),
+        ]));
+        const card = el('div', { class: 'booking-card' }, [
+          el('div', { class: 'row', style: 'align-items:center;margin-bottom:9px;' }, [
+            el('span', {
+              class: 'ca-avatar', style: `background:var(--ca-child-${colorIdx});color:var(--ca-child-${colorIdx}-ink);`,
+            }, (child.displayName || child.email || '?').charAt(0).toUpperCase()),
+            el('div', { style: 'margin-left:10px;flex:1;' }, [
+              el('div', { style: 'font-weight:700;' }, child.displayName || child.email),
+              el('div', { class: 'muted' }, `${progress.done} of ${progress.total} chores done`),
+            ]),
+            el('div', { style: 'font-weight:800;' }, formatCents(payout.totalAmountCents, currency)),
+          ]),
+          lines.length > 0 ? el('div', { style: 'border-top:1px solid var(--border);padding-top:9px;' }, lines) : null,
+        ]);
+        const actions = el('div', { class: 'row', style: 'gap:8px;margin-top:10px;' });
+        actions.appendChild(el('button', {
+          type: 'button', class: 'pill primary', style: 'flex:1;', disabled: busy ? 'disabled' : null,
+          onclick: () => approveOne(payout.id),
+        }, 'Approve'));
+        actions.appendChild(el('button', {
+          type: 'button', class: 'pill', style: 'flex:1;', disabled: busy ? 'disabled' : null,
+          onclick: () => openAdjustMoneyModal(child),
+        }, 'Adjust'));
+        card.appendChild(actions);
+        card.appendChild(el('p', { class: 'muted', style: 'font-size:0.72rem;margin:6px 0 0;text-align:center;' },
+          "Adjust makes a separate correction -- it doesn't change the amount shown above."));
+        body.appendChild(card);
+      });
+
+      const total = pending.reduce((s, p) => s + p.totalAmountCents, 0);
+      body.appendChild(el('div', { class: 'booking-card', style: 'text-align:center;background:var(--wash);border:none;margin-top:6px;' }, [
+        el('p', { class: 'muted', style: 'margin:0;' }, 'Total this week'),
+        el('p', { style: 'margin:2px 0 0;font-size:1.4rem;font-weight:700;' }, formatCents(total, currency)),
+      ]));
+      if (errorMsg) body.appendChild(el('p', { class: 'error-text' }, errorMsg));
+      body.appendChild(el('button', {
+        type: 'button', class: 'pill primary', style: 'width:100%;margin-top:10px;', disabled: busy ? 'disabled' : null,
+        onclick: approveAll,
+      }, pending.length === 2 ? 'Approve both' : `Approve all (${pending.length})`));
+    }
+
+    wrap.appendChild(body);
+    cardWrap.appendChild(wrap);
   }
 
   render();
