@@ -1295,23 +1295,34 @@ function computeFamilyRotationAssignments({ chores, weekId, weekDateIds }) {
   }
   return assignments;
 }
+// `gone` (ADR-0055): a due-date instance whose window has already
+// expired without being matched -- permanently missed, as opposed to
+// just "not yet done." Only meaningful for dateScoped chores; a
+// non-dateScoped chore ('weekly'/'once'/'timesPerWeek') is forgivable
+// on any day through the week's end, so it never has a "gone" instance
+// mid-week, same as everywhere else in this codebase treats it.
+// Existing callers (computeWeeklyPointsForMember) destructure only
+// possible/earned and are unaffected by this extra field.
 function computeChoreInstanceCredit({ chore, dueDateIds, weekDateIds, approvedEntryDateIds }) {
   const weight = resolveSizeWeight(chore);
   const dateScoped = chore.frequency === 'daily' || chore.frequency === 'custom' || chore.frequency === 'everyNDays';
   if (!dateScoped) {
     const earnedCount = Math.min(approvedEntryDateIds.length, dueDateIds.length);
-    return { possible: dueDateIds.length * weight, earned: earnedCount * weight };
+    return { possible: dueDateIds.length * weight, earned: earnedCount * weight, gone: 0 };
   }
   const sortedDue = dueDateIds.slice().sort();
   const available = approvedEntryDateIds.slice().sort();
   const used = new Array(available.length).fill(false);
+  const todayDateId = getIsoDateId(new Date());
   let earnedCount = 0;
+  let goneCount = 0;
   for (const dueDateId of sortedDue) {
     const expiryDateId = resolveInstanceExpiryDateId(chore, dueDateId, weekDateIds);
     const idx = available.findIndex((d, i) => !used[i] && d >= dueDateId && d <= expiryDateId);
     if (idx !== -1) { used[idx] = true; earnedCount++; }
+    else if (expiryDateId < todayDateId) { goneCount++; }
   }
-  return { possible: sortedDue.length * weight, earned: earnedCount * weight };
+  return { possible: sortedDue.length * weight, earned: earnedCount * weight, gone: goneCount * weight };
 }
 function resolveApprovedEntryDateIdsForMember({ chore, memberUid, mode, pool, weekSwaps, daySwaps }) {
   if (mode === 'sharedAny') {
@@ -1359,6 +1370,77 @@ function computeWeeklyPointsForMember(memberUid) {
   });
 
   return { possible, earned };
+}
+
+// ADR-0055: the same eligible-chore walk computeWeeklyPointsForMember
+// runs, but splitting the not-yet-earned remainder into `stillPossible`
+// (not yet expired -- still achievable this week) and `gone`
+// (permanently missed) instead of leaving it as one undifferentiated
+// `possible - earned`. Frontend-only -- a live pre-settlement display
+// projection, not something Friday's real settlement needs (it only
+// ever computes final earned-vs-typical, never "what's still
+// reachable").
+function computeWeeklyMoneyBreakdown(memberUid) {
+  const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+  const pool0 = activeChildUids();
+  const weekSwaps = state.choreSwaps.filter((s) => s.status === 'accepted' && !s.dateId);
+  const daySwaps = acceptedDaySwaps();
+  let stillPossible = 0;
+  let gone = 0;
+
+  state.chores.forEach((chore) => {
+    if (chore.active === false || chore.category === 'dailyTask') return;
+    const mode = resolveAssignmentMode(chore);
+    const pool = (mode === 'sharedAny' || mode === 'eachMember') ? resolvePool(chore, pool0) : null;
+    const isAssigned = pool ? pool.includes(memberUid) : resolveBaseAssignee(chore) === memberUid;
+    if (!isAssigned) return;
+
+    const dueDateIds = resolveChoreDueDateIds(chore, weekDateIds);
+    if (dueDateIds.length === 0) return;
+
+    const approvedEntryDateIds = resolveApprovedEntryDateIdsForMember({ chore, memberUid, mode, pool, weekSwaps, daySwaps });
+    const credit = computeChoreInstanceCredit({ chore, dueDateIds, weekDateIds, approvedEntryDateIds });
+    stillPossible += credit.possible - credit.earned - credit.gone;
+    gone += credit.gone;
+  });
+
+  return { stillPossible, gone };
+}
+
+// ADR-0055: the Home money card's "Earned from chores" / "Still there"
+// figures -- same fixed-rate ratio ADR-0051's computeSettlementActions
+// itself uses (earned/typical against fullBaseCents), just evaluated
+// twice: once against what's earned now, once against what's earned
+// PLUS everything still achievable this week (the "ceiling"). The gap
+// between those two is what's still there to claim. Deliberately
+// uncapped, same as the real payout -- only the bar this feeds into is
+// visually clamped to 100%, per ADR-0047's completion-bar precedent.
+function computeWeeklyMoneyCardModel(memberUid, member) {
+  const fullBaseCents = member ? member.baseWeeklyAllowanceCents || 0 : 0;
+  const { possible, earned } = computeWeeklyPointsForMember(memberUid);
+  const typical = computeTypicalWeeklyPoints()[memberUid] || 0;
+  const { stillPossible } = computeWeeklyMoneyBreakdown(memberUid);
+
+  const projectCents = (points) => (possible === 0 ? fullBaseCents
+    : (typical > 0 ? Math.round((points / typical) * fullBaseCents) : fullBaseCents));
+  const earnedCents = projectCents(earned);
+  const ceilingCents = projectCents(earned + stillPossible);
+  const stillThereCents = Math.max(0, ceilingCents - earnedCents);
+
+  return { earnedCents, stillThereCents, fullBaseCents };
+}
+
+// ADR-0055: the RESTART bonus row's "if you start again today, what's
+// still recoverable by Sunday" figure -- reverse-derived from the
+// spec's own mockup numbers (full bonus €5.00, broken on Thursday,
+// shown recoverable €2.14 = 5.00 x 3/7, where 3 is the count of days
+// STRICTLY AFTER today through Sunday, not including today itself).
+// Forward-looking, unlike computePendingStreakBonusLines' backward-
+// looking "current accrued run" (correctly €0 once broken).
+function computeStreakRestartRecoverableCents(hotStreak) {
+  const todayIdx = hotStreak.weekDateIds.indexOf(hotStreak.todayDateId);
+  const daysAfterToday = Math.max(0, hotStreak.weekDateIds.length - 1 - todayIdx);
+  return Math.round(hotStreak.amountCents * daysAfterToday / 7);
 }
 
 // ADR-0051: client-side mirror of functions/lib/settlement.js's
@@ -4082,23 +4164,100 @@ function renderDashboard() {
     el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);' }),
   ])));
 
-  // ---- Money: one figure, the detail one tap away ----
+  // ---- Money ----
   container.appendChild(el('p', { class: 'ca-section' }, 'Money'));
-  const moneyCard = el('div', { class: 'ca-card' });
-  moneyCard.appendChild(el('div', { class: 'ca-row' }, [
-    el('div', {}, [
-      el('p', { style: 'margin:0;font-size:var(--ca-text-2xl);font-weight:600;letter-spacing:-.02em;' }, formatCents(totalCents, currency)),
-      el('p', { class: 'ca-meta' }, 'Earned this week'),
-    ]),
-    el('div', { class: 'ca-row__end' }, [
-      el('p', { class: 'ca-meta' }, awaitingApproval ? 'Awaiting approval' : alreadySettled ? 'Paid' : 'Not paid yet'),
-      el('button', {
-        type: 'button', class: 'ca-link', style: 'font-size:var(--ca-text-sm);font-weight:600;',
-        onclick: () => switchTab('earnings'),
-      }, 'See the maths ›'),
-    ]),
-  ]));
-  container.appendChild(moneyCard);
+  if (awaitingApproval || alreadySettled) {
+    // Settlement has already run for this week -- the number is final,
+    // not a live projection, so the "still there"/three-state-bar model
+    // below (which only makes sense mid-week, before anything is fixed)
+    // doesn't apply. Unchanged single-figure card.
+    const moneyCard = el('div', { class: 'ca-card' });
+    moneyCard.appendChild(el('div', { class: 'ca-row' }, [
+      el('div', {}, [
+        el('p', { style: 'margin:0;font-size:var(--ca-text-2xl);font-weight:600;letter-spacing:-.02em;' }, formatCents(totalCents, currency)),
+        el('p', { class: 'ca-meta' }, 'Earned this week'),
+      ]),
+      el('div', { class: 'ca-row__end' }, [
+        el('p', { class: 'ca-meta' }, awaitingApproval ? 'Awaiting approval' : 'Paid'),
+        el('button', {
+          type: 'button', class: 'ca-link', style: 'font-size:var(--ca-text-sm);font-weight:600;',
+          onclick: () => switchTab('earnings'),
+        }, 'See the maths ›'),
+      ]),
+    ]));
+    container.appendChild(moneyCard);
+  } else {
+    // ADR-0055: chores and the streak bonus never share a bar or a
+    // total -- a bar means "this much of a whole", true of chores
+    // (divisible, partial credit) but not the bonus (a switch, held or
+    // not). Bar segments are visually clamped to 100% (ADR-0047's
+    // completion-bar precedent); the cents figures above it stay the
+    // real, possibly-over-100%, uncapped ADR-0051 numbers.
+    const model = computeWeeklyMoneyCardModel(state.user.uid, state.member);
+    const moneyCard = el('div', { class: 'ca-card', style: 'cursor:pointer;', onclick: () => switchTab('earnings') });
+    if (model.stillThereCents === 0) {
+      moneyCard.appendChild(el('div', { class: 'ca-row' }, [
+        el('div', { class: 'ca-row__grow' }, [
+          el('p', { style: 'margin:0;font-size:var(--ca-text-lg);font-weight:600;' }, 'All done'),
+          el('p', { class: 'ca-meta' }, `${formatCents(model.earnedCents, currency)} on Friday`),
+        ]),
+        el('p', { class: 'ca-link', style: 'font-size:var(--ca-text-sm);font-weight:600;' }, 'See the maths ›'),
+      ]));
+    } else {
+      moneyCard.appendChild(el('div', { class: 'ca-row', style: 'align-items:baseline;margin-bottom:var(--ca-space-3);' }, [
+        el('div', {}, [
+          el('p', { style: 'margin:0;font-size:var(--ca-text-xl);font-weight:600;letter-spacing:-.02em;' }, formatCents(model.earnedCents, currency)),
+          el('p', { class: 'ca-meta' }, 'Earned from chores'),
+        ]),
+        el('div', { class: 'ca-row__end' }, [
+          el('p', { style: 'margin:0;font-size:var(--ca-text-base);font-weight:600;color:var(--ca-positive);' }, formatCents(model.stillThereCents, currency)),
+          el('p', { class: 'ca-meta' }, 'Still there'),
+        ]),
+      ]));
+      const greenPct = model.fullBaseCents > 0 ? Math.min(100, Math.round((model.earnedCents / model.fullBaseCents) * 100)) : 0;
+      const mintPct = model.fullBaseCents > 0 ? Math.min(100 - greenPct, Math.round((model.stillThereCents / model.fullBaseCents) * 100)) : 0;
+      moneyCard.appendChild(el('div', {
+        style: 'display:flex;height:6px;background:var(--ca-wash);border-radius:3px;overflow:hidden;',
+      }, [
+        el('span', { style: `display:block;height:100%;width:${greenPct}%;background:var(--ca-positive);flex-shrink:0;` }),
+        el('span', { style: `display:block;height:100%;width:${mintPct}%;background:var(--ca-mint);flex-shrink:0;` }),
+      ]));
+    }
+    if (hotStreak) {
+      const brokenDateId = findHotStreakBrokenDateId(hotStreak);
+      const todayIdx = hotStreak.weekDateIds.indexOf(hotStreak.todayDateId);
+      const isLastDayOfWeek = todayIdx === hotStreak.weekDateIds.length - 1;
+      let bonusCents = hotStreak.amountCents;
+      let bonusMeta = 'Still yours if the streak holds to Sunday';
+      let pillLabel = 'ON TRACK';
+      let pillColorVar = '--ca-positive';
+      let iconColorVar = '--ca-green-700';
+      if (brokenDateId) {
+        bonusCents = computeStreakRestartRecoverableCents(hotStreak);
+        bonusMeta = "Start again today and you get the rest of the week's share";
+        pillLabel = 'RESTART';
+        pillColorVar = '--ca-wait-fg';
+        iconColorVar = '--ca-ink-4';
+      } else if (isLastDayOfWeek) {
+        bonusMeta = 'Streak held all week';
+        pillLabel = 'SECURED';
+        pillColorVar = '--ca-ink-3';
+      }
+      moneyCard.appendChild(el('div', {
+        class: 'ca-row', style: 'align-items:center;gap:9px;border-top:var(--ca-hairline);margin-top:var(--ca-space-3);padding-top:var(--ca-space-3);',
+      }, [
+        el('i', { class: 'ti ti-flame', style: `font-size:17px;color:var(${iconColorVar});` }),
+        el('div', { class: 'ca-row__grow' }, [
+          el('p', { class: 'ca-title', style: brokenDateId ? 'color:var(--ca-ink-3);' : '' }, `Bonus ${formatCents(bonusCents, currency)}`),
+          el('p', { class: 'ca-meta' }, bonusMeta),
+        ]),
+        el('span', {
+          style: `font-size:10.5px;font-weight:600;color:var(${pillColorVar});background:var(--ca-wash);padding:3px 8px;border-radius:5px;flex-shrink:0;`,
+        }, pillLabel),
+      ]));
+    }
+    container.appendChild(moneyCard);
+  }
 
   container.appendChild(el('div', {
     class: 'ca-card ca-card--quiet', style: 'cursor:pointer;', onclick: () => switchTab('extras'),
