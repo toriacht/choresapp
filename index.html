@@ -4786,6 +4786,25 @@ function renderExtraJobClaimBody(container, currency) {
     form.appendChild(el('p', { class: 'ca-title', style: 'margin-top:0;' }, 'Ask about something else'));
     form.appendChild(descInput);
     form.appendChild(amountInput);
+    // ADR-0058: "Amount you're asking for" is a hard question with no
+    // reference point -- preset chips anchor it. Derived from the
+    // family's own catalog, never hardcoded ("or you'll be setting the
+    // going rate for every household in the country") -- no catalog,
+    // no chips, rather than inventing numbers.
+    const activeCatalogAmounts = [...new Set(activeCatalog.map((c) => c.amountCents))].sort((a, b) => a - b);
+    const presetAmounts = activeCatalogAmounts.length >= 3
+      ? [activeCatalogAmounts[0], activeCatalogAmounts[Math.floor(activeCatalogAmounts.length / 2)], activeCatalogAmounts[activeCatalogAmounts.length - 1]]
+      : activeCatalogAmounts;
+    if (presetAmounts.length > 0) {
+      const chipsRow = el('div', { style: 'display:flex;gap:6px;margin-top:var(--ca-space-2);' });
+      presetAmounts.forEach((cents) => {
+        chipsRow.appendChild(el('button', {
+          type: 'button', class: 'ca-btn ca-btn--secondary ca-btn--sm', style: 'flex:1;',
+          onclick: () => { amountInput.value = (cents / 100).toFixed(2); },
+        }, formatCents(cents, currency)));
+      });
+      form.appendChild(chipsRow);
+    }
     form.appendChild(el('button', { class: 'ca-btn ca-btn--block', style: 'margin-top:var(--ca-space-3);', type: 'submit' }, 'Ask a parent'));
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -5008,21 +5027,25 @@ function renderExtras() {
     }
   }
 
-  if (state.role === 'admin') {
-    container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Pending approval'));
-  } else {
-    container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:var(--ca-space-5);' }, 'Your jobs'));
-  }
   const visibleJobs = state.role === 'admin'
     ? state.extraJobs
     : state.extraJobs.filter((j) => j.proposedBy === state.user.uid);
 
-  if (visibleJobs.length === 0) {
-    if (state.role === 'child') {
-      container.appendChild(el('p', { class: 'ca-meta' }, "You haven't asked for anything yet."));
-    } else {
+  if (state.role === 'admin') {
+    container.appendChild(el('h2', { style: 'margin-top:16px;' }, 'Pending approval'));
+    if (visibleJobs.length === 0) {
       container.appendChild(el('div', { class: 'empty-state' }, 'Nothing here yet.'));
+      return;
     }
+  } else if (visibleJobs.length > 0) {
+    // ADR-0058: "Your jobs" only appears once there's something in it --
+    // a brand-new child with nothing proposed yet already saw one empty
+    // state above (the "Want to earn more?" section's own, from
+    // ADR-0050); stacking a second, near-empty section under it here
+    // was the exact thing the spec's "two empty states" complaint was
+    // about.
+    container.appendChild(el('p', { class: 'ca-section', style: 'margin-top:var(--ca-space-5);' }, 'Your jobs'));
+  } else {
     return;
   }
 
