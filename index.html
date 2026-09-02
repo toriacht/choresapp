@@ -1110,6 +1110,35 @@ function findChoreOrTaskByName(name, excludeChoreId, existingDraftNames) {
   );
   return real || null;
 }
+// Validates as the child types, not just on Add-click (per the setup
+// wizard spec: "validate as they type, not on submit") -- disables
+// addBtn live via the same "disabled until it can actually succeed"
+// convention ADR-0038 already established everywhere else in this
+// codebase, rather than a click-time reject. The spec also asks for a
+// link to the existing item on a hit; not built here, since neither of
+// findChoreOrTaskByName's two branches has anywhere real to link to in
+// this specific screen -- a draft hit is another chore already picked
+// in this same wizard session (not a real document yet), and a real-
+// chore hit can't happen here at all (the setup wizard runs once,
+// building a family from nothing, so state.chores is always empty for
+// its whole duration).
+function wireLiveDuplicateCheck({ nameInput, errorEl, addBtn, getExistingNames }) {
+  function check() {
+    const name = nameInput.value.trim();
+    if (!name) { errorEl.hidden = true; addBtn.disabled = false; return; }
+    const dup = findChoreOrTaskByName(name, null, getExistingNames());
+    if (dup) {
+      errorEl.textContent = dup.isDraft ? `You already have "${dup.name}" on this list.` : `"${dup.name}" already exists -- edit that one instead.`;
+      errorEl.hidden = false;
+      addBtn.disabled = true;
+    } else {
+      errorEl.hidden = true;
+      addBtn.disabled = false;
+    }
+  }
+  nameInput.addEventListener('input', check);
+  check();
+}
 // Keyword -> existing ICONS key (ADR-0025's "one approved set" -- this
 // infers from that set, it doesn't add to it). Checked in order, first
 // match wins, so a name matching two keywords (rare) takes the earlier
@@ -1260,9 +1289,9 @@ function computeNextWeekdayMatchDueDateIds(fromDateId, count, matchesIsoWeekday)
 }
 // ---- Same family-wide rotation balancer as functions/lib/rotation.js
 // (ADR-0029/ADR-0037), duplicated here so the setup wizard's Sharing-out
-// screen can dry-run a real preview of "next two weeks" without writing
-// anything -- both functions are pure/Firestore-free on the server too,
-// so this is a direct port, not an approximation.
+// screen can dry-run a real preview of this week's assignments without
+// writing anything -- both functions are pure/Firestore-free on the
+// server too, so this is a direct port, not an approximation.
 function computeCurrentWeightedLoad(chores) {
   const load = {};
   for (const chore of chores) {
@@ -8510,21 +8539,19 @@ function renderChoreWizardDailyTasks(card) {
   const addBtn = el('button', {
     type: 'button', class: 'pill small',
     onclick: () => {
-      errorEl.hidden = true;
       const name = nameInput.value.trim();
-      if (!name) return;
-      const dup = findChoreOrTaskByName(name, null, wizardChoreState.dailyTaskDrafts.map((d) => d.name));
-      if (dup) {
-        errorEl.textContent = dup.isDraft ? `You already have "${dup.name}" on this list.` : `"${dup.name}" already exists -- edit that one instead.`;
-        errorEl.hidden = false;
-        return;
-      }
+      if (!name || addBtn.disabled) return;
       wizardChoreState.dailyTaskDrafts.push({ id: nextWizardDraftId(), name, checked: true, existing: false });
       nameInput.value = '';
+      errorEl.hidden = true;
       renderList();
       updateCount();
     },
   }, '+ Add');
+  wireLiveDuplicateCheck({
+    nameInput, errorEl, addBtn,
+    getExistingNames: () => wizardChoreState.dailyTaskDrafts.map((d) => d.name),
+  });
   card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-bottom:4px;' }, [nameInput, addBtn]));
   card.appendChild(errorEl);
 
@@ -8636,15 +8663,8 @@ function renderChoreWizardChores(card) {
   const addBtn = el('button', {
     type: 'button', class: 'pill small',
     onclick: () => {
-      errorEl.hidden = true;
       const name = nameInput.value.trim();
-      if (!name) return;
-      const dup = findChoreOrTaskByName(name, null, wizardChoreState.choreDrafts.filter((d) => d.checked).map((d) => d.name));
-      if (dup) {
-        errorEl.textContent = dup.isDraft ? `You already have "${dup.name}" chosen.` : `"${dup.name}" already exists -- edit that one instead.`;
-        errorEl.hidden = false;
-        return;
-      }
+      if (!name || addBtn.disabled) return;
       wizardChoreState.choreDrafts.push({
         id: nextWizardDraftId(), name, tabCategory: 'Custom', icon: inferChoreIcon(name),
         frequency: frequencySelect.value, size: sizeSelect.value, checked: true, existing: false, eligibleUids: undefined,
@@ -8652,10 +8672,15 @@ function renderChoreWizardChores(card) {
         ...(frequencySelect.value === 'everyNDays' ? { everyNDaysCount: Number(everyNDaysSelect.value), scheduleAnchorDateId: getIsoDateId(new Date()) } : {}),
       });
       nameInput.value = '';
+      errorEl.hidden = true;
       renderList();
       updateCount();
     },
   }, 'Add it');
+  wireLiveDuplicateCheck({
+    nameInput, errorEl, addBtn,
+    getExistingNames: () => wizardChoreState.choreDrafts.filter((d) => d.checked).map((d) => d.name),
+  });
   card.appendChild(el('label', {}, 'Write your own'));
   card.appendChild(nameInput);
   card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-bottom:8px;' }, [attachCustomSelect(frequencySelect), attachCustomSelect(sizeSelect)]));
@@ -8706,7 +8731,7 @@ function renderChoreWizardSharingOut(card) {
   }));
 
   if (wizardChoreState.rotationMode === 'fair') {
-    card.appendChild(el('p', { class: 'muted', style: 'font-size:0.75rem;font-weight:700;text-transform:uppercase;margin:14px 0 6px;' }, 'Next two weeks'));
+    card.appendChild(el('p', { class: 'muted', style: 'font-size:0.75rem;font-weight:700;text-transform:uppercase;margin:14px 0 6px;' }, 'This week'));
     // A genuine dry run -- computeFamilyRotationAssignments is pure, so
     // calling it here previews exactly what advancing rotations would
     // produce, without writing anything (see ADR-0042).
