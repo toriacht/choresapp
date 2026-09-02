@@ -5627,6 +5627,15 @@ function renderAdminDashboard() {
     const progress = computeWeekProgressForMember(child.uid);
     totalDone += progress.done; totalItems += progress.total;
     const colorIdx = childColorIdx(child.uid);
+    // This row is otherwise entirely this-week-scoped (done/total, the
+    // completion bar) -- the trailing figure should match, not the
+    // child's lifetime balanceCents (only ever set once a payout is
+    // actually approved, so it reads 0 all week regardless of real
+    // progress). computeWeeklyMoneyCardModel is the same live "earned so
+    // far" projection the child's own Dashboard and the Kids-tab detail
+    // view (ADR-0061) already show.
+    const rowPayout = state.payouts.find((p) => p.memberUid === child.uid);
+    const rowEarnedCents = rowPayout ? rowPayout.totalAmountCents : computeWeeklyMoneyCardModel(child.uid, child).earnedCents;
     container.appendChild(el('div', {
       class: 'ca-card', style: 'cursor:pointer;', onclick: () => openKid(child.uid),
     }, el('div', { class: 'ca-row' }, [
@@ -5639,7 +5648,7 @@ function renderAdminDashboard() {
         el('div', { class: 'ca-progress', style: 'margin-top:6px;' },
           el('span', { style: `width:${progress.pointsTotal === 0 ? 0 : Math.round((progress.pointsDone / progress.pointsTotal) * 100)}%` })),
       ]),
-      el('p', { style: 'margin:0;font-weight:600;flex-shrink:0;' }, formatCents(child.balanceCents || 0, currency)),
+      el('p', { style: 'margin:0;font-weight:600;flex-shrink:0;' }, formatCents(rowEarnedCents, currency)),
     ])));
   });
 
