@@ -1407,6 +1407,84 @@ function computeWeeklyMoneyBreakdown(memberUid) {
   return { stillPossible, gone };
 }
 
+// Same shape as resolveApprovedEntryDateIdsForMember, but counting a
+// 'done' (submitted, awaiting parent review) entry as already handled
+// too, not just 'approved' -- used ONLY by computeCatchUpAndTooLateItems
+// below, for "should this still show as an outstanding catch-up item"
+// (which must react the instant a child taps done, same as the main
+// to-do list moving straight to "Waiting for a parent"), never for
+// money computation. computeWeeklyMoneyBreakdown/computeWeeklyPointsForMember
+// correctly keep using the approved-only version -- a done-not-yet-
+// approved entry must NOT count as earned money yet.
+function resolveHandledEntryDateIdsForMember({ chore, memberUid, mode, pool, weekSwaps, daySwaps }) {
+  const isHandled = (status) => status === 'approved' || status === 'done';
+  if (mode === 'sharedAny') {
+    return state.choreLog
+      .filter((e) => e.choreId === chore.id && isHandled(e.status) && pool.includes(e.memberUid))
+      .map((e) => e.dateId || chore.id);
+  }
+  if (mode === 'eachMember') {
+    const dateScoped = chore.frequency === 'daily' || chore.frequency === 'custom' || chore.frequency === 'everyNDays';
+    return state.choreLog
+      .filter((e) => {
+        if (e.choreId !== chore.id || !isHandled(e.status)) return false;
+        const executingUid = dateScoped ? resolveEffectiveAssigneeForDate(chore.id, memberUid, e.dateId, daySwaps) : memberUid;
+        return e.memberUid === executingUid;
+      })
+      .map((e) => e.dateId || chore.id);
+  }
+  const executingUid = resolveEffectiveAssignee(chore, weekSwaps);
+  return state.choreLog
+    .filter((e) => e.choreId === chore.id && isHandled(e.status) && e.memberUid === executingUid)
+    .map((e) => e.dateId || chore.id);
+}
+
+// ADR-0056: per-instance version of the same "still achievable vs.
+// permanently missed" test ADR-0055 already summed into points for the
+// Home money card -- walked here per due date instead, restricted to
+// due dates strictly before today (today's own due date is already
+// covered by the Chores tab's existing "To do today" section, so this
+// only ever supplements it) and to dateScoped chores (weekly/once/
+// timesPerWeek have no specific-day concept to catch up on, same
+// scoping ADR-0055 used for `gone`). Mirrors computeChoreInstanceCredit's
+// own greedy earliest-first due-date matching exactly, so an item only
+// ends up here if that same matching would leave it uncredited.
+function computeCatchUpAndTooLateItems(memberUid) {
+  const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+  const todayDateId = getIsoDateId(new Date());
+  const pool0 = activeChildUids();
+  const weekSwaps = state.choreSwaps.filter((s) => s.status === 'accepted' && !s.dateId);
+  const daySwaps = acceptedDaySwaps();
+  const catchUp = [];
+  const tooLate = [];
+
+  state.chores.forEach((chore) => {
+    if (chore.active === false || chore.category === 'dailyTask') return;
+    const dateScoped = chore.frequency === 'daily' || chore.frequency === 'custom' || chore.frequency === 'everyNDays';
+    if (!dateScoped) return;
+    const mode = resolveAssignmentMode(chore);
+    const pool = (mode === 'sharedAny' || mode === 'eachMember') ? resolvePool(chore, pool0) : null;
+    const isAssigned = pool ? pool.includes(memberUid) : resolveBaseAssignee(chore) === memberUid;
+    if (!isAssigned) return;
+
+    const pastDueDateIds = resolveChoreDueDateIds(chore, weekDateIds).filter((d) => d < todayDateId);
+    if (pastDueDateIds.length === 0) return;
+
+    const handledEntryDateIds = resolveHandledEntryDateIdsForMember({ chore, memberUid, mode, pool, weekSwaps, daySwaps });
+    const sortedDue = pastDueDateIds.slice().sort();
+    const available = handledEntryDateIds.slice().sort();
+    const used = new Array(available.length).fill(false);
+    for (const dueDateId of sortedDue) {
+      const expiryDateId = resolveInstanceExpiryDateId(chore, dueDateId, weekDateIds);
+      const idx = available.findIndex((d, i) => !used[i] && d >= dueDateId && d <= expiryDateId);
+      if (idx !== -1) { used[idx] = true; continue; }
+      (expiryDateId < todayDateId ? tooLate : catchUp).push({ chore, dueDateId });
+    }
+  });
+
+  return { catchUp, tooLate };
+}
+
 // ADR-0055: the Home money card's "Earned from chores" / "Still there"
 // figures -- same fixed-rate ratio ADR-0051's computeSettlementActions
 // itself uses (earned/typical against fullBaseCents), just evaluated
@@ -4569,6 +4647,70 @@ function renderChores() {
   // "nothing to act on right now" without repeating that distinction in
   // the header too.
   renderChildChoreGroup('Not done', otherItems);
+
+  // ADR-0056: catch up / too late now -- past-due instances from OTHER
+  // days this week, surfaced on TODAY's tab specifically so a child
+  // doesn't have to go hunting through past day tabs to notice they
+  // still owe something. Only shown on today's own tab -- a past/future
+  // day tab is already a view of that specific day, not "as of now."
+  if (selectedDateId === todayDateId) {
+    const { catchUp, tooLate } = computeCatchUpAndTooLateItems(state.user.uid);
+    const dayNames2 = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const weekDateIds2 = weekDates.map(getIsoDateId);
+    const dayLabelFor = (dateId) => dayNames2[weekDateIds2.indexOf(dateId)] || dateId;
+    const typicalPoints = computeTypicalWeeklyPoints()[state.user.uid] || 0;
+    const fullBaseCents2 = state.member ? state.member.baseWeeklyAllowanceCents || 0 : 0;
+    const valuePerPointCents = typicalPoints > 0 ? fullBaseCents2 / typicalPoints : 0;
+
+    if (catchUp.length > 0) {
+      container.appendChild(el('p', { class: 'ca-section' }, `Catch up · ${catchUp.length}`));
+      catchUp.forEach(({ chore, dueDateId }) => {
+        const priceCents = Math.round(valuePerPointCents * resolveSizeWeight(chore));
+        const card = el('div', { class: 'ca-card' });
+        const markBtn = el('button', {
+          type: 'button', class: 'ca-btn ca-btn--sm', style: 'margin-top:10px;',
+          onclick: async (event) => {
+            event.currentTarget.disabled = true;
+            const weekId = getIsoWeekId(new Date());
+            const dateId = todayDateId;
+            const entryId = resolveLogEntryId({ chore, choreId: chore.id, uid: state.user.uid, weekId, dateId });
+            const revert = applyOptimisticChoreLogEntry({
+              id: entryId, choreId: chore.id, memberUid: state.user.uid, weekId, dateId, status: 'done',
+            });
+            try {
+              await callMarkChoreDone({ choreId: chore.id, photoStoragePath: null });
+            } catch (err) {
+              revert();
+              showAppAlert(describeActionError(err));
+            }
+          },
+        }, "I've done it");
+        card.appendChild(el('div', { class: 'ca-row' }, [
+          el('div', { class: 'ca-row__grow' }, [
+            el('p', { class: 'ca-title' }, [choreLabel(chore)]),
+            el('p', { class: 'ca-meta' }, `From ${dayLabelFor(dueDateId)} · still counts`),
+          ]),
+          priceCents > 0 ? el('p', { style: 'margin:0;font-weight:600;color:var(--ca-positive);flex-shrink:0;' }, formatCents(priceCents, currency)) : null,
+        ]));
+        card.appendChild(markBtn);
+        container.appendChild(card);
+      });
+    }
+
+    if (tooLate.length > 0) {
+      container.appendChild(el('p', { class: 'ca-section', style: 'color:var(--ca-ink-4);' }, `Too late now · ${tooLate.length}`));
+      tooLate.forEach(({ chore, dueDateId }) => {
+        container.appendChild(el('div', { class: 'ca-card ca-card--muted', style: 'border-style:dashed;' }, [
+          el('div', { class: 'ca-row' }, [
+            el('div', { class: 'ca-row__grow' }, [
+              el('p', { class: 'ca-title', style: 'color:var(--ca-ink-4);' }, [choreLabel(chore)]),
+              el('p', { class: 'ca-meta' }, `${dayLabelFor(dueDateId)}'s chore, missed`),
+            ]),
+          ]),
+        ]));
+      });
+    }
+  }
 }
 
 // ---------------------------------------------------------------------
