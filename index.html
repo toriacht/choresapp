@@ -5903,7 +5903,27 @@ function renderKidDetailMoneyBody(container, uid, child, currency) {
   container.appendChild(el('p', { class: 'ca-section' }, "This week's payout"));
   const payout = state.payouts.find((p) => p.memberUid === uid);
   if (!payout) {
-    container.appendChild(el('p', { class: 'ca-meta' }, 'Not settled yet.'));
+    // Live, mid-week projection -- computeWeeklyMoneyCardModel is already
+    // generic over any memberUid/member (not hardcoded to the signed-in
+    // user), so this is the exact same "earned so far / still there"
+    // figure the child's own Dashboard money card shows, rather than
+    // leaving an admin looking at nothing but "not settled yet" until
+    // Friday's real settlement runs.
+    const model = computeWeeklyMoneyCardModel(uid, child);
+    const projectionCard = el('div', { class: 'ca-card' }, [
+      el('div', { class: 'ca-row' }, [
+        el('div', {}, [
+          el('p', { style: 'margin:0;font-size:var(--ca-text-xl);font-weight:600;letter-spacing:-.02em;' }, formatCents(model.earnedCents, currency)),
+          el('p', { class: 'ca-meta' }, 'Earned so far'),
+        ]),
+        model.stillThereCents > 0 ? el('div', { class: 'ca-row__end' }, [
+          el('p', { style: 'margin:0;font-weight:600;color:var(--ca-positive);' }, formatCents(model.stillThereCents, currency)),
+          el('p', { class: 'ca-meta' }, 'Still there'),
+        ]) : null,
+      ]),
+      el('p', { class: 'ca-meta', style: 'margin-top:var(--ca-space-2);' }, `Not settled yet -- pays out ${payoutDayName()} at ${payoutTimeLabel()}.`),
+    ]);
+    container.appendChild(projectionCard);
   } else {
     const lines = (payout.actions || []).map((a) => el('div', { class: 'ca-row', style: 'font-size:var(--ca-text-sm);color:var(--ca-ink-3);' }, [
       el('span', { class: 'ca-row__grow' }, a.note || ledgerTypeLabel(a)),
