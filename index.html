@@ -2626,6 +2626,12 @@ document.getElementById('kidPasswordStep').addEventListener('submit', async (eve
   const password = document.getElementById('kidPasswordInput').value;
   try {
     await signInWithEmailAndPassword(auth, usernameToSyntheticEmail(kidCurrentUsername), password);
+    // A fresh interactive sign-in should always land on the Dashboard,
+    // never whatever tab was left over from a previous session (this
+    // JS-lifetime state.currentTab otherwise survives a sign-out, and
+    // resolveMembership's tab-validity fallback only resets it when the
+    // leftover tab isn't valid for the new role at all).
+    state.currentTab = 'dashboard';
     rememberKidUsernameChip(kidCurrentUsername);
   } catch (err) {
     console.error('[choresapp] kid password sign-in ERROR:', err.code, err.message);
@@ -2655,6 +2661,8 @@ async function submitKidPin() {
     const result = await callSignInWithPin({ username: kidCurrentUsername, pin });
     if (result.data.ok) {
       await signInWithCustomToken(auth, result.data.customToken);
+      // Same "always land on Dashboard" fix as the password sign-in path.
+      state.currentTab = 'dashboard';
       rememberKidUsernameChip(kidCurrentUsername);
       return;
     }
@@ -3132,6 +3140,37 @@ function renderNotifModalBody() {
       }, 'Unlock');
       item.appendChild(unlockBtn);
     }
+    // Approve/Send back directly from a single (ungrouped) chore-review
+    // notification, reusing the exact same write as renderChoreReviewCard's
+    // own buttons -- previously this notification only marked itself read
+    // on tap, with no way to act without separately opening the Chores tab.
+    // Left out for a grouped multi-chore day (group.items.length > 1):
+    // approving/rejecting several different chores at once from one row
+    // needs its own review, not a blind bulk action here.
+    if (group.type === 'chore_marked_done' && group.items.length === 1) {
+      const entry = state.choreLog.find((e) => e.id === n.relatedId);
+      if (entry && entry.status === 'done') {
+        const reviewActions = el('div', { class: 'ca-btn-row', style: 'margin-top:var(--ca-space-2);' });
+        const reviewChore = (newStatus) => async (event) => {
+          event.stopPropagation();
+          markGroupRead();
+          await withOptimisticStatus(entry, 'status', newStatus, async () => {
+            const { updateDoc, doc: fsDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+            await updateDoc(fsDoc(db, `families/${state.familyId}/choreLog/${entry.id}`), {
+              status: newStatus, reviewedBy: state.user.uid, reviewedAt: serverTimestamp(),
+            });
+          });
+          renderNotifModalBody();
+        };
+        reviewActions.appendChild(el('button', {
+          type: 'button', class: 'ca-btn ca-btn--sm', onclick: reviewChore('approved'),
+        }, 'Approve'));
+        reviewActions.appendChild(el('button', {
+          type: 'button', class: 'ca-btn ca-btn--sm ca-btn--secondary', onclick: reviewChore('rejected'),
+        }, 'Send back'));
+        item.appendChild(reviewActions);
+      }
+    }
     body.appendChild(item);
   });
 }
@@ -3473,6 +3512,11 @@ onAuthStateChanged(auth, async (user) => {
     // signs up, later signs out -- landing back here should default to
     // returning-user intent, same as the Parent/Kid tab already does).
     setParentEmailAuthMode('signIn');
+    // Same reset on the kid side: nothing here ever cleared which
+    // KID_STEPS div was showing, so a kid who signed out from the PIN
+    // step (kidPinStep still visible, not hidden) landed straight back
+    // on PIN entry instead of the username step on next sign-in.
+    showKidStep('kidUsernameStep');
     showScreen('signIn');
     return;
   }
