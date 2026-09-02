@@ -1239,6 +1239,25 @@ function resolveInstanceExpiryDateId(chore, dueDateId, weekDateIds) {
   const sameDayOnly = chore.category === 'dailyTask' || chore.frequency === 'daily';
   return sameDayOnly ? dueDateId : weekDateIds[weekDateIds.length - 1];
 }
+// ADR-0057: the schedule picker's "next few dates" preview for any
+// weekday-matching mode ('daily'/'custom') -- unlike 'everyNDays' (pure
+// arithmetic off a fixed anchor), these have no anchor to compute from,
+// so this walks forward day-by-day from fromDateId (inclusive) using the
+// already-existing addDaysToDateId, testing each date's ISO weekday
+// (1=Mon..7=Sun) against the caller's predicate. 'daily' passes
+// `() => true`; 'custom' passes `(wd) => scheduledDaysSet.has(wd)`.
+function computeNextWeekdayMatchDueDateIds(fromDateId, count, matchesIsoWeekday) {
+  const results = [];
+  let d = fromDateId;
+  let guard = 0;
+  while (results.length < count && guard < 60) {
+    const isoWeekday = new Date(`${d}T00:00:00Z`).getUTCDay() || 7;
+    if (matchesIsoWeekday(isoWeekday)) results.push(d);
+    d = addDaysToDateId(d, 1);
+    guard++;
+  }
+  return results;
+}
 // ---- Same family-wide rotation balancer as functions/lib/rotation.js
 // (ADR-0029/ADR-0037), duplicated here so the setup wizard's Sharing-out
 // screen can dry-run a real preview of "next two weeks" without writing
@@ -6851,24 +6870,6 @@ function readPoolControl(wrap, mode) {
   return Array.from(wrap.querySelectorAll('input[type=checkbox]:checked')).map((cb) => cb.value);
 }
 
-// Shared by renderChoreForm and the add-wizard's configure step -- every
-// chore recurs indefinitely by default; 'once' and 'occasional' are the two
-// ways to opt out of a fixed weekly cadence ('once' finishes and deactivates,
-// 'occasional' just has no schedule at all and is never counted as missed --
-// see ADR-0029/ADR-0031). No separate "recurring" field, this select alone
-// decides it.
-function renderFrequencySelect() {
-  return el('select', {}, [
-    el('option', { value: 'weekly' }, 'Recurring -- once a week'),
-    el('option', { value: 'daily' }, 'Recurring -- every day'),
-    el('option', { value: 'custom' }, 'Recurring -- specific days (e.g. Mon/Wed/Fri)'),
-    el('option', { value: 'timesPerWeek' }, 'Recurring -- a few times a week, any days'),
-    el('option', { value: 'everyNDays' }, 'Recurring -- every few days'),
-    el('option', { value: 'occasional' }, 'Occasional -- no fixed schedule, never counts as missed'),
-    el('option', { value: 'once' }, 'One-off -- this week only, then done'),
-  ]);
-}
-
 // Only shown for frequency:'timesPerWeek' (ADR-0033) -- how many days this
 // week it's due, without pinning to which ones (that's 'custom' instead).
 // A closed 2-6 choice, not free text -- 7 would just be 'daily'.
@@ -6919,6 +6920,173 @@ function renderBonusInput() {
   return el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'One-off bonus (optional)' });
 }
 
+// ADR-0057: one control for a chore's schedule, replacing the previously
+// scattered frequency dropdown + per-mode fields at all three call
+// sites (renderChoreForm, renderActiveChores' edit-in-place block,
+// addWizard's configure screen). Doesn't own the size field (needed for
+// the preview's "points each" line) -- callers pass the current
+// sizeWeight and call refreshPreview(newSizeWeight) when it changes,
+// same cross-field pattern renderChoreForm already handles for mode/
+// category today. Doesn't auto-save anything -- callers read getValue()
+// at their own existing save point, matching renderChildUsernameField's
+// {el, getValue} shape.
+//
+// Six modes, not the spec's four -- 'weekly' (no pinned day, silently
+// defaulted to Sunday) and 'timesPerWeek'/'once' exist in the data
+// model and needed a home too, per the app owner's explicit "full
+// unification" choice: one control for everything, no "more options"
+// escape hatch. 'weekly' has no mode of its own here -- it's visually
+// and functionally identical to 'custom' with only Sunday selected
+// (confirmed against resolveChoreDueDateIds' own 'weekly' fallback:
+// `[weekDateIds[weekDateIds.length - 1]]`, i.e. Sunday) -- so opening a
+// legacy 'weekly' chore shows "Some days" with Sunday pre-checked;
+// saving it (even unchanged) migrates the stored frequency to 'custom'
+// + scheduledDays:[7] -- same real behavior, now explicit instead of a
+// silent default. A brand-new chore defaults to "Some days" with NO day
+// pre-selected, forcing an explicit choice rather than reintroducing a
+// silent Sunday default.
+const SCHEDULE_MODES = [
+  ['daily', 'Daily'],
+  ['custom', 'Some days'],
+  ['timesPerWeek', 'A few times a week'],
+  ['everyNDays', 'Every few days'],
+  ['occasional', 'Now and then'],
+  ['once', 'One-off'],
+];
+function renderScheduleControl({ initial, sizeWeight, onChange }) {
+  const draft = {
+    frequency: initial.frequency === 'weekly' ? 'custom' : (initial.frequency || 'custom'),
+    scheduledDays: initial.frequency === 'weekly' ? [7] : (initial.scheduledDays || []),
+    timesPerWeekCount: initial.timesPerWeekCount || 2,
+    everyNDaysCount: initial.everyNDaysCount || 2,
+    scheduleAnchorDateId: initial.scheduleAnchorDateId || null,
+    bonusCents: initial.bonusCents || 0,
+  };
+  let currentSizeWeight = sizeWeight;
+  let initialized = false;
+
+  const wrap = el('div', {});
+  const modeTabs = el('div', { class: 'day-tabs' });
+  const subControlWrap = el('div', { style: 'margin-top:10px;' });
+  const previewEl = el('div', {
+    style: 'background:var(--wash);border-radius:9px;padding:10px 12px;margin-top:10px;font-size:0.8rem;color:var(--ink-3);',
+  });
+
+  function refreshModeTabs() {
+    modeTabs.innerHTML = '';
+    SCHEDULE_MODES.forEach(([value, label]) => {
+      modeTabs.appendChild(el('button', {
+        type: 'button', class: `sub-tab-btn${draft.frequency === value ? ' active' : ''}`,
+        onclick: () => { draft.frequency = value; refreshModeTabs(); refreshSubControl(); refreshPreview(); },
+      }, label));
+    });
+  }
+
+  const dayLabels = [['M', 1], ['T', 2], ['W', 3], ['T', 4], ['F', 5], ['S', 6], ['S', 7]];
+  function refreshSubControl() {
+    subControlWrap.innerHTML = '';
+    if (draft.frequency === 'custom') {
+      const selected = new Set(draft.scheduledDays);
+      const dayButtons = dayLabels.map(([label, isoDay]) => {
+        const btn = el('button', {
+          type: 'button', class: `pill small${selected.has(isoDay) ? ' primary' : ''}`, 'data-day': String(isoDay),
+        }, label);
+        btn.addEventListener('click', () => {
+          btn.classList.toggle('primary');
+          draft.scheduledDays = dayButtons.filter((b) => b.classList.contains('primary')).map((b) => Number(b.dataset.day));
+          refreshPreview();
+        });
+        return btn;
+      });
+      subControlWrap.appendChild(el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' }, dayButtons));
+    } else if (draft.frequency === 'timesPerWeek') {
+      const select = renderTimesPerWeekSelect();
+      select.value = String(draft.timesPerWeekCount);
+      select.addEventListener('change', () => { draft.timesPerWeekCount = Number(select.value); refreshPreview(); });
+      subControlWrap.appendChild(attachCustomSelect(select));
+    } else if (draft.frequency === 'everyNDays') {
+      const select = renderEveryNDaysSelect();
+      select.value = String(draft.everyNDaysCount);
+      select.addEventListener('change', () => { draft.everyNDaysCount = Number(select.value); refreshPreview(); });
+      subControlWrap.appendChild(attachCustomSelect(select));
+    } else if (draft.frequency === 'occasional') {
+      const input = renderBonusInput();
+      if (draft.bonusCents) input.value = (draft.bonusCents / 100).toFixed(2);
+      input.addEventListener('input', () => { draft.bonusCents = centsFromMajorUnits(input.value); });
+      subControlWrap.appendChild(input);
+    }
+  }
+
+  function refreshPreview() {
+    const todayId = getIsoDateId(new Date());
+    const dayNames3 = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const fmtDates = (ids) => ids.map((d) => {
+      const dt = new Date(`${d}T00:00:00Z`);
+      return `${dayNames3[dt.getUTCDay()]} ${dt.getUTCDate()}`;
+    }).join(', ');
+    const pointsEach = currentSizeWeight ? ` · ${currentSizeWeight} point${currentSizeWeight === 1 ? '' : 's'} each` : '';
+
+    if (draft.frequency === 'daily') {
+      previewEl.textContent = `Every day${pointsEach}`;
+    } else if (draft.frequency === 'custom') {
+      if (draft.scheduledDays.length === 0) {
+        previewEl.textContent = 'Pick at least one day';
+      } else {
+        const dates = computeNextWeekdayMatchDueDateIds(todayId, 4, (wd) => draft.scheduledDays.includes(wd));
+        previewEl.textContent = `Next: ${fmtDates(dates)}${pointsEach}`;
+      }
+    } else if (draft.frequency === 'timesPerWeek') {
+      previewEl.textContent = `${draft.timesPerWeekCount} times this week, any days${pointsEach}`;
+    } else if (draft.frequency === 'everyNDays') {
+      const anchorForPreview = draft.scheduleAnchorDateId || todayId;
+      const dates = computeNextEveryNDaysDueDateIds({ everyNDaysCount: draft.everyNDaysCount, scheduleAnchorDateId: anchorForPreview }, todayId, 4);
+      previewEl.textContent = `Next: ${fmtDates(dates)}${pointsEach}`;
+    } else if (draft.frequency === 'occasional') {
+      previewEl.textContent = 'No fixed days -- never counts as missed';
+    } else if (draft.frequency === 'once') {
+      previewEl.textContent = 'Due this week only, then done';
+    }
+    // Only fires on actual user interaction, never during this function's
+    // own initial construction call below -- a caller's onChange typically
+    // reads back getValue()/isValid() from the object THIS function
+    // returns, which doesn't exist yet the first time refreshPreview runs.
+    if (onChange && initialized) onChange();
+  }
+
+  refreshModeTabs();
+  refreshSubControl();
+  refreshPreview();
+  initialized = true;
+  wrap.appendChild(modeTabs);
+  wrap.appendChild(subControlWrap);
+  wrap.appendChild(previewEl);
+
+  return {
+    el: wrap,
+    getValue() {
+      const payload = { frequency: draft.frequency };
+      if (draft.frequency === 'custom') payload.scheduledDays = draft.scheduledDays;
+      if (draft.frequency === 'timesPerWeek') payload.timesPerWeekCount = draft.timesPerWeekCount;
+      if (draft.frequency === 'everyNDays') {
+        payload.everyNDaysCount = draft.everyNDaysCount;
+        payload.scheduleAnchorDateId = draft.scheduleAnchorDateId || getIsoDateId(new Date());
+      }
+      if (draft.frequency === 'occasional') payload.bonusCents = draft.bonusCents;
+      return payload;
+    },
+    isValid() {
+      return draft.frequency !== 'custom' || draft.scheduledDays.length > 0;
+    },
+    refreshPreview(newSizeWeight) { currentSizeWeight = newSizeWeight; refreshPreview(); },
+    setFrequency(freq) { draft.frequency = freq; refreshModeTabs(); refreshSubControl(); refreshPreview(); },
+    reset() {
+      draft.frequency = 'custom'; draft.scheduledDays = []; draft.timesPerWeekCount = 2;
+      draft.everyNDaysCount = 2; draft.scheduleAnchorDateId = null; draft.bonusCents = 0;
+      refreshModeTabs(); refreshSubControl(); refreshPreview();
+    },
+  };
+}
+
 // Builds the "Add a chore" form -- shared by Manage Chores (no args, pool
 // defaults to every child) and the Kids tab (presetChildUid: defaults the
 // pool to just that one child, with an explicit "apply to every kid too"
@@ -6939,38 +7107,17 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     el('option', { value: 'sharedAny' }, 'Shared -- any one of a group'),
     el('option', { value: 'eachMember' }, 'Everyone does their own'),
   ]);
-  const frequencySelect = renderFrequencySelect();
   const sizeSelect = el('select', {}, [
     el('option', { value: 'small' }, 'Small'),
     el('option', { value: 'medium', selected: 'selected' }, 'Medium'),
     el('option', { value: 'large' }, 'Large'),
   ]);
-
-  // Only shown for frequency:'custom' -- see ADR-0026. ISO weekday numbers
-  // (1=Mon..7=Sun) are the wire format (chore.scheduledDays), matching
-  // functions/lib/choreLog.js:resolveChoreDueDateIds exactly.
-  const DAY_LABELS = [['M', 1], ['T', 2], ['W', 3], ['T', 4], ['F', 5], ['S', 6], ['S', 7]];
-  const dayButtons = DAY_LABELS.map(([label, isoDay]) => {
-    const btn = el('button', { type: 'button', class: 'pill small', 'data-day': String(isoDay) }, label);
-    btn.addEventListener('click', () => { btn.classList.toggle('primary'); updateSubmitEnabled(); });
-    return btn;
+  // ADR-0057: one control for the whole schedule -- see renderScheduleControl.
+  const scheduleControl = renderScheduleControl({
+    initial: { frequency: 'custom' }, sizeWeight: SIZE_WEIGHTS[sizeSelect.value],
+    onChange: () => updateSubmitEnabled(),
   });
-  const scheduledDaysWrap = el('div', { style: 'display:flex;gap:6px;margin-bottom:10px;', hidden: true }, dayButtons);
-  const timesPerWeekSelect = renderTimesPerWeekSelect();
-  const timesPerWeekWrap = el('div', { hidden: true }, [el('label', {}, 'How many times a week?'), attachCustomSelect(timesPerWeekSelect)]);
-  const everyNDaysSelect = renderEveryNDaysSelect();
-  const everyNDaysWrap = el('div', { hidden: true }, [
-    el('label', {}, 'How many days apart?'), attachCustomSelect(everyNDaysSelect), renderEveryNDaysPreview(everyNDaysSelect),
-  ]);
-  const bonusInput = renderBonusInput();
-  const bonusWrap = el('div', { hidden: true }, bonusInput);
-  function updateScheduledDaysVisibility() {
-    scheduledDaysWrap.hidden = frequencySelect.value !== 'custom';
-    timesPerWeekWrap.hidden = frequencySelect.value !== 'timesPerWeek';
-    everyNDaysWrap.hidden = frequencySelect.value !== 'everyNDays';
-    bonusWrap.hidden = frequencySelect.value !== 'occasional';
-  }
-  frequencySelect.addEventListener('change', () => { updateScheduledDaysVisibility(); updateSubmitEnabled(); });
+  sizeSelect.addEventListener('change', () => scheduleControl.refreshPreview(SIZE_WEIGHTS[sizeSelect.value]));
   // One-tap default-setter for the common case (category/frequency/mode are
   // otherwise three separate abstract choices a parent has to correctly
   // combine to get a working daily requirement, e.g. "make your bed"). Left
@@ -7002,12 +7149,11 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   dailyRequirementCb.addEventListener('change', () => {
     if (dailyRequirementCb.checked) {
       categorySelect.value = 'dailyTask';
-      frequencySelect.value = 'daily';
+      scheduleControl.setFrequency('daily');
       modeSelect.value = 'eachMember';
     }
     updateModeOptionsForCategory(modeSelect, categorySelect);
     renderAssigneeControl();
-    updateScheduledDaysVisibility();
   });
 
   if (presetChildUid) {
@@ -7026,15 +7172,14 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   function updateSubmitEnabled() {
     const pool = readPoolControl(poolWrap, modeSelect.value);
     const hasPool = pool.length > 0 && pool[0];
-    const hasCustomDay = frequencySelect.value !== 'custom' || dayButtons.some((b) => b.classList.contains('primary'));
-    submitBtn.disabled = !nameInput.value.trim() || !hasPool || !hasCustomDay;
+    submitBtn.disabled = !nameInput.value.trim() || !hasPool || !scheduleControl.isValid();
   }
   nameInput.addEventListener('input', updateSubmitEnabled);
   poolWrap.addEventListener('change', updateSubmitEnabled);
 
   updateModeOptionsForCategory(modeSelect, categorySelect);
   renderAssigneeControl();
-  updateScheduledDaysVisibility();
+  updateSubmitEnabled();
 
   form.appendChild(el('label', {}, 'Add a chore'));
   if (state.choreTemplates.filter((t) => t.active !== false).length > 0) {
@@ -7069,12 +7214,8 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       applyToAllCb, el('span', {}, 'Apply to every kid too'),
     ]));
   }
-  form.appendChild(el('label', {}, 'Recurs?'));
-  form.appendChild(attachCustomSelect(frequencySelect));
-  form.appendChild(scheduledDaysWrap);
-  form.appendChild(timesPerWeekWrap);
-  form.appendChild(everyNDaysWrap);
-  form.appendChild(bonusWrap);
+  form.appendChild(el('label', {}, 'How often'));
+  form.appendChild(scheduleControl.el);
   form.appendChild(el('label', {}, 'Size'));
   form.appendChild(attachCustomSelect(sizeSelect));
   form.appendChild(el('div', { class: 'muted', style: 'margin:-4px 0 10px;font-size:0.78rem;' },
@@ -7099,8 +7240,6 @@ function renderChoreForm({ presetChildUid = null } = {}) {
         rotation = { pool: checked, history, currentAssigneeUid: first || null, currentAssigneeWeekId: first ? weekId : null };
       }
     }
-    const scheduledDays = dayButtons.filter((b) => b.classList.contains('primary')).map((b) => Number(b.dataset.day));
-
     const dup = findDuplicateChoreForPool(nameInput.value, categorySelect.value, assignedTo);
     if (dup) {
       showAppAlert(`"${dup.name}" already exists for ${dup.category === 'dailyTask' ? 'this' : 'one of these'} child(ren) -- edit that one instead of adding a second copy.`, { title: 'Already exists' });
@@ -7115,25 +7254,19 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       assignmentMode: mode,
       assignedTo,
       ...(rotation ? { rotation } : {}),
-      frequency: frequencySelect.value,
-      ...(frequencySelect.value === 'custom' ? { scheduledDays } : {}),
-      ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
-      ...(frequencySelect.value === 'everyNDays' ? { everyNDaysCount: Number(everyNDaysSelect.value), scheduleAnchorDateId: getIsoDateId(new Date()) } : {}),
-      ...(frequencySelect.value === 'occasional' ? { bonusCents: centsFromMajorUnits(bonusInput.value) } : {}),
+      ...scheduleControl.getValue(),
       size: sizeSelect.value,
       active: true,
       createdBy: state.user.uid,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-    nameInput.value = ''; iconInput.value = ''; descInput.value = ''; frequencySelect.value = 'weekly';
+    nameInput.value = ''; iconInput.value = ''; descInput.value = '';
     categorySelect.value = 'chore'; modeSelect.value = 'fixed'; dailyRequirementCb.checked = false;
-    sizeSelect.value = 'medium'; timesPerWeekSelect.value = '2'; bonusInput.value = '';
-    dayButtons.forEach((b) => b.classList.remove('primary'));
+    sizeSelect.value = 'medium'; scheduleControl.reset(); scheduleControl.refreshPreview(SIZE_WEIGHTS.medium);
     if (applyToAllCb) applyToAllCb.checked = false;
     updateModeOptionsForCategory(modeSelect, categorySelect);
     renderAssigneeControl();
-    updateScheduledDaysVisibility();
   });
   return form;
 }
@@ -7458,88 +7591,33 @@ function renderActiveChores(container) {
       // Per-chore streak bonus retired (ADR-0027) -- see each child's Kids
       // tab "Daily task bonus" for the unified per-child program that
       // replaced it.
-      // Which days a frequency:'custom' chore is due -- see ADR-0026's
-      // scheduledDays field. Edit-in-place, same pattern as streak bonus above.
-      if (chore.frequency === 'custom') {
-        const dayLabels = [['M', 1], ['T', 2], ['W', 3], ['T', 4], ['F', 5], ['S', 6], ['S', 7]];
-        const selected = new Set(chore.scheduledDays || []);
-        const editDayButtons = dayLabels.map(([label, isoDay]) => {
-          const btn = el('button', {
-            type: 'button', class: `pill small${selected.has(isoDay) ? ' primary' : ''}`, 'data-day': String(isoDay),
-          }, label);
-          btn.addEventListener('click', () => btn.classList.toggle('primary'));
-          return btn;
-        });
-        const saveDaysBtn = el('button', {
-          type: 'button', class: 'pill primary small',
-          onclick: async () => {
-            saveDaysBtn.disabled = true;
-            try {
-              const scheduledDays = editDayButtons.filter((b) => b.classList.contains('primary')).map((b) => Number(b.dataset.day));
-              const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-              await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { scheduledDays });
-            } catch (err) { showAppAlert(err.message); } finally { saveDaysBtn.disabled = false; }
-          },
-        }, 'Save');
-        card.appendChild(el('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap;' }, [
-          el('label', { style: 'margin:0;' }, 'Days'), ...editDayButtons, saveDaysBtn,
-        ]));
-      }
-      // Edit-in-place, same pattern as the 'custom' days block above (ADR-0033).
-      if (chore.frequency === 'timesPerWeek') {
-        const editTimesSelect = renderTimesPerWeekSelect();
-        editTimesSelect.value = String(chore.timesPerWeekCount || 2);
-        const saveTimesBtn = el('button', {
-          type: 'button', class: 'pill primary small',
-          onclick: async () => {
-            saveTimesBtn.disabled = true;
-            try {
-              const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-              await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { timesPerWeekCount: Number(editTimesSelect.value) });
-            } catch (err) { showAppAlert(err.message); } finally { saveTimesBtn.disabled = false; }
-          },
-        }, 'Save');
-        card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:10px;' }, [
-          el('label', { style: 'margin:0;' }, 'Times/week'), attachCustomSelect(editTimesSelect), saveTimesBtn,
-        ]));
-      }
-      // Edit-in-place, same pattern as 'timesPerWeek' above (ADR-0054) --
-      // only the cadence (N) is editable here, not the anchor date, which
-      // stays fixed from creation (full anchor control is a later pass).
-      if (chore.frequency === 'everyNDays') {
-        const editEveryNDaysSelect = renderEveryNDaysSelect();
-        editEveryNDaysSelect.value = String(chore.everyNDaysCount || 2);
-        const saveEveryNDaysBtn = el('button', {
-          type: 'button', class: 'pill primary small',
-          onclick: async () => {
-            saveEveryNDaysBtn.disabled = true;
-            try {
-              const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-              await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { everyNDaysCount: Number(editEveryNDaysSelect.value) });
-            } catch (err) { showAppAlert(err.message); } finally { saveEveryNDaysBtn.disabled = false; }
-          },
-        }, 'Save');
-        card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:10px;' }, [
-          el('label', { style: 'margin:0;' }, 'Every N days'), attachCustomSelect(editEveryNDaysSelect), saveEveryNDaysBtn,
-        ]));
-      }
-      if (chore.frequency === 'occasional') {
-        const editBonusInput = renderBonusInput();
-        if (chore.bonusCents) editBonusInput.value = (chore.bonusCents / 100).toFixed(2);
-        const saveBonusBtn = el('button', {
-          type: 'button', class: 'pill primary small',
-          onclick: async () => {
-            saveBonusBtn.disabled = true;
-            try {
-              const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-              await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { bonusCents: centsFromMajorUnits(editBonusInput.value) });
-            } catch (err) { showAppAlert(err.message); } finally { saveBonusBtn.disabled = false; }
-          },
-        }, 'Save');
-        card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:10px;' }, [
-          el('label', { style: 'margin:0;' }, 'Bonus'), editBonusInput, saveBonusBtn,
-        ]));
-      }
+      // ADR-0057: one shared schedule control + ONE save, replacing what
+      // used to be up to four independent fields here (Days/Times/Every-N-
+      // days/Bonus), each with its own Save button -- the same "one save,
+      // not many" principle ADR-0053 already applied to assignment
+      // editing. Collapsed by default (makeExpandable), same as "Edit
+      // assignment" below it -- unlike the old scattered fields (only
+      // shown for chores already on a non-default frequency), this now
+      // applies to every chore, so it stays out of the way until opened.
+      const scheduleControl = renderScheduleControl({
+        initial: {
+          frequency: chore.frequency, scheduledDays: chore.scheduledDays,
+          timesPerWeekCount: chore.timesPerWeekCount, everyNDaysCount: chore.everyNDaysCount,
+          scheduleAnchorDateId: chore.scheduleAnchorDateId, bonusCents: chore.bonusCents,
+        },
+        sizeWeight: resolveSizeWeight(chore),
+      });
+      const saveScheduleBtn = el('button', {
+        type: 'button', class: 'pill primary small', style: 'margin-top:10px;',
+        onclick: async () => {
+          saveScheduleBtn.disabled = true;
+          try {
+            const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+            await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), scheduleControl.getValue());
+          } catch (err) { showAppAlert(err.message); } finally { saveScheduleBtn.disabled = false; }
+        },
+      }, 'Save');
+      card.appendChild(makeExpandable('Edit schedule', el('div', {}, [scheduleControl.el, saveScheduleBtn])));
       // Post-creation editing (ADR-0029) -- size, assignment mode,
       // and the pool used to only be creation-time-only; collapsed by
       // default (makeExpandable) since most chore cards never need this.
@@ -9934,42 +10012,29 @@ function renderAddWizardStep() {
     card.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:flex-start;' }, [attachCustomSelect(iconInput), nameInput]));
     card.appendChild(descInput);
 
-    const frequencySelect = renderFrequencySelect();
-    frequencySelect.value = draft.frequency;
-    card.appendChild(el('label', {}, 'Recurs?'));
-    card.appendChild(attachCustomSelect(frequencySelect));
-
-    const timesPerWeekSelect = renderTimesPerWeekSelect();
-    if (draft.timesPerWeekCount) timesPerWeekSelect.value = String(draft.timesPerWeekCount);
-    const timesPerWeekWrap = el('div', { hidden: draft.frequency !== 'timesPerWeek' }, [
-      el('label', {}, 'How many times a week?'), attachCustomSelect(timesPerWeekSelect),
-    ]);
-    card.appendChild(timesPerWeekWrap);
-
-    const everyNDaysSelect = renderEveryNDaysSelect();
-    if (draft.everyNDaysCount) everyNDaysSelect.value = String(draft.everyNDaysCount);
-    const everyNDaysWrap = el('div', { hidden: draft.frequency !== 'everyNDays' }, [
-      el('label', {}, 'How many days apart?'), attachCustomSelect(everyNDaysSelect), renderEveryNDaysPreview(everyNDaysSelect),
-    ]);
-    card.appendChild(everyNDaysWrap);
-
-    const bonusInput = renderBonusInput();
-    if (draft.bonusCents) bonusInput.value = (draft.bonusCents / 100).toFixed(2);
-    const bonusWrap = el('div', { hidden: draft.frequency !== 'occasional' }, bonusInput);
-    card.appendChild(bonusWrap);
-
-    frequencySelect.addEventListener('change', () => {
-      timesPerWeekWrap.hidden = frequencySelect.value !== 'timesPerWeek';
-      everyNDaysWrap.hidden = frequencySelect.value !== 'everyNDays';
-      bonusWrap.hidden = frequencySelect.value !== 'occasional';
-    });
-
     let sizeSelect = null;
     if (addWizard.category !== 'dailyTask') {
       sizeSelect = el('select', {}, [
         el('option', { value: 'small' }, 'Small'), el('option', { value: 'medium' }, 'Medium'), el('option', { value: 'large' }, 'Large'),
       ]);
       sizeSelect.value = draft.size;
+    }
+    // ADR-0057: one shared schedule control, same as renderChoreForm/
+    // renderActiveChores' edit-in-place block.
+    const scheduleControl = renderScheduleControl({
+      initial: {
+        frequency: draft.frequency, scheduledDays: draft.scheduledDays,
+        timesPerWeekCount: draft.timesPerWeekCount, everyNDaysCount: draft.everyNDaysCount,
+        scheduleAnchorDateId: draft.scheduleAnchorDateId, bonusCents: draft.bonusCents,
+      },
+      sizeWeight: SIZE_WEIGHTS[sizeSelect ? sizeSelect.value : 'medium'],
+      onChange: () => updateConfigureNextEnabled(),
+    });
+    card.appendChild(el('label', {}, 'How often'));
+    card.appendChild(scheduleControl.el);
+
+    if (sizeSelect) {
+      sizeSelect.addEventListener('change', () => scheduleControl.refreshPreview(SIZE_WEIGHTS[sizeSelect.value]));
       card.appendChild(el('label', {}, 'Size'));
       card.appendChild(attachCustomSelect(sizeSelect));
     }
@@ -9990,19 +10055,19 @@ function renderAddWizardStep() {
       onclick: () => {
         addWizard.draft = {
           name: nameInput.value.trim(), icon: iconInput.value.trim() || null, description: descInput.value.trim(),
-          frequency: frequencySelect.value, size: sizeSelect ? sizeSelect.value : 'medium', mode: modeSelect.value,
-          ...(frequencySelect.value === 'timesPerWeek' ? { timesPerWeekCount: Number(timesPerWeekSelect.value) } : {}),
-          ...(frequencySelect.value === 'everyNDays' ? { everyNDaysCount: Number(everyNDaysSelect.value), scheduleAnchorDateId: draft.scheduleAnchorDateId || getIsoDateId(new Date()) } : {}),
-          ...(frequencySelect.value === 'occasional' ? { bonusCents: centsFromMajorUnits(bonusInput.value) } : {}),
+          size: sizeSelect ? sizeSelect.value : 'medium', mode: modeSelect.value,
+          ...scheduleControl.getValue(),
         };
         addWizard.screen = 'assignment'; addWizard.step = 1;
         renderAdminWizardStep();
       },
     }, 'Next');
-    // See ADR-0038: disabled until a name is entered, instead of a
-    // click-time showAppAlert for a condition already visible on screen.
-    configureNextBtn.disabled = !nameInput.value.trim();
-    nameInput.addEventListener('input', () => { configureNextBtn.disabled = !nameInput.value.trim(); });
+    // See ADR-0038: disabled until a name is entered and the schedule is
+    // valid (e.g. "Some days" needs at least one day picked), instead of
+    // a click-time showAppAlert for conditions already visible on screen.
+    function updateConfigureNextEnabled() { configureNextBtn.disabled = !nameInput.value.trim() || !scheduleControl.isValid(); }
+    updateConfigureNextEnabled();
+    nameInput.addEventListener('input', updateConfigureNextEnabled);
 
     card.appendChild(el('div', { style: 'display:flex;gap:8px;margin-top:14px;' }, [
       el('button', { class: 'pill', style: 'flex:1;', type: 'button', onclick: () => { addWizard.screen = 'source'; addWizard.step = 0; renderAdminWizardStep(); } }, 'Back'),
@@ -10046,6 +10111,12 @@ function renderAddWizardStep() {
             category: addWizard.category, assignmentMode: payload.assignmentMode, assignedTo: payload.assignedTo,
             ...(payload.rotation ? { rotation: payload.rotation } : {}),
             frequency: draft.frequency, size: draft.size,
+            // ADR-0057: 'custom' was missing here entirely before this
+            // pass -- scheduledDays was never persisted when creating a
+            // specific-weekdays chore through this screen. A pre-existing
+            // gap, fixed as a direct consequence of rewriting this exact
+            // payload to read from the new shared schedule control.
+            ...(draft.frequency === 'custom' ? { scheduledDays: draft.scheduledDays } : {}),
             ...(draft.frequency === 'timesPerWeek' ? { timesPerWeekCount: draft.timesPerWeekCount } : {}),
             ...(draft.frequency === 'everyNDays' ? { everyNDaysCount: draft.everyNDaysCount, scheduleAnchorDateId: draft.scheduleAnchorDateId } : {}),
             ...(draft.frequency === 'occasional' ? { bonusCents: draft.bonusCents || 0 } : {}),
