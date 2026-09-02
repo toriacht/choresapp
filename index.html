@@ -997,12 +997,29 @@ const callCheckPendingInvite = httpsCallable(functions, 'checkPendingInvite');
 const callSwitchChildCredential = httpsCallable(functions, 'switchChildCredential');
 const callRenameChildUsername = httpsCallable(functions, 'renameChildUsername');
 
+// ADR-0059: the pay-anchored week's last day (payday) on/after `date`,
+// mirrors functions/lib/choreLog.js's resolvePayAnchoredWeekEnd exactly --
+// duplicated here (not shared code -- this is a zero-build static
+// frontend), not stored, always required (never defaulted -- see that
+// file's comment for why).
+function resolvePayAnchoredWeekEnd(date, payoutDayOfWeek) {
+  if (!Number.isInteger(payoutDayOfWeek) || payoutDayOfWeek < 1 || payoutDayOfWeek > 7) {
+    throw new Error('payoutDayOfWeek must be an integer 1-7 (1=Mon..7=Sun).');
+  }
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const wd = d.getUTCDay() || 7;
+  const daysUntilPayday = (payoutDayOfWeek - wd + 7) % 7;
+  d.setUTCDate(d.getUTCDate() + daysUntilPayday);
+  return d;
+}
+
 // ---- Same ISO-week algorithm as functions/lib/choreLog.js:getIsoWeekId,
 // duplicated here (not shared code -- this is a zero-build static frontend)
 // purely for display grouping. The server always has the final say on
-// which week a chore-log entry actually belongs to.
-function getIsoWeekId(date) {
-  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+// which week a chore-log entry actually belongs to. See ADR-0059:
+// pay-anchored (ends on payoutDayOfWeek), not a fixed Monday-Sunday window.
+function getIsoWeekId(date, payoutDayOfWeek) {
+  const d = resolvePayAnchoredWeekEnd(date, payoutDayOfWeek);
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
@@ -1028,19 +1045,62 @@ function resolveLogEntryId({ chore, choreId, uid, weekId, dateId }) {
     ? `${dateId}_${choreId}_${uid}`
     : `${weekId}_${choreId}_${uid}`;
 }
-// The 7 calendar days (Mon..Sun, UTC) of the ISO week containing `date` --
-// mirrors getIsoWeekId's own Monday-anchored week boundary so the day tabs
-// always line up with the exact week the backend groups chores into.
-function getIsoWeekDates(date) {
-  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  const dayNum = d.getUTCDay() || 7;
-  const monday = new Date(d);
-  monday.setUTCDate(d.getUTCDate() - (dayNum - 1));
+// The 7 calendar days of the pay-anchored week containing `date` -- mirrors
+// getIsoWeekId's own week boundary (ADR-0059) so the day tabs always line
+// up with the exact week the backend groups chores into.
+function getIsoWeekDates(date, payoutDayOfWeek) {
+  const weekEnd = resolvePayAnchoredWeekEnd(date, payoutDayOfWeek);
   return Array.from({ length: 7 }, (_, i) => {
-    const day = new Date(monday);
-    day.setUTCDate(monday.getUTCDate() + i);
+    const day = new Date(weekEnd);
+    day.setUTCDate(weekEnd.getUTCDate() - 6 + i);
     return day;
   });
+}
+
+// ISO weekday (1=Mon..7=Sun) of a plain 'YYYY-MM-DD' dateId -- mirrors
+// functions/lib/choreLog.js's isoWeekdayOfDateId (ADR-0059). Used to filter
+// weekDateIds by actual calendar weekday rather than array position, since
+// weekDateIds no longer always starts on a Monday once pay-anchored.
+function isoWeekdayOfDateId(dateId) {
+  return new Date(`${dateId}T00:00:00Z`).getUTCDay() || 7;
+}
+
+// ADR-0059: the frontend only ever has ONE family in scope at a time
+// (state.family), unlike the backend which loops every family per cron
+// tick -- so unlike functions/lib/choreLog.js's resolveFamilyPayoutDayOfWeek
+// (which takes a family doc explicitly), this reads state.family directly.
+// Matches the existing display-only `?? 5` fallback used at the "next
+// payout" cards, kept as the one place every getIsoWeekId/getIsoWeekDates
+// call site now gets its payoutDayOfWeek from.
+function resolveFamilyPayoutDayOfWeek() {
+  return (state.family && state.family.settings && state.family.settings.payoutDayOfWeek) ?? 5;
+}
+
+// ADR-0059: the family's chosen payday, spelled out ("Friday") -- replaces
+// what used to be a hardcoded "Friday" string at every "paid on ___" copy
+// spot. % 7 because payoutDayOfWeek is ISO 1=Mon..7=Sun but this array is
+// 0=Sun..6=Sat (see the "Next payout" cards' identical fix).
+function payoutDayName() {
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return dayNames[resolveFamilyPayoutDayOfWeek() % 7];
+}
+
+// The family's chosen payout hour, human-readable ("6pm") -- replaces what
+// used to be a hardcoded "18:00" string.
+function payoutTimeLabel() {
+  const payoutHour = (state.family && state.family.settings && state.family.settings.payoutHour) ?? 18;
+  const hour12 = ((payoutHour + 11) % 12) + 1;
+  return `${hour12}${payoutHour < 12 || payoutHour === 24 ? 'am' : 'pm'}`;
+}
+
+// The day rotation actually advances on -- the day AFTER payday (ADR-0016/
+// ADR-0059), spelled out ("Saturday"). Replaces what used to be a
+// hardcoded "Monday" string at every "changes take effect ___" copy spot,
+// back when payday (and so rotation) was always fixed to Friday/Monday.
+function rotationDayName() {
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const rotationDayOfWeek = (resolveFamilyPayoutDayOfWeek() % 7) + 1;
+  return dayNames[rotationDayOfWeek % 7];
 }
 
 // ---- Same assignment-resolution logic as functions/lib/choreAssignment.js,
@@ -1231,7 +1291,7 @@ function resolveChoreDueDateIds(chore, weekDateIds) {
   if (chore.frequency === 'daily') return weekDateIds.slice();
   if (chore.frequency === 'custom') {
     const days = new Set(chore.scheduledDays || []);
-    return weekDateIds.filter((_, idx) => days.has(idx + 1));
+    return weekDateIds.filter((dateId) => days.has(isoWeekdayOfDateId(dateId)));
   }
   if (chore.frequency === 'timesPerWeek') {
     const count = Math.max(1, chore.timesPerWeekCount || 1);
@@ -1394,7 +1454,7 @@ function resolveApprovedEntryDateIdsForMember({ chore, memberUid, mode, pool, we
     .map((e) => e.dateId || chore.id);
 }
 function computeWeeklyPointsForMember(memberUid) {
-  const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+  const weekDateIds = getIsoWeekDates(new Date(), resolveFamilyPayoutDayOfWeek()).map(getIsoDateId);
   const pool0 = activeChildUids();
   const weekSwaps = state.choreSwaps.filter((s) => s.status === 'accepted' && !s.dateId);
   const daySwaps = acceptedDaySwaps();
@@ -1429,7 +1489,7 @@ function computeWeeklyPointsForMember(memberUid) {
 // ever computes final earned-vs-typical, never "what's still
 // reachable").
 function computeWeeklyMoneyBreakdown(memberUid) {
-  const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+  const weekDateIds = getIsoWeekDates(new Date(), resolveFamilyPayoutDayOfWeek()).map(getIsoDateId);
   const pool0 = activeChildUids();
   const weekSwaps = state.choreSwaps.filter((s) => s.status === 'accepted' && !s.dateId);
   const daySwaps = acceptedDaySwaps();
@@ -1498,7 +1558,7 @@ function resolveHandledEntryDateIdsForMember({ chore, memberUid, mode, pool, wee
 // own greedy earliest-first due-date matching exactly, so an item only
 // ends up here if that same matching would leave it uncredited.
 function computeCatchUpAndTooLateItems(memberUid) {
-  const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+  const weekDateIds = getIsoWeekDates(new Date(), resolveFamilyPayoutDayOfWeek()).map(getIsoDateId);
   const todayDateId = getIsoDateId(new Date());
   const pool0 = activeChildUids();
   const weekSwaps = state.choreSwaps.filter((s) => s.status === 'accepted' && !s.dateId);
@@ -1584,7 +1644,7 @@ function computeStreakRestartRecoverableCents(hotStreak) {
 // see the backend's identical comment for why dividing those would be a
 // bug, not a feature.
 function computeTypicalWeeklyPoints() {
-  const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+  const weekDateIds = getIsoWeekDates(new Date(), resolveFamilyPayoutDayOfWeek()).map(getIsoDateId);
   const pool0 = activeChildUids();
   const typicalByUid = {};
 
@@ -1628,7 +1688,7 @@ function computeTypicalWeeklyPoints() {
 // hand-verified against the spec's own worked numbers: base 1500c /
 // 17 possible points = ~88.2c/point -> small 88c, medium 176c, large 265c.
 function computeSizeValuesCents(draftChores, baseWeeklyAllowanceCents) {
-  const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+  const weekDateIds = getIsoWeekDates(new Date(), resolveFamilyPayoutDayOfWeek()).map(getIsoDateId);
   const possiblePoints = draftChores.reduce((sum, chore) => {
     if (chore.category === 'dailyTask') return sum;
     return sum + resolveChoreDueDateIds(chore, weekDateIds).length * resolveSizeWeight(chore);
@@ -3445,7 +3505,7 @@ let currentSubscribedWeekId = null;
 function subscribeWeekScopedCollections(familyId) {
   weekScopedUnsub.forEach((fn) => fn());
   weekScopedUnsub = [];
-  const weekId = getIsoWeekId(new Date());
+  const weekId = getIsoWeekId(new Date(), resolveFamilyPayoutDayOfWeek());
   currentSubscribedWeekId = weekId;
 
   const unsubChoreLog = onSnapshot(
@@ -3482,7 +3542,7 @@ function subscribeWeekScopedCollections(familyId) {
 // in front of them rather than waiting up to 5 minutes for the interval.
 function checkForWeekRollover() {
   if (!state.familyId) return;
-  if (getIsoWeekId(new Date()) !== currentSubscribedWeekId) {
+  if (getIsoWeekId(new Date(), resolveFamilyPayoutDayOfWeek()) !== currentSubscribedWeekId) {
     subscribeWeekScopedCollections(state.familyId);
   }
 }
@@ -3521,6 +3581,15 @@ function startFamilySubscriptions() {
 
   unsubscribers.push(onSnapshot(doc(db, `families/${familyId}`), (snap) => {
     state.family = snap.exists() ? snap.data() : null;
+    // subscribeWeekScopedCollections (below) runs synchronously, BEFORE
+    // this listener's first callback ever fires -- so on a fresh sign-in
+    // it computes weekId from resolveFamilyPayoutDayOfWeek()'s `?? 5`
+    // fallback, not this family's real payoutDayOfWeek, if that's
+    // anything other than the default. checkForWeekRollover() re-checks
+    // (and re-subscribes if stale) the instant the real settings arrive --
+    // also what catches an admin changing payday live in Settings
+    // (ADR-0060), which writes this exact document.
+    checkForWeekRollover();
     renderCurrentTab();
   }));
 
@@ -3707,7 +3776,7 @@ document.addEventListener('touchend', (e) => {
 
   if (state.currentTab === 'chores') {
     const today = new Date();
-    const weekDates = getIsoWeekDates(today);
+    const weekDates = getIsoWeekDates(today, resolveFamilyPayoutDayOfWeek());
     const weekDateIds = weekDates.map(getIsoDateId);
     const todayDateId = getIsoDateId(today);
     const selectedDateId = selectedDashboardDateId && weekDateIds.includes(selectedDashboardDateId)
@@ -3827,7 +3896,7 @@ function pctLabel(approved, total) {
 //    live, still-changing PROJECTION of what settlement would compute if it
 //    ran right now.
 function computePendingPaymentLines(memberUid, member) {
-  const weekId = getIsoWeekId(new Date());
+  const weekId = getIsoWeekId(new Date(), resolveFamilyPayoutDayOfWeek());
   const thisWeekLedger = state.ledger.filter((tx) => tx.weekId === weekId && tx.memberUid === memberUid);
   const weekProgress = computeWeekProgressForMember(memberUid);
   const payout = state.payouts.find((p) => p.memberUid === memberUid);
@@ -3917,9 +3986,11 @@ function findHotStreakBrokenDateId(hotStreak) {
 // that one stays boolean-only (an admin configuring the bonus doesn't
 // need the count, just whether each day qualified).
 function renderHotStreakDayStrip(dayStatus, todayDateId) {
-  const dayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  // ADR-0059: derived from each entry's own dateId, not array position --
+  // dayStatus[0] is no longer always a Monday once the week is pay-anchored.
+  const dayLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
   return el('div', { class: 'ca-row', style: 'gap:4px;margin-top:var(--ca-space-2);' },
-    dayStatus.map((d, i) => {
+    dayStatus.map((d) => {
       const isToday = d.dateId === todayDateId;
       const isFuture = d.dateId > todayDateId;
       const bg = isFuture ? 'var(--ca-wash)' : d.allDone ? 'var(--ca-positive)' : isToday ? 'var(--ca-mint)' : 'var(--ca-wash)';
@@ -3929,7 +4000,7 @@ function renderHotStreakDayStrip(dayStatus, todayDateId) {
           + `${!d.allDone && !isFuture ? 'border:1px dashed var(--ca-ink-4);' : ''}`,
       }, [
         el('div', { style: 'font-weight:700;font-size:var(--ca-text-sm);' }, isFuture ? '' : `${d.done}/${d.total}`),
-        el('div', { style: 'font-size:var(--ca-text-xs);margin-top:2px;' }, dayLetters[i]),
+        el('div', { style: 'font-size:var(--ca-text-xs);margin-top:2px;' }, dayLetters[new Date(`${d.dateId}T00:00:00Z`).getUTCDay()]),
       ]);
     }));
 }
@@ -3951,7 +4022,7 @@ function computeHotStreakSummary(memberUid) {
 
   const today = new Date();
   const todayDateId = getIsoDateId(today);
-  const weekDateIds = getIsoWeekDates(today).map(getIsoDateId);
+  const weekDateIds = getIsoWeekDates(today, resolveFamilyPayoutDayOfWeek()).map(getIsoDateId);
   const dayStatus = computeHotStreakDayStatus(taskChoreIds, weekDateIds, memberUid, acceptedDaySwaps());
   const hitDateIds = new Set(dayStatus.filter((d) => d.allDone).map((d) => d.dateId));
 
@@ -4196,7 +4267,7 @@ function renderDashboard() {
   const nextItem = dayItems.find((i) => i.actionable);
   if (nextItem) {
     const { chore } = nextItem;
-    const weekId = getIsoWeekId(today);
+    const weekId = getIsoWeekId(today, resolveFamilyPayoutDayOfWeek());
     const dateId = todayDateId;
     const nextCard = el('div', { class: 'ca-card' });
     nextCard.appendChild(el('p', { class: 'ca-section', style: 'margin-top:0;' }, 'Next up'));
@@ -4325,7 +4396,7 @@ function renderDashboard() {
       moneyCard.appendChild(el('div', { class: 'ca-row' }, [
         el('div', { class: 'ca-row__grow' }, [
           el('p', { style: 'margin:0;font-size:var(--ca-text-lg);font-weight:600;' }, 'All done'),
-          el('p', { class: 'ca-meta' }, `${formatCents(model.earnedCents, currency)} on Friday`),
+          el('p', { class: 'ca-meta' }, `${formatCents(model.earnedCents, currency)} on ${payoutDayName()}`),
         ]),
         el('p', { class: 'ca-link', style: 'font-size:var(--ca-text-sm);font-weight:600;' }, 'See the maths ›'),
       ]));
@@ -4463,7 +4534,7 @@ function renderChores() {
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
   const today = new Date();
   const todayDateId = getIsoDateId(today);
-  const weekDates = getIsoWeekDates(today);
+  const weekDates = getIsoWeekDates(today, resolveFamilyPayoutDayOfWeek());
   if (!selectedDashboardDateId || !weekDates.some((d) => getIsoDateId(d) === selectedDashboardDateId)) {
     selectedDashboardDateId = todayDateId;
   }
@@ -4510,15 +4581,18 @@ function renderChores() {
     });
   }
 
-  // Day tabs -- current ISO week only (Mon..Sun). Swipe left/right ANYWHERE
-  // on this page (not just the narrow chip row) moves between adjacent
-  // days -- the document-level app-tab swipe explicitly opts out for the
-  // 'chores' tab (see its own listener) so the two gestures never compete.
-  // Horizontal-dominant check (|dx| > |dy|) keeps an ordinary vertical
-  // scroll on this page from ever being misread as a day-swipe.
-  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  // Day tabs -- current pay-anchored week (ADR-0059), whatever 7 days that
+  // is. Swipe left/right ANYWHERE on this page (not just the narrow chip
+  // row) moves between adjacent days -- the document-level app-tab swipe
+  // explicitly opts out for the 'chores' tab (see its own listener) so the
+  // two gestures never compete. Horizontal-dominant check (|dx| > |dy|)
+  // keeps an ordinary vertical scroll on this page from ever being misread
+  // as a day-swipe.
+  // Derived from each day's own actual date, not array position -- weekDates[0]
+  // is no longer always a Monday once the week is pay-anchored.
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const dayTabs = el('div', { class: 'day-tabs' });
-  weekDates.forEach((d, i) => {
+  weekDates.forEach((d) => {
     const dId = getIsoDateId(d);
     const isToday = dId === todayDateId;
     const isActive = dId === selectedDateId;
@@ -4527,7 +4601,7 @@ function renderChores() {
       class: `day-chip ${isActive ? 'active' : ''} ${isToday ? 'today' : ''}`,
       onclick: () => { selectedDashboardDateId = dId; renderChores(); },
     }, [
-      el('div', { class: 'day-chip-label' }, dayNames[i]),
+      el('div', { class: 'day-chip-label' }, dayNames[d.getUTCDay()]),
       el('div', { class: 'day-chip-date' }, String(d.getUTCDate())),
     ]));
   });
@@ -4636,7 +4710,7 @@ function renderChores() {
         const markBtn = el('button', {
           class: 'ca-btn ca-btn--sm', style: 'margin-top:10px;margin-left:6px;',
           onclick: async () => {
-            const weekId = getIsoWeekId(new Date());
+            const weekId = getIsoWeekId(new Date(), resolveFamilyPayoutDayOfWeek());
             const dateId = getIsoDateId(new Date());
             const entryId = resolveLogEntryId({ chore, choreId: chore.id, uid: state.user.uid, weekId, dateId });
             // Flip the badge to "waiting for a parent" right away -- this
@@ -4703,9 +4777,10 @@ function renderChores() {
   // day tab is already a view of that specific day, not "as of now."
   if (selectedDateId === todayDateId) {
     const { catchUp, tooLate } = computeCatchUpAndTooLateItems(state.user.uid);
-    const dayNames2 = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const weekDateIds2 = weekDates.map(getIsoDateId);
-    const dayLabelFor = (dateId) => dayNames2[weekDateIds2.indexOf(dateId)] || dateId;
+    // ADR-0059: derived from the dateId's own actual weekday, not its
+    // position within the (no longer always Monday-first) week array.
+    const dayNames2 = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dayLabelFor = (dateId) => dayNames2[new Date(`${dateId}T00:00:00Z`).getUTCDay()] || dateId;
     const typicalPoints = computeTypicalWeeklyPoints()[state.user.uid] || 0;
     const fullBaseCents2 = state.member ? state.member.baseWeeklyAllowanceCents || 0 : 0;
     const valuePerPointCents = typicalPoints > 0 ? fullBaseCents2 / typicalPoints : 0;
@@ -4719,7 +4794,7 @@ function renderChores() {
           type: 'button', class: 'ca-btn ca-btn--sm', style: 'margin-top:10px;',
           onclick: async (event) => {
             event.currentTarget.disabled = true;
-            const weekId = getIsoWeekId(new Date());
+            const weekId = getIsoWeekId(new Date(), resolveFamilyPayoutDayOfWeek());
             const dateId = todayDateId;
             const entryId = resolveLogEntryId({ chore, choreId: chore.id, uid: state.user.uid, weekId, dateId });
             const revert = applyOptimisticChoreLogEntry({
@@ -5133,7 +5208,7 @@ function renderEarningItBack() {
   container.innerHTML = '';
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
 
-  const weekId = getIsoWeekId(new Date());
+  const weekId = getIsoWeekId(new Date(), resolveFamilyPayoutDayOfWeek());
   const openDeductions = state.ledger.filter((tx) => tx.weekId === weekId && isEarnBackEligible(tx)).filter((tx) => {
     const related = state.extraJobs.filter((j) => j.relatedDeductionLedgerId === tx.id);
     return !related.some((j) => j.status === 'paid' || j.status === 'proposed');
@@ -5295,7 +5370,7 @@ function renderEarnings() {
   container.appendChild(el('div', { class: 'ca-card ca-card--quiet', style: 'text-align:center;' }, [
     el('p', { style: 'margin:0;font-size:var(--ca-text-lg);font-weight:600;' }, alreadySettled ? "This week's total" : "You'll get"),
     el('p', { style: 'margin:2px 0 0;font-size:var(--ca-text-2xl);font-weight:700;' }, formatCents(totalCents, currency)),
-    !alreadySettled ? el('p', { class: 'ca-meta' }, 'Paid on Friday') : null,
+    !alreadySettled ? el('p', { class: 'ca-meta' }, `Paid on ${payoutDayName()}`) : null,
   ]));
 
   // ---- Make it bigger ----
@@ -5512,8 +5587,7 @@ function renderAdminDashboard() {
         el('i', { class: 'ti ti-chevron-right', style: 'color:var(--ca-ink-4);margin-top:3px;' }),
       ])));
     }
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const payoutDay = dayNames[(state.family && state.family.settings && state.family.settings.payoutDayOfWeek) ?? 5];
+    const payoutDay = payoutDayName();
     if (pendingPayouts.length > 0) {
       const total = pendingPayouts.reduce((s, p) => s + p.totalAmountCents, 0);
       waitingCards.push(el('div', {
@@ -5532,13 +5606,10 @@ function renderAdminDashboard() {
     } else {
       // ADR-0052 caught-up state -- replaces the old flat "Nothing
       // waiting on you right now" sentence with an explicit all-clear.
-      const payoutHour = (state.family && state.family.settings && state.family.settings.payoutHour) ?? 18;
-      const hour12 = ((payoutHour + 11) % 12) + 1;
-      const payoutTime = `${hour12}${payoutHour < 12 || payoutHour === 24 ? 'am' : 'pm'}`;
       container.appendChild(el('div', { class: 'ca-card ca-card--quiet', style: 'text-align:center;' }, [
         el('p', { style: 'margin:0;font-size:1.1rem;' }, '✓'),
         el('p', { class: 'ca-body', style: 'font-weight:600;margin:6px 0 2px;' }, "You're all caught up"),
-        el('p', { class: 'ca-meta' }, `Next payout ${payoutDay} at ${payoutTime}`),
+        el('p', { class: 'ca-meta' }, `Next payout ${payoutDay} at ${payoutTimeLabel()}`),
       ]));
     }
   }
@@ -5699,8 +5770,8 @@ function renderKidDetailBody(container, uid) {
   // Sign-in controls don't fit either sub-tab below (not chore status,
   // not money) -- staying always visible beats hiding account/security
   // controls behind a tap (ADR-0049).
-  container.appendChild(makeExpandable('+ Sign-in username', renderUsernameManagementForm(child, uid)));
-  container.appendChild(makeExpandable('+ Sign-in method', renderCredentialManagementForm(child, uid)));
+  container.appendChild(makeExpandable('+ Sign-in username', renderUsernameManagementForm(child, uid), `signInUsername:${uid}`));
+  container.appendChild(makeExpandable('+ Sign-in method', renderCredentialManagementForm(child, uid), `signInMethod:${uid}`));
 
   // ADR-0049: split into Chores/Money, same pattern as renderManageChores's
   // own Active/Library sub-tabs -- the allowance editor, Adjust money, and
@@ -5811,7 +5882,7 @@ function renderKidDetailChoresBody(container, uid, progress) {
 // allowance"), and extra jobs a child proposed move here from the Chores
 // tab since a proposed job is a money ask, not assigned work.
 function renderKidDetailMoneyBody(container, uid, child, currency) {
-  container.appendChild(makeExpandable('+ Basics bonus', renderHotStreakBonusBody(child)));
+  container.appendChild(makeExpandable('+ Basics bonus', renderHotStreakBonusBody(child), `basicsBonus:${uid}`));
   container.appendChild(renderEditableAllowanceCard(child, currency));
 
   container.appendChild(el('div', {
@@ -6288,11 +6359,11 @@ function openPayoutApprovalModal() {
     ]));
 
     const body = el('div', { class: 'adjust-modal-body' });
-    // Per ADR-0049: settlement only stages this doc on Fridays -- nothing
-    // is credited until an admin approves it, so this states that
-    // directly rather than implying payouts happen automatically.
+    // Per ADR-0049: settlement only stages this doc on the family's payday
+    // -- nothing is credited until an admin approves it, so this states
+    // that directly rather than implying payouts happen automatically.
     body.appendChild(el('p', { class: 'muted', style: 'margin:0 0 12px;' },
-      'Amounts were calculated Friday at 18:00. Nothing is paid until you approve it.'));
+      `Amounts were calculated ${payoutDayName()} at ${payoutTimeLabel()}. Nothing is paid until you approve it.`));
 
     const pending = state.payouts.filter((p) => p.status === 'pending');
     if (pending.length === 0) {
@@ -6379,11 +6450,30 @@ function renderMoreToggle(label, checked, onchange) {
   return wrap;
 }
 
-function makeExpandable(title, bodyNode) {
-  const wrap = el('div', { class: 'more-item' });
+// Every screen that uses makeExpandable rebuilds its whole container from
+// scratch on any relevant Firestore change (state.family/members/chores'
+// onSnapshot listeners all call renderCurrentTab() -- see
+// startFamilySubscriptions) -- including the instant a control INSIDE one
+// of these sections writes the very change that triggers the rebuild
+// (e.g. Settings > Payday picking a day). Without this, every such write
+// re-collapses the section the admin was just looking at. `key` persists
+// expanded/collapsed state across a rebuild, keyed independently of the
+// DOM node itself (which gets thrown away and recreated each render) --
+// defaults to `title`, which is unique enough for a screen with one
+// instance per title (Settings' sections), but a caller with multiple
+// instances sharing the same title (a form repeated per child or per
+// chore) MUST pass a distinguishing key (e.g. `${title}:${uid}`) or every
+// instance would incorrectly share one open/closed state.
+const expandedSectionKeys = new Set();
+function makeExpandable(title, bodyNode, key) {
+  const stateKey = key || title;
+  const wrap = el('div', { class: `more-item${expandedSectionKeys.has(stateKey) ? ' expanded' : ''}` });
   const titleRow = el('button', {
     type: 'button', class: 'more-item-title-row',
-    onclick: () => wrap.classList.toggle('expanded'),
+    onclick: () => {
+      const isExpanded = wrap.classList.toggle('expanded');
+      if (isExpanded) expandedSectionKeys.add(stateKey); else expandedSectionKeys.delete(stateKey);
+    },
   }, [el('span', {}, title), el('span', { class: 'more-item-chevron' }, '›')]);
   const body = el('div', { class: 'more-item-body' }, bodyNode);
   wrap.appendChild(titleRow);
@@ -7285,7 +7375,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
       const checked = readPoolControl(poolWrap, mode);
       assignedTo = checked;
       if (mode === 'rotating') {
-        const weekId = getIsoWeekId(new Date());
+        const weekId = getIsoWeekId(new Date(), resolveFamilyPayoutDayOfWeek());
         const first = checked[0];
         const history = {};
         checked.forEach((uid) => { history[uid] = { timesAssigned: uid === first ? 1 : 0, lastAssignedWeekId: uid === first ? weekId : null }; });
@@ -7359,7 +7449,7 @@ function computeAssignmentUpdatePayload(chore, newMode, newAssignedTo) {
     };
   } else {
     // Switching INTO rotating -- seed fresh, exactly like creation.
-    const weekId = getIsoWeekId(new Date());
+    const weekId = getIsoWeekId(new Date(), resolveFamilyPayoutDayOfWeek());
     const first = newAssignedTo[0];
     const history = {};
     newAssignedTo.forEach((uid) => {
@@ -7461,7 +7551,7 @@ function renderEditAssignmentBody(chore, options = {}) {
   wrap.appendChild(attachCustomSelect(modeSelect));
   wrap.appendChild(poolWrap);
   wrap.appendChild(el('div', { class: 'muted', style: 'font-size:0.75rem;margin-top:2px;' },
-    'Changes to a rotation\'s lineup take effect from next Monday.'));
+    `Changes to a rotation's lineup take effect from next ${rotationDayName()}.`));
   wrap.appendChild(errorEl);
   wrap.appendChild(saveAssignmentBtn);
 
@@ -7669,11 +7759,11 @@ function renderActiveChores(container) {
           } catch (err) { showAppAlert(err.message); } finally { saveScheduleBtn.disabled = false; }
         },
       }, 'Save');
-      card.appendChild(makeExpandable('Edit schedule', el('div', {}, [scheduleControl.el, saveScheduleBtn])));
+      card.appendChild(makeExpandable('Edit schedule', el('div', {}, [scheduleControl.el, saveScheduleBtn]), `editSchedule:${chore.id}`));
       // Post-creation editing (ADR-0029) -- size, assignment mode,
       // and the pool used to only be creation-time-only; collapsed by
       // default (makeExpandable) since most chore cards never need this.
-      card.appendChild(makeExpandable('Edit assignment', renderEditAssignmentBody(chore)));
+      card.appendChild(makeExpandable('Edit assignment', renderEditAssignmentBody(chore), `editAssignment:${chore.id}`));
       container.appendChild(card);
     });
   });
@@ -7749,8 +7839,7 @@ function renderAllActivity() {
 
   const viewedChild = children.find((m) => m.uid === state.ledgerViewUid);
   if (viewedChild) {
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const payoutDay = dayNames[(state.family && state.family.settings && state.family.settings.payoutDayOfWeek) ?? 5];
+    const payoutDay = payoutDayName();
     container.appendChild(el('div', { class: 'ca-card', style: 'text-align:center;padding:var(--ca-space-4);' }, [
       el('p', { class: 'ca-meta' }, 'Balance'),
       el('p', { style: 'margin:4px 0 0;font-size:var(--ca-text-xl);font-weight:600;letter-spacing:-.02em;' }, formatCents(viewedChild.balanceCents || 0, currency)),
@@ -7897,11 +7986,13 @@ function renderHotStreakBonusBody(child) {
   if (cfg.enabled && taskChoreIds.length > 0 && (cfg.amountCents || 0) > 0) {
     const today = new Date();
     const todayDateId = getIsoDateId(today);
-    const weekDateIds = getIsoWeekDates(today).map(getIsoDateId);
+    const weekDateIds = getIsoWeekDates(today, resolveFamilyPayoutDayOfWeek()).map(getIsoDateId);
     const dayStatus = computeHotStreakDayStatus(taskChoreIds, weekDateIds, child.uid, acceptedDaySwaps());
     const elapsed = dayStatus.filter((d) => d.dateId <= todayDateId);
     const daysComplete = elapsed.filter((d) => d.allDone).length;
-    const dayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    // ADR-0059: derived from each weekDateIds entry's own date, not array
+    // position -- weekDateIds[0] is no longer always a Monday.
+    const dayLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
     const preview = el('div', { class: 'booking-card', style: 'margin-top:14px;' });
     preview.appendChild(el('div', { class: 'row', style: 'align-items:center;' }, [
@@ -7917,7 +8008,7 @@ function renderHotStreakBonusBody(child) {
     preview.appendChild(el('div', { class: 'streak-days-row', style: 'justify-content:flex-start;margin-top:12px;' },
       weekDateIds.map((dateId, i) => el('div', {
         class: `streak-day-dot ${dayStatus[i].allDone ? 'hit' : ''}`,
-      }, dayLetters[i]))));
+      }, dayLetters[new Date(`${dateId}T00:00:00Z`).getUTCDay()]))));
     preview.appendChild(el('div', { class: 'muted', style: 'margin-top:6px;' }, `${daysComplete} of ${elapsed.length} day${elapsed.length === 1 ? '' : 's'} complete`));
     preview.appendChild(el('div', {
       style: 'display:flex;align-items:center;gap:8px;margin-top:12px;padding:10px 12px;background:var(--panel2);border-radius:10px;font-size:0.82rem;',
@@ -8022,13 +8113,16 @@ function renderParentCodeBody() {
 // "Nobody thinks of themselves as an administrator of their own family,"
 // and a name label belongs where it's actually useful.
 //
-// The weekly-allowance-day picker is dropped rather than relabeled: it
-// writes settings.payoutDayOfWeek, but nothing in functions/lib/settlement.js
-// ever reads that field back -- payouts always run Friday evening,
-// unconditionally (see functions/lib/invites.js's payoutDayOfWeek: 5
-// default). Per the doc: "Either hide the setting until it works, or say
-// plainly that it's coming" -- hiding it is the honest option, since
-// showing it implies a working control.
+// The weekly-allowance-day picker was originally dropped rather than
+// relabeled: it wrote settings.payoutDayOfWeek, but nothing read that field
+// back -- payouts ran Friday evening, unconditionally. Per the doc then:
+// "Either hide the setting until it works, or say plainly that it's
+// coming" -- hiding it was the honest option, since showing it implied a
+// working control. ADR-0059 is what makes hiding it unnecessary: payday
+// (and the pay-anchored week it now also controls) is chosen once, at
+// setup, via the wizard's own payday step -- not re-added here, since
+// changing it after setup raises the same in-progress-week transition
+// question ADR-0059 explicitly deferred (see docs/TODO.md).
 // Family name -- set once at family creation (createFamilyAndAdmin's
 // familyNameInput) and, until now, never editable again anywhere:
 // Settings only ever showed it read-only, and the onboarding wizard
@@ -8066,6 +8160,86 @@ function renderFamilyNameField() {
     }
   });
   wrap.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;' }, [input, saveBtn]));
+  wrap.appendChild(errorEl);
+  return wrap;
+}
+
+// ADR-0060: change payday any time after setup, not just once at the
+// wizard. Per the app owner's explicit choice, this is a hard cutover --
+// same semantics as ADR-0059's own original rollout, just triggerable at
+// any point in a family's lifetime instead of only once at launch. A
+// change here takes effect the very next settlement/rotation tick,
+// immediately: the week already in progress under the OLD boundary is
+// simply left as-is (whatever chore-log entries it has stay attributed
+// to it), and the next tick starts computing fresh from the NEW anchor.
+// Any calendar days that fall between the old week's end and the new
+// week's start aren't double-counted or dropped from history -- they're
+// just not covered by either week's chore-log query, the same deliberate
+// tradeoff ADR-0059 already made once for the whole app. No pending-
+// change state, no confirmation step, matching the immediate-on-change
+// pattern every other Settings control here already uses (currency,
+// deduction cap, rotation mode).
+function renderPaydayBody() {
+  const wrap = el('div', {});
+  let payoutDayOfWeek = resolveFamilyPayoutDayOfWeek();
+  let payoutHour = (state.family && state.family.settings && state.family.settings.payoutHour) ?? 18;
+
+  const errorEl = el('p', { class: 'error-text', style: 'margin:6px 0 0;' });
+  errorEl.hidden = true;
+  async function save() {
+    errorEl.hidden = true;
+    try {
+      const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+      await updateDoc(fsDoc(db, `families/${state.familyId}`), {
+        settings: { ...(state.family.settings || {}), payoutDayOfWeek, payoutHour },
+      });
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    }
+  }
+
+  const explainWrap = el('div', {});
+  function renderExplain() {
+    explainWrap.innerHTML = '';
+    const payday = paydayWizardDayLabel(payoutDayOfWeek);
+    const rotationDay = paydayWizardRotationDayLabel(payoutDayOfWeek);
+    explainWrap.appendChild(renderInfoBox(
+      `The chore week will run ${rotationDay} through ${payday}. This takes effect immediately -- the week already in progress is left as-is, and the next one starts counting from today.`
+    ));
+  }
+
+  const dayOptions = [['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5], ['Sat', 6], ['Sun', 7]];
+  const dayButtons = dayOptions.map(([label, isoDay]) => {
+    const btn = el('button', {
+      type: 'button', class: `pill small${payoutDayOfWeek === isoDay ? ' primary' : ''}`,
+    }, label);
+    btn.addEventListener('click', async () => {
+      if (payoutDayOfWeek === isoDay) return;
+      payoutDayOfWeek = isoDay;
+      dayButtons.forEach((b, i) => b.classList.toggle('primary', dayOptions[i][1] === isoDay));
+      renderExplain();
+      await save();
+    });
+    return btn;
+  });
+
+  const hourSelect = el('select', {}, Array.from({ length: 24 }, (_, h) => {
+    const hour12 = ((h + 11) % 12) + 1;
+    return el('option', { value: String(h) }, `${hour12}${h < 12 || h === 24 ? 'am' : 'pm'}`);
+  }));
+  hourSelect.value = String(payoutHour);
+  hourSelect.addEventListener('change', async () => {
+    payoutHour = Number(hourSelect.value);
+    await save();
+  });
+
+  wrap.appendChild(el('label', {}, 'Which day'));
+  wrap.appendChild(el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;' }, dayButtons));
+  renderExplain();
+  wrap.appendChild(explainWrap);
+  wrap.appendChild(el('label', { style: 'margin-top:10px;' }, 'What time'));
+  wrap.appendChild(attachCustomSelect(hourSelect));
   wrap.appendChild(errorEl);
   return wrap;
 }
@@ -8109,6 +8283,7 @@ function renderSettings() {
   });
   const deductionCapBody = el('div', {}, [el('label', {}, 'Most that can come off'), attachCustomSelect(deductionCapSelect)]);
   container.appendChild(makeExpandable('Most that can come off', deductionCapBody));
+  container.appendChild(makeExpandable('Payday', renderPaydayBody()));
   if (state.members.filter((m) => m.role === 'child').length > 1) {
     container.appendChild(makeExpandable('Sharing chores out', renderRotationModeBody()));
   }
@@ -8261,7 +8436,7 @@ let wizardDraftKids = [];
 // in one pass, same principle ADR-0040 already established for the kids
 // step.
 // ---------------------------------------------------------------------
-let wizardChoreStep = 'howItWorks'; // 'howItWorks'|'dailyTasks'|'chores'|'sharingOut'|'review'
+let wizardChoreStep = 'howItWorks'; // 'howItWorks'|'dailyTasks'|'chores'|'sharingOut'|'payday'|'review'
 let wizardChoreState = null;
 let wizardDraftIdCounter = 0;
 function nextWizardDraftId() { wizardDraftIdCounter += 1; return `draft${wizardDraftIdCounter}`; }
@@ -8270,7 +8445,7 @@ function nextWizardDraftId() { wizardDraftIdCounter += 1; return `draft${wizardD
 // itself (nothing here is written; it's purely which card is on screen).
 let wizardChoreMoneyTargetUid = null;
 
-const CHORE_WIZARD_STEP_ORDER = ['howItWorks', 'dailyTasks', 'chores', 'sharingOut', 'review'];
+const CHORE_WIZARD_STEP_ORDER = ['howItWorks', 'dailyTasks', 'chores', 'sharingOut', 'payday', 'review'];
 function choreWizardVisibleSteps() {
   return CHORE_WIZARD_STEP_ORDER.filter((s) => {
     if (s === 'dailyTasks') return wizardChoreState.bonusEnabled;
@@ -8340,6 +8515,11 @@ function resetWizardChoreState() {
     choreDrafts: [...existingChoreDrafts, ...libraryChoreDrafts],
     rotationMode: (state.family && state.family.settings && state.family.settings.rotationMode) || 'fair',
     manualAssignments: {}, // choreDraft.id -> uid, manual mode only
+    // ADR-0059: wizard-only, no Settings-screen editor (see docs/TODO.md)
+    // -- a re-run reloads whatever the family already has, a brand-new
+    // family gets the app's long-standing Friday/18:00 default.
+    payoutDayOfWeek: resolveFamilyPayoutDayOfWeek(),
+    payoutHour: (state.family && state.family.settings && state.family.settings.payoutHour) ?? 18,
     sameForBoth: true,
     baseWeeklyAllowanceCents: (firstChild && firstChild.baseWeeklyAllowanceCents) || 1500,
     bonusAmountCents: (firstChild && firstChild.hotStreakBonus && firstChild.hotStreakBonus.amountCents) || 500,
@@ -8393,6 +8573,7 @@ function renderChoreWizardSubStep(content) {
   else if (wizardChoreStep === 'dailyTasks') renderChoreWizardDailyTasks(card);
   else if (wizardChoreStep === 'chores') renderChoreWizardChores(card);
   else if (wizardChoreStep === 'sharingOut') renderChoreWizardSharingOut(card);
+  else if (wizardChoreStep === 'payday') renderChoreWizardPayday(card);
   else if (wizardChoreStep === 'review') renderChoreWizardReview(card);
 }
 
@@ -8493,12 +8674,12 @@ function renderChoreWizardHowItWorks(card) {
     el('div', { style: 'display:flex;align-items:center;' }, [
       el('div', {}, [
         el('div', { style: 'font-weight:700;' }, 'A perfect week'),
-        el('div', { class: 'muted', style: 'font-size:0.78rem;' }, targetUid ? `${memberLabel(targetUid)}, paid Fridays` : 'Each child, paid Fridays'),
+        el('div', { class: 'muted', style: 'font-size:0.78rem;' }, targetUid ? `${memberLabel(targetUid)}, paid ${payoutDayName()}s` : `Each child, paid ${payoutDayName()}s`),
       ]),
       perfectWeekValueEl,
     ]),
     el('p', { class: 'muted', style: 'font-size:0.78rem;margin:7px 0 0;padding-top:7px;border-top:1px solid var(--border);' }, wizardChoreState.isRerun
-      ? 'Changing these takes effect from Monday -- this week is already under way.'
+      ? `Changing these takes effect from ${rotationDayName()} -- this week is already under way.`
       : 'Pick something roughly right -- you can change both amounts any time in Settings.'),
   ]));
   updatePerfectWeek();
@@ -8693,7 +8874,7 @@ function renderChoreWizardChores(card) {
   card.appendChild(countEl);
   function updateCount() {
     const chosen = wizardChoreState.choreDrafts.filter((d) => d.checked);
-    const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
+    const weekDateIds = getIsoWeekDates(new Date(), resolveFamilyPayoutDayOfWeek()).map(getIsoDateId);
     const occurrences = chosen.reduce((sum, d) => sum + resolveChoreDueDateIds(d, weekDateIds).length, 0);
     countEl.textContent = `${chosen.length} chosen · ${occurrences} jobs a week`;
   }
@@ -8740,8 +8921,8 @@ function renderChoreWizardSharingOut(card) {
       frequency: d.frequency, timesPerWeekCount: d.timesPerWeekCount,
       rotation: { pool: resolveEligibleUids(d, activeUids), history: {} },
     }));
-    const weekDateIds = getIsoWeekDates(new Date()).map(getIsoDateId);
-    const weekId = getIsoWeekId(new Date());
+    const weekDateIds = getIsoWeekDates(new Date(), resolveFamilyPayoutDayOfWeek()).map(getIsoDateId);
+    const weekId = getIsoWeekId(new Date(), resolveFamilyPayoutDayOfWeek());
     const assignments = computeFamilyRotationAssignments({ chores: previewChores, weekId, weekDateIds });
     const previewWrap = el('div', {});
     function renderPreview() {
@@ -8766,7 +8947,7 @@ function renderChoreWizardSharingOut(card) {
     }
     renderPreview();
     card.appendChild(previewWrap);
-    card.appendChild(renderInfoBox("Turns change over every Monday. A big job counts for more than a small one, so weeks won't always look equal -- it evens out over a month. Tap a row to change who's eligible for a chore."));
+    card.appendChild(renderInfoBox(`Turns change over every ${rotationDayName()}. A big job counts for more than a small one, so weeks won't always look equal -- it evens out over a month. Tap a row to change who's eligible for a chore.`));
   } else {
     card.appendChild(el('p', { class: 'muted', style: 'font-size:0.75rem;font-weight:700;text-transform:uppercase;margin:14px 0 6px;' }, 'Who does what'));
     chosen.forEach((draft) => {
@@ -8864,7 +9045,68 @@ function openEligibilitySheet(draft, { onChange }) {
   document.body.appendChild(overlay);
 }
 
-// ---- 5 · Review ------------------------------------------------------
+// ---- 5 · Payday --------------------------------------------------------
+// ADR-0059: the one place payday is ever chosen -- wizard-only, no
+// Settings-screen editor (deferred, see docs/TODO.md), since changing it
+// later raises the same in-progress-week question this hard-cutover
+// deliberately sidesteps at first setup. Per Brian's explicit ask, this
+// states the mechanics plainly rather than presenting a bare day-picker:
+// payday is ALSO when the chore week ends and rotates, so the whole week
+// (including its own last day or two) is always fully counted by the time
+// money moves -- not "a week that's still 2.5 days from over," which is
+// the actual bug this whole change exists to fix (see the ADR).
+const PAYDAY_WIZARD_DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+function paydayWizardDayLabel(payoutDayOfWeek) { return PAYDAY_WIZARD_DAY_NAMES[payoutDayOfWeek % 7]; }
+function paydayWizardRotationDayLabel(payoutDayOfWeek) { return PAYDAY_WIZARD_DAY_NAMES[((payoutDayOfWeek % 7) + 1) % 7]; }
+function renderChoreWizardPayday(card) {
+  card.appendChild(el('h1', {}, 'When does the money move?'));
+  card.appendChild(el('p', { class: 'muted' }, 'Pick the day allowance pays out -- this also sets when the chore week ends.'));
+
+  const dayPickerRow = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;' });
+  const explainWrap = el('div', {});
+  function renderExplain() {
+    explainWrap.innerHTML = '';
+    const payday = paydayWizardDayLabel(wizardChoreState.payoutDayOfWeek);
+    const rotationDay = paydayWizardRotationDayLabel(wizardChoreState.payoutDayOfWeek);
+    explainWrap.appendChild(renderInfoBox(
+      `The chore week will run ${rotationDay} through ${payday}, so everything counts right up to the last day before payday -- `
+      + `not a week that's still got a couple of days left when the money moves. Turns rotate the next morning (${rotationDay}).`
+    ));
+  }
+  // ISO weekday order (1=Mon..7=Sun) for the picker row -- matches the
+  // custom-frequency day-picker's own Mon..Sun convention elsewhere in
+  // this wizard, even though payoutDayOfWeek itself is stored the same way.
+  const dayOptions = [['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5], ['Sat', 6], ['Sun', 7]];
+  const dayButtons = dayOptions.map(([label, isoDay]) => {
+    const btn = el('button', {
+      type: 'button', class: `pill small${wizardChoreState.payoutDayOfWeek === isoDay ? ' primary' : ''}`,
+    }, label);
+    btn.addEventListener('click', () => {
+      wizardChoreState.payoutDayOfWeek = isoDay;
+      dayButtons.forEach((b, i) => b.classList.toggle('primary', dayOptions[i][1] === isoDay));
+      renderExplain();
+    });
+    return btn;
+  });
+  dayPickerRow.append(...dayButtons);
+  card.appendChild(dayPickerRow);
+  renderExplain();
+  card.appendChild(explainWrap);
+
+  card.appendChild(el('label', { style: 'margin-top:14px;' }, 'What time'));
+  const hourSelect = el('select', {}, Array.from({ length: 24 }, (_, h) => {
+    const hour12 = ((h + 11) % 12) + 1;
+    const label = `${hour12}${h < 12 || h === 24 ? 'am' : 'pm'}`;
+    return el('option', { value: String(h) }, label);
+  }));
+  hourSelect.value = String(wizardChoreState.payoutHour);
+  hourSelect.addEventListener('change', () => { wizardChoreState.payoutHour = Number(hourSelect.value); });
+  card.appendChild(attachCustomSelect(hourSelect));
+
+  renderChoreWizardNav(card, { onNext: choreWizardNext });
+}
+
+// ---- 6 · Review ------------------------------------------------------
 function renderChoreWizardReview(card) {
   const currency = choreWizardCurrency();
   card.appendChild(el('h1', {}, 'Ready to go'));
@@ -8964,7 +9206,12 @@ function renderChoreWizardReview(card) {
 async function commitChoreWizard() {
   const { addDoc, updateDoc, doc: fsDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
   const activeUids = activeChildUids();
-  const weekId = getIsoWeekId(new Date());
+  // The just-chosen payoutDayOfWeek, NOT resolveFamilyPayoutDayOfWeek()'s
+  // stale state.family read -- settings hasn't been written yet at this
+  // point in the function, and this is the moment ADR-0059's pay-anchored
+  // week takes effect, so the rotation history seeded below must already
+  // use the new week boundary.
+  const weekId = getIsoWeekId(new Date(), wizardChoreState.payoutDayOfWeek);
 
   // Deactivate anything existing that got unticked.
   const allDrafts = [...wizardChoreState.choreDrafts, ...wizardChoreState.dailyTaskDrafts];
@@ -9022,7 +9269,12 @@ async function commitChoreWizard() {
   }
 
   await updateDoc(fsDoc(db, `families/${state.familyId}`), {
-    settings: { ...(state.family.settings || {}), rotationMode: wizardChoreState.rotationMode },
+    settings: {
+      ...(state.family.settings || {}),
+      rotationMode: wizardChoreState.rotationMode,
+      payoutDayOfWeek: wizardChoreState.payoutDayOfWeek,
+      payoutHour: wizardChoreState.payoutHour,
+    },
   });
 
   for (const uid of activeUids) {
@@ -9684,7 +9936,7 @@ function renderRunWizardReviewScreen(content) {
   }, [
     svgIcon('infoCircle', { size: 16, color: 'var(--accent2)' }),
     el('div', {}, [
-      el('div', {}, "Changes to a rotation's lineup take effect from next Monday."),
+      el('div', {}, `Changes to a rotation's lineup take effect from next ${rotationDayName()}.`),
       el('div', { style: 'margin-top:2px;' }, 'Nothing changes until you save.'),
     ]),
   ]));
