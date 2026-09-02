@@ -3947,6 +3947,22 @@ function computePendingPaymentLines(memberUid, member) {
   return { lines, baseLine, extraLines, thisWeekLedger, alreadySettled, awaitingApproval, weekProgress };
 }
 
+// The one true "earned so far this week" total for a member, live and
+// pre-settlement -- chores base line + basics bonus (if still on track) +
+// any already-approved extra-job credits/deductions already in the
+// ledger this week. Any screen that labels a figure "earned"/"earned so
+// far" for a parent OR a child must come from here, not from
+// computeWeeklyMoneyCardModel's earnedCents alone -- that figure is
+// chores-only by design (ADR-0055's deliberate split between the chores
+// bar and the basics-bonus pill on the child's own Dashboard card) and
+// silently disagreeing with this total is what made the admin Home
+// dashboard and Kids-tab "Earned so far" figure look like it was
+// ignoring daily/basics tasks entirely.
+function computeWeeklyEarnedSoFarCents(memberUid, member) {
+  const { lines, thisWeekLedger } = computePendingPaymentLines(memberUid, member);
+  return thisWeekLedger.reduce((s, tx) => s + tx.amountCents, 0) + lines.reduce((s, l) => s + l.cents, 0);
+}
+
 // Client-side mirror of functions/lib/hotStreakBonus.js's
 // computeHotStreakWeekQualifies, but returning the per-day breakdown (not
 // just a single pass/fail) since display needs the day-by-day dot row too
@@ -4393,10 +4409,17 @@ function renderDashboard() {
     const model = computeWeeklyMoneyCardModel(state.user.uid, state.member);
     const moneyCard = el('div', { class: 'ca-card', style: 'cursor:pointer;', onclick: () => switchTab('earnings') });
     if (model.stillThereCents === 0) {
+      // Reported: with all current chores done, this card led with the
+      // words "All done" and buried the actual money in small print below
+      // it, reading as "no money value" at a glance. The headline is now
+      // the running total (chores + basics bonus so far + extra jobs/
+      // deductions, same figure the Money tab's own total shows), not
+      // just the chores-only amount the small print used to carry alone.
+      const earnedSoFarCents = computeWeeklyEarnedSoFarCents(state.user.uid, state.member);
       moneyCard.appendChild(el('div', { class: 'ca-row' }, [
         el('div', { class: 'ca-row__grow' }, [
-          el('p', { style: 'margin:0;font-size:var(--ca-text-lg);font-weight:600;' }, 'All done'),
-          el('p', { class: 'ca-meta' }, `${formatCents(model.earnedCents, currency)} on ${payoutDayName()}`),
+          el('p', { style: 'margin:0;font-size:var(--ca-text-xl);font-weight:600;letter-spacing:-.02em;' }, formatCents(earnedSoFarCents, currency)),
+          el('p', { class: 'ca-meta' }, `All chores done · paid ${payoutDayName()}`),
         ]),
         el('p', { class: 'ca-link', style: 'font-size:var(--ca-text-sm);font-weight:600;' }, 'See the maths ›'),
       ]));
@@ -5631,11 +5654,13 @@ function renderAdminDashboard() {
     // completion bar) -- the trailing figure should match, not the
     // child's lifetime balanceCents (only ever set once a payout is
     // actually approved, so it reads 0 all week regardless of real
-    // progress). computeWeeklyMoneyCardModel is the same live "earned so
-    // far" projection the child's own Dashboard and the Kids-tab detail
-    // view (ADR-0061) already show.
+    // progress). computeWeeklyEarnedSoFarCents is the SAME complete total
+    // (chores + basics bonus + extra jobs + deductions) the child's own
+    // Money tab shows -- NOT computeWeeklyMoneyCardModel's chores-only
+    // earnedCents, which made this row silently disagree with the child's
+    // own total and look like it was ignoring daily/basics tasks.
     const rowPayout = state.payouts.find((p) => p.memberUid === child.uid);
-    const rowEarnedCents = rowPayout ? rowPayout.totalAmountCents : computeWeeklyMoneyCardModel(child.uid, child).earnedCents;
+    const rowEarnedCents = rowPayout ? rowPayout.totalAmountCents : computeWeeklyEarnedSoFarCents(child.uid, child);
     container.appendChild(el('div', {
       class: 'ca-card', style: 'cursor:pointer;', onclick: () => openKid(child.uid),
     }, el('div', { class: 'ca-row' }, [
@@ -5912,17 +5937,21 @@ function renderKidDetailMoneyBody(container, uid, child, currency) {
   container.appendChild(el('p', { class: 'ca-section' }, "This week's payout"));
   const payout = state.payouts.find((p) => p.memberUid === uid);
   if (!payout) {
-    // Live, mid-week projection -- computeWeeklyMoneyCardModel is already
-    // generic over any memberUid/member (not hardcoded to the signed-in
-    // user), so this is the exact same "earned so far / still there"
-    // figure the child's own Dashboard money card shows, rather than
-    // leaving an admin looking at nothing but "not settled yet" until
-    // Friday's real settlement runs.
+    // Live, mid-week projection. The headline figure is
+    // computeWeeklyEarnedSoFarCents -- the same complete total (chores +
+    // basics bonus + extra jobs + deductions) the child's own Money tab
+    // shows -- rather than computeWeeklyMoneyCardModel's chores-only
+    // earnedCents, which silently omitted daily/basics tasks here despite
+    // being labeled "Earned so far". "Still there" (still-possible from
+    // remaining chores) stays sourced from computeWeeklyMoneyCardModel,
+    // which is generic over any memberUid/member, so an admin still sees
+    // a live figure rather than nothing until Friday's real settlement.
     const model = computeWeeklyMoneyCardModel(uid, child);
+    const earnedSoFarCents = computeWeeklyEarnedSoFarCents(uid, child);
     const projectionCard = el('div', { class: 'ca-card' }, [
       el('div', { class: 'ca-row' }, [
         el('div', {}, [
-          el('p', { style: 'margin:0;font-size:var(--ca-text-xl);font-weight:600;letter-spacing:-.02em;' }, formatCents(model.earnedCents, currency)),
+          el('p', { style: 'margin:0;font-size:var(--ca-text-xl);font-weight:600;letter-spacing:-.02em;' }, formatCents(earnedSoFarCents, currency)),
           el('p', { class: 'ca-meta' }, 'Earned so far'),
         ]),
         model.stillThereCents > 0 ? el('div', { class: 'ca-row__end' }, [
