@@ -680,6 +680,7 @@
         </div>
         <p class="ca-error" id="kidPinError" hidden style="text-align:center;"></p>
         <p class="ca-meta" id="kidPinAttemptsNote" hidden style="text-align:center;"></p>
+        <p class="ca-meta" id="kidPinSigningIn" hidden style="text-align:center;">Signing in…</p>
         <div class="ca-keypad" id="kidKeypad" style="margin-top:var(--ca-space-4);">
           <button type="button" class="ca-key" data-digit="1">1</button><button type="button" class="ca-key" data-digit="2">2</button><button type="button" class="ca-key" data-digit="3">3</button>
           <button type="button" class="ca-key" data-digit="4">4</button><button type="button" class="ca-key" data-digit="5">5</button><button type="button" class="ca-key" data-digit="6">6</button>
@@ -2545,6 +2546,10 @@ document.getElementById('kidUsernameStep').addEventListener('submit', async (eve
   if (!username) return;
   kidCurrentUsername = username;
 
+  // Same "hangs for a second" report as the PIN step -- the Next button
+  // gave no feedback during the lookupKidDisplayName round trip either.
+  const nextBtn = event.target.querySelector('button[type="submit"]');
+  nextBtn.disabled = true;
   let displayName = username;
   let credentialType = 'pin';
   try {
@@ -2557,6 +2562,8 @@ document.getElementById('kidUsernameStep').addEventListener('submit', async (eve
     // Non-fatal -- falls back to the raw username and the PIN step (the
     // more common case going forward); a password-only kid whose lookup
     // happened to fail here can still get in by retrying.
+  } finally {
+    nextBtn.disabled = false;
   }
 
   if (credentialType === 'password') {
@@ -2571,6 +2578,7 @@ document.getElementById('kidUsernameStep').addEventListener('submit', async (eve
   renderKidPinDots();
   document.getElementById('kidPinError').hidden = true;
   document.getElementById('kidPinAttemptsNote').hidden = true;
+  document.getElementById('kidPinSigningIn').hidden = true;
   showKidStep('kidPinStep');
 });
 document.getElementById('kidPinBackBtn').addEventListener('click', () => showKidStep('kidUsernameStep'));
@@ -2619,8 +2627,17 @@ document.getElementById('kidPasswordStep').addEventListener('submit', async (eve
 async function submitKidPin() {
   const errorEl = document.getElementById('kidPinError');
   const attemptsEl = document.getElementById('kidPinAttemptsNote');
+  const signingInEl = document.getElementById('kidPinSigningIn');
+  // Reported: entering the 4th digit "hangs" for about a second -- there
+  // was no visual feedback at all during the signInWithPin round trip
+  // (auth lookup + Firestore reads/writes, occasionally a Cloud Functions
+  // cold start), so a real-but-brief wait read as a frozen app. This
+  // doesn't make the call itself faster, just visible while it runs.
+  const keypadButtons = document.querySelectorAll('#kidKeypad .ca-key[data-digit], #kidPinBackspaceBtn');
   errorEl.hidden = true;
   attemptsEl.hidden = true;
+  signingInEl.hidden = false;
+  keypadButtons.forEach((btn) => { btn.disabled = true; });
   const pin = kidPinDigits.join('');
   try {
     const result = await callSignInWithPin({ username: kidCurrentUsername, pin });
@@ -2647,6 +2664,9 @@ async function submitKidPin() {
     renderKidPinDots();
     errorEl.textContent = describeParentAuthError(err);
     errorEl.hidden = false;
+  } finally {
+    signingInEl.hidden = true;
+    keypadButtons.forEach((btn) => { btn.disabled = false; });
   }
 }
 document.getElementById('kidKeypad').addEventListener('click', (event) => {
