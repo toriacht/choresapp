@@ -53,6 +53,12 @@
     margin: 0; padding: 16px; padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
     background: var(--bg); color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    /* A drag-down anywhere (e.g. on the notification sheet's grip, which
+       otherwise looks swipeable but has no gesture wired to it) was
+       falling through to the browser/PWA's native pull-to-refresh,
+       reloading the whole app instead of doing nothing or closing a
+       sheet. */
+    overscroll-behavior-y: contain;
   }
   .page-wrap { max-width: 720px; margin: 0 auto; }
   h1 { font-size: 1.25rem; font-weight: 700; margin: 0; }
@@ -815,7 +821,7 @@
        the content gets the emphasis." -->
   <div id="notifModal" class="modal-overlay" style="align-items:flex-end;padding:0;" hidden>
     <div class="ca-sheet" style="width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;margin:0 auto;">
-      <div class="ca-sheet__grip"></div>
+      <div class="ca-sheet__grip" id="notifSheetGrip"></div>
       <div style="display:flex;align-items:center;margin-bottom:var(--ca-space-3);">
         <p class="ca-title" style="flex:1;">Notifications</p>
         <button type="button" class="ca-link" id="notifMarkAllReadBtn" style="font-size:var(--ca-text-sm);">Mark all read</button>
@@ -2548,8 +2554,14 @@ document.getElementById('kidUsernameStep').addEventListener('submit', async (eve
 
   // Same "hangs for a second" report as the PIN step -- the Next button
   // gave no feedback during the lookupKidDisplayName round trip either.
+  // ca-btn--loading (defined in choresapp.css, previously unused
+  // anywhere) hides the label behind a spinner via pointer-events:none --
+  // NOT `disabled`, which paints the button flat grey immediately
+  // (.ca-btn[disabled]) and reads as "the button got pressed by itself"
+  // when this fires from a username chip's one-tap requestSubmit(),
+  // which the user never touched at all.
   const nextBtn = event.target.querySelector('button[type="submit"]');
-  nextBtn.disabled = true;
+  nextBtn.classList.add('ca-btn--loading');
   let displayName = username;
   let credentialType = 'pin';
   try {
@@ -2563,7 +2575,7 @@ document.getElementById('kidUsernameStep').addEventListener('submit', async (eve
     // more common case going forward); a password-only kid whose lookup
     // happened to fail here can still get in by retrying.
   } finally {
-    nextBtn.disabled = false;
+    nextBtn.classList.remove('ca-btn--loading');
   }
 
   if (credentialType === 'password') {
@@ -3131,6 +3143,35 @@ document.getElementById('notifBellBtn').addEventListener('click', () => {
 document.getElementById('notifModal').addEventListener('click', (event) => {
   if (event.target.id === 'notifModal') document.getElementById('notifModal').hidden = true;
 });
+// Reported: the sheet's grip bar looks draggable-to-dismiss (per the
+// original design intent, "dismissal is a swipe") but had no gesture
+// wired to it at all -- only tap-outside closed it, so a drag there did
+// nothing but fall through to the browser's pull-to-refresh (see body's
+// overscroll-behavior-y above). Scoped to the grip itself, not the
+// scrollable notification list, so ordinary list scrolling is untouched.
+(() => {
+  const grip = document.getElementById('notifSheetGrip');
+  const sheet = grip.closest('.ca-sheet');
+  const modal = document.getElementById('notifModal');
+  let startY = null;
+  grip.addEventListener('touchstart', (e) => {
+    startY = e.touches[0].clientY;
+    sheet.style.transition = 'none';
+  }, { passive: true });
+  grip.addEventListener('touchmove', (e) => {
+    if (startY === null) return;
+    const dy = Math.max(0, e.touches[0].clientY - startY);
+    sheet.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  grip.addEventListener('touchend', (e) => {
+    if (startY === null) return;
+    const dy = e.changedTouches[0].clientY - startY;
+    sheet.style.transition = '';
+    sheet.style.transform = '';
+    startY = null;
+    if (dy > 80) modal.hidden = true;
+  });
+})();
 document.getElementById('notifMarkAllReadBtn').addEventListener('click', async () => {
   const unread = state.notifications.filter((n) => !n.read);
   await Promise.all(unread.map((n) => markNotifRead(n.id)));
