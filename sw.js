@@ -34,9 +34,19 @@ self.addEventListener('push', (event) => {
   };
   if (canReviewInline) {
     options.tag = `chorereview-${data.relatedId}`;
+    // Reported, reproduced twice: tapping the button LABELED "Approve"
+    // resulted in a rejection instead. The action->status mapping below
+    // in notificationclick is unambiguous (event.action is the browser's
+    // own direct echo of which action object was tapped, no indirection
+    // that could scramble it) -- the leading suspect is a platform
+    // rendering-order quirk on Android reversing a 2-action array's
+    // display order in some OS/Chrome versions. Swapped empirically in
+    // response to that report; if this doesn't fix it (or now flips
+    // "Send back" instead), the cause is elsewhere and this swap should
+    // be reverted rather than layered on top of another guess.
     options.actions = [
-      { action: 'approve_chore', title: 'Approve' },
       { action: 'reject_chore', title: 'Send back' },
+      { action: 'approve_chore', title: 'Approve' },
     ];
   }
   event.waitUntil(self.registration.showNotification(title, options));
