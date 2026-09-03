@@ -956,7 +956,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.03.3';
+const APP_VERSION = '26.09.03.4';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -2906,6 +2906,51 @@ document.getElementById('cancelChangePasswordBtn').addEventListener('click', () 
   switchTab(state.currentTab);
 });
 
+// ---------------------------------------------------------------------
+// Back-button / history integration for modals -- reported: the hardware/
+// gesture back button closed the whole app in many places where a modal
+// was open and the user expected it to just go back a step. Root cause:
+// nothing anywhere in this file ever touched browser history, so there
+// was never an in-app entry for back to land on -- it always fell straight
+// through to whatever was before this page load. This gives each open
+// modal its own history entry (a LIFO stack, since one modal can open on
+// top of another -- e.g. an error alert over the notification tray); a
+// real back-button press pops the topmost entry and closes just that
+// modal. Deliberately scoped to modals/overlays only, not the deeper
+// tab/screen navigation model (switchTab, showScreen) -- that's a much
+// larger redesign than this specific complaint calls for.
+//
+// pushModalHistory(onBackPressed): call once, right when a modal opens.
+// onBackPressed is invoked ONLY on a genuine back-button press while this
+// is the topmost modal -- it must perform the same dismiss/cancel action
+// a Cancel/close button would (never a destructive confirm; see
+// showAppConfirm below for the pattern when a modal has more than one
+// exit). Returns `dismiss()`: call it from EVERY in-app close path (a
+// button's onclick, tap-outside, drag-to-dismiss) AFTER that path has
+// already done its own close/resolve -- it only unwinds the history
+// entry this pushed. A `suppressNextPopstate` guard stops dismiss()'s
+// own `history.back()` call from re-triggering the popstate handler and
+// closing the same (or a different) modal a second time.
+const modalCloseStack = [];
+let suppressNextPopstate = false;
+window.addEventListener('popstate', () => {
+  if (suppressNextPopstate) { suppressNextPopstate = false; return; }
+  const top = modalCloseStack.pop();
+  if (top) top.onBackPressed();
+});
+function pushModalHistory(onBackPressed) {
+  history.pushState({ choresAppModal: true }, '');
+  const entry = { onBackPressed };
+  modalCloseStack.push(entry);
+  return () => {
+    const idx = modalCloseStack.indexOf(entry);
+    if (idx === -1) return; // already unwound by a real back-button press
+    modalCloseStack.splice(idx, 1);
+    suppressNextPopstate = true;
+    history.back();
+  };
+}
+
 // A blocking modal, not an inline status line -- an admin invite success
 // message was too easy to lose in an inline display that gets wiped by the
 // next re-render (adding a second person, or -- in the Admin Dashboard's
@@ -2915,15 +2960,18 @@ document.getElementById('cancelChangePasswordBtn').addEventListener('click', () 
 // the admin before they've acknowledged it. Children are set up with a
 // password the admin already knows (they typed it in), so there's nothing
 // to reveal for that path -- this is only used for the admin-invite flow.
+let dismissCredentialModal = null;
 function showCredentialModal({ title }) {
   document.getElementById('credentialModalTitle').textContent = title;
   const body = document.getElementById('credentialModalBody');
   body.innerHTML = '';
   body.appendChild(el('p', {}, "They'll be added automatically the first time they sign in with Google."));
+  dismissCredentialModal = pushModalHistory(() => { document.getElementById('credentialModal').hidden = true; });
   document.getElementById('credentialModal').hidden = false;
 }
 document.getElementById('credentialModalDoneBtn').addEventListener('click', () => {
   document.getElementById('credentialModal').hidden = true;
+  if (dismissCredentialModal) { dismissCredentialModal(); dismissCredentialModal = null; }
 });
 
 // Styled replacements for the browser's native alert()/confirm() -- those
@@ -2953,7 +3001,9 @@ function showAppAlert(message, { title = 'Notice', icon = null, tint = null } = 
     renderAppAlertIcon(icon, tint);
     const buttonsWrap = document.getElementById('appAlertButtons');
     buttonsWrap.innerHTML = '';
-    const finish = () => { document.getElementById('appAlertOverlay').hidden = true; resolve(); };
+    const close = () => { document.getElementById('appAlertOverlay').hidden = true; resolve(); };
+    const dismiss = pushModalHistory(close); // real back-button press -> close()
+    const finish = () => { close(); dismiss(); }; // in-app close -> also unwind the history entry
     const okBtn = el('button', { class: 'pill primary', type: 'button', style: 'flex:1;', onclick: finish }, 'OK');
     buttonsWrap.appendChild(okBtn);
     document.getElementById('appAlertCloseBtn').onclick = finish;
@@ -2967,8 +3017,13 @@ function showAppConfirm(message, { title = 'Are you sure?', confirmLabel = 'Yes'
     renderAppAlertIcon(icon === undefined ? (danger ? 'infoCircle' : null) : icon, tint || (danger ? 'danger' : 'accent2'));
     const buttonsWrap = document.getElementById('appAlertButtons');
     buttonsWrap.innerHTML = '';
-    const cancel = () => { document.getElementById('appAlertOverlay').hidden = true; resolve(false); };
-    const confirmChoice = () => { document.getElementById('appAlertOverlay').hidden = true; resolve(true); };
+    const closeWith = (result) => { document.getElementById('appAlertOverlay').hidden = true; resolve(result); };
+    // A real back-button press must never resolve `true` -- treat it the
+    // same as tapping Cancel/the X, same platform convention as a native
+    // dialog's back-dismiss.
+    const dismiss = pushModalHistory(() => closeWith(false));
+    const cancel = () => { closeWith(false); dismiss(); };
+    const confirmChoice = () => { closeWith(true); dismiss(); };
     const cancelBtn = el('button', { class: 'pill', type: 'button', style: 'flex:1;', onclick: cancel }, cancelLabel);
     const confirmBtn = el('button', { class: `pill ${danger ? 'danger' : 'primary'}`, type: 'button', style: 'flex:1;', onclick: confirmChoice }, confirmLabel);
     buttonsWrap.appendChild(cancelBtn);
@@ -3205,12 +3260,18 @@ function renderNotifModalBody() {
   });
 }
 
+let dismissNotifModal = null;
 document.getElementById('notifBellBtn').addEventListener('click', () => {
   renderNotifModalBody();
+  dismissNotifModal = pushModalHistory(() => { document.getElementById('notifModal').hidden = true; dismissNotifModal = null; });
   document.getElementById('notifModal').hidden = false;
 });
+function closeNotifModal() {
+  document.getElementById('notifModal').hidden = true;
+  if (dismissNotifModal) { dismissNotifModal(); dismissNotifModal = null; }
+}
 document.getElementById('notifModal').addEventListener('click', (event) => {
-  if (event.target.id === 'notifModal') document.getElementById('notifModal').hidden = true;
+  if (event.target.id === 'notifModal') closeNotifModal();
 });
 // Reported: the sheet's grip bar looks draggable-to-dismiss (per the
 // original design intent, "dismissal is a swipe") but had no gesture
@@ -3221,7 +3282,6 @@ document.getElementById('notifModal').addEventListener('click', (event) => {
 (() => {
   const grip = document.getElementById('notifSheetGrip');
   const sheet = grip.closest('.ca-sheet');
-  const modal = document.getElementById('notifModal');
   let startY = null;
   grip.addEventListener('touchstart', (e) => {
     startY = e.touches[0].clientY;
@@ -3238,7 +3298,7 @@ document.getElementById('notifModal').addEventListener('click', (event) => {
     sheet.style.transition = '';
     sheet.style.transform = '';
     startY = null;
-    if (dy > 80) modal.hidden = true;
+    if (dy > 80) closeNotifModal();
   });
 })();
 document.getElementById('notifMarkAllReadBtn').addEventListener('click', async () => {
@@ -3295,7 +3355,25 @@ let swRegistration = null;
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js')
     .then(() => navigator.serviceWorker.ready)
-    .then((reg) => { swRegistration = reg; maybeRefreshPushToken(); })
+    .then((reg) => {
+      swRegistration = reg;
+      maybeRefreshPushToken();
+      // The browser only checks sw.js for changes when register() runs
+      // (i.e. on a page load) -- an installed PWA left resident in the
+      // background (never force-closed, never reloaded) can keep an old
+      // service worker instance active indefinitely, still receiving
+      // push events under stale logic. Reported: an occasional generic
+      // "tap to open URL" Chrome fallback notification alongside the
+      // app's own styled ones -- sw.js's own push handler already always
+      // calls showNotification() synchronously (see its comment on why
+      // that fallback fires at all), so the deployed code is not the
+      // gap; a stale worker instance on a given device is. Proactively
+      // re-check for an update whenever the app is foregrounded, rather
+      // than only at the last full page load.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      });
+    })
     .catch((err) => console.error('[choresapp] service worker registration failed:', err));
 }
 
@@ -3648,6 +3726,16 @@ function subscribeWeekScopedCollections(familyId) {
     (snap) => {
       state.choreLog = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       renderCurrentTab();
+      // The notification tray's Approve/Send back buttons (renderNotifModalBody)
+      // read state.choreLog too, but only the *notifications* listener used to
+      // trigger a re-render while the tray was open. Firestore gives no
+      // ordering guarantee between separate collections' listeners, so a
+      // chore_marked_done notification could arrive and render before this
+      // choreLog update landed -- the entry lookup would fail, the buttons
+      // would silently never appear, and nothing here ever told the tray to
+      // try again once choreLog did catch up. Reported directly: "the fix
+      // to allow an admin to approve or reject... did not work."
+      if (!document.getElementById('notifModal').hidden) renderNotifModalBody();
     }
   );
   const unsubSwaps = onSnapshot(
@@ -6212,7 +6300,9 @@ function openAdjustMoneyModal(child) {
   overlay.appendChild(cardWrap);
   document.body.appendChild(overlay);
 
-  const closeModal = () => overlay.remove();
+  const rawClose = () => overlay.remove();
+  const dismissModal = pushModalHistory(rawClose);
+  const closeModal = () => { rawClose(); dismissModal(); };
   overlay.addEventListener('click', (event) => { if (event.target === overlay) closeModal(); });
 
   let step = 'form'; // 'form' | 'success'
@@ -6523,7 +6613,9 @@ function openPayoutApprovalModal() {
   overlay.appendChild(cardWrap);
   document.body.appendChild(overlay);
 
-  const closeModal = () => overlay.remove();
+  const rawClose = () => overlay.remove();
+  const dismissModal = pushModalHistory(rawClose);
+  const closeModal = () => { rawClose(); dismissModal(); };
   overlay.addEventListener('click', (event) => { if (event.target === overlay) closeModal(); });
 
   let busy = false;
