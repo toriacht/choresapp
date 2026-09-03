@@ -956,7 +956,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.03.9';
+const APP_VERSION = '26.09.03.10';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -7717,9 +7717,17 @@ function renderChoreForm({ presetChildUid = null } = {}) {
   updateSubmitEnabled();
 
   form.appendChild(el('label', {}, 'Add a chore'));
+  // Reported: this read as if the dropdown below was the only/required
+  // way to add a chore -- "add a chore from library" plus a few more
+  // "library" options, with no visible option to type a new one. The
+  // freehand chore-name field always worked (nameInput below is never
+  // disabled or gated by this select), but nothing distinguished it as
+  // its own primary field separate from the dropdown sitting right
+  // above it. Reworded the dropdown's own placeholder to read as
+  // clearly optional, and gave the name field its own label.
   if (state.choreTemplates.filter((t) => t.active !== false).length > 0) {
     const templateSelect = el('select', {});
-    templateSelect.appendChild(el('option', { value: '' }, 'Quick-pick from library…'));
+    templateSelect.appendChild(el('option', { value: '' }, 'Or fill in from a saved template…'));
     state.choreTemplates.filter((t) => t.active !== false).forEach((t) => {
       templateSelect.appendChild(el('option', { value: t.id }, t.name));
     });
@@ -7733,6 +7741,7 @@ function renderChoreForm({ presetChildUid = null } = {}) {
     });
     form.appendChild(attachCustomSelect(templateSelect));
   }
+  form.appendChild(el('label', {}, 'Chore name'));
   form.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:flex-start;' }, [attachCustomSelect(iconInput), nameInput]));
   form.appendChild(descInput);
   const dailyRequirementRow = el('label', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:10px;cursor:pointer;' }, [
