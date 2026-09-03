@@ -956,7 +956,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.03.6';
+const APP_VERSION = '26.09.03.7';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -3437,7 +3437,19 @@ if ('serviceWorker' in navigator) {
       // re-check for an update whenever the app is foregrounded, rather
       // than only at the last full page load.
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+        if (document.visibilityState !== 'visible') return;
+        reg.update().catch(() => {});
+        // Same "resident PWA never re-runs onAuthStateChanged" gap as the
+        // SW update above, but for mirrorAdminCredentialForBackgroundActions
+        // (see its own comment): that only ever ran on an actual sign-in
+        // TRANSITION. An admin's PWA left open/resident since before this
+        // feature existed would get the new service-worker code (SW
+        // updates activate independent of a page reload) but never
+        // actually mirror a credential -- every notification-action tap
+        // would then correctly fail closed and fall back to opening the
+        // app, looking exactly like "the button doesn't work." Refresh it
+        // opportunistically on every foreground too, not just on sign-in.
+        if (state.role === 'admin') mirrorAdminCredentialForBackgroundActions();
       });
     })
     .catch((err) => console.error('[choresapp] service worker registration failed:', err));
