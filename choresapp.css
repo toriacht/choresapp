@@ -130,6 +130,13 @@
   content:"";position:absolute;width:16px;height:16px;border-radius:50%;
   border:2px solid rgba(255,255,255,.4);border-top-color:#fff;animation:ca-spin .7s linear infinite}
 @keyframes ca-spin{to{transform:rotate(360deg)}}
+/* Standalone version of the same spin, for a full-size loading indicator
+   that isn't overlaying a button's own (hidden) label -- e.g. the kid PIN
+   step's "Signing in..." state, where a static text line alone doesn't
+   read as "actively working" through a multi-second wait. */
+.ca-spinner{width:22px;height:22px;border-radius:50%;margin:0 auto;
+  border:3px solid var(--ca-wash);border-top-color:var(--ca-green-700);
+  animation:ca-spin .7s linear infinite}
 
 .ca-btn-row{display:flex;gap:var(--ca-space-2)}
 .ca-btn-row>.ca-btn{flex:1}

@@ -690,6 +690,7 @@
         </div>
         <p class="ca-error" id="kidPinError" hidden style="text-align:center;"></p>
         <p class="ca-meta" id="kidPinAttemptsNote" hidden style="text-align:center;"></p>
+        <div id="kidPinSpinner" class="ca-spinner" hidden style="margin-bottom:var(--ca-space-2);"></div>
         <p class="ca-meta" id="kidPinSigningIn" hidden style="text-align:center;">Signing in…</p>
         <div class="ca-keypad" id="kidKeypad" style="margin-top:var(--ca-space-4);">
           <button type="button" class="ca-key" data-digit="1">1</button><button type="button" class="ca-key" data-digit="2">2</button><button type="button" class="ca-key" data-digit="3">3</button>
@@ -955,7 +956,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.03.2';
+const APP_VERSION = '26.09.03.3';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -2611,6 +2612,7 @@ document.getElementById('kidUsernameStep').addEventListener('submit', async (eve
   document.getElementById('kidPinError').hidden = true;
   document.getElementById('kidPinAttemptsNote').hidden = true;
   document.getElementById('kidPinSigningIn').hidden = true;
+  document.getElementById('kidPinSpinner').hidden = true;
   showKidStep('kidPinStep');
 });
 document.getElementById('kidPinBackBtn').addEventListener('click', () => showKidStep('kidUsernameStep'));
@@ -2666,15 +2668,22 @@ async function submitKidPin() {
   const errorEl = document.getElementById('kidPinError');
   const attemptsEl = document.getElementById('kidPinAttemptsNote');
   const signingInEl = document.getElementById('kidPinSigningIn');
+  const spinnerEl = document.getElementById('kidPinSpinner');
   // Reported: entering the 4th digit "hangs" for about a second -- there
   // was no visual feedback at all during the signInWithPin round trip
   // (auth lookup + Firestore reads/writes, occasionally a Cloud Functions
   // cold start), so a real-but-brief wait read as a frozen app. This
   // doesn't make the call itself faster, just visible while it runs.
+  // Brian: cold starts are cold starts, nothing to be done about the
+  // delay itself -- but the static "Signing in..." text alone didn't
+  // read as "actively working" through a multi-second wait, so an
+  // actual animated spinner (.ca-spinner, reusing the same ca-spin
+  // keyframe as .ca-btn--loading) now sits above it.
   const keypadButtons = document.querySelectorAll('#kidKeypad .ca-key[data-digit], #kidPinBackspaceBtn');
   errorEl.hidden = true;
   attemptsEl.hidden = true;
   signingInEl.hidden = false;
+  spinnerEl.hidden = false;
   keypadButtons.forEach((btn) => { btn.disabled = true; });
   const pin = kidPinDigits.join('');
   try {
@@ -2706,6 +2715,7 @@ async function submitKidPin() {
     errorEl.hidden = false;
   } finally {
     signingInEl.hidden = true;
+    spinnerEl.hidden = true;
     keypadButtons.forEach((btn) => { btn.disabled = false; });
   }
 }
