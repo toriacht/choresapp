@@ -956,7 +956,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.03.10';
+const APP_VERSION = '26.09.03.11';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -7355,15 +7355,16 @@ function renderManageChores() {
   renderActiveChores(container);
 }
 
-// Shared by renderChoreForm (creation) and renderActiveChores' post-
-// creation edit block (ADR-0029) -- renders into `wrap` (cleared first)
-// based on `mode`: a single <select> for 'fixed', preset via
-// `checkedUids`'s one member; checkboxes for everyone else, defaulting to
-// checked for whoever's in `checkedUids`. Deliberately scoped by `wrap`
-// rather than a shared DOM id (`getElementById('assigneeSingle')` used to
-// be the read path here, but that only ever finds the FIRST match once
-// renderActiveChores can render one of these per chore card) -- see
-// readPoolControl below for the matching scoped read.
+// Still used by the setup/add wizard's own per-chore assignment editing
+// (Manage Chores' own add/edit flow now uses openChoreSheet's own chip
+// row instead, not this) -- renders into `wrap` (cleared first) based on
+// `mode`: a single <select> for 'fixed', preset via `checkedUids`'s one
+// member; checkboxes for everyone else, defaulting to checked for
+// whoever's in `checkedUids`. Deliberately scoped by `wrap` rather than a
+// shared DOM id (`getElementById('assigneeSingle')` used to be the read
+// path here, but that only ever finds the FIRST match once more than one
+// of these can render at once) -- see readPoolControl below for the
+// matching scoped read.
 function renderPoolControl(wrap, mode, checkedUids) {
   wrap.innerHTML = '';
   const children = state.members.filter((m) => m.role === 'child');
@@ -7384,10 +7385,10 @@ function renderPoolControl(wrap, mode, checkedUids) {
 // See ADR-0030: daily tasks are always personal (or "apply to all" -- i.e.
 // eachMember), never round-robin -- confirmed directly with the app owner.
 // Hides/disables the 'rotating' <option> whenever category is 'dailyTask',
-// resetting off it if it was already selected. `categorySelect` may be a
-// live <select> (renderChoreForm, where category is still editable) or a
-// plain string (renderEditAssignmentBody, where it's fixed to the chore's
-// own stored category).
+// resetting off it if it was already selected. Still used by the setup/
+// add wizard's own per-chore editing (Manage Chores' own add/edit flow,
+// openChoreSheet, doesn't use this at all -- category is fixed for that
+// sheet's whole lifetime, so there's no live category select to react to).
 function updateModeOptionsForCategory(modeSelect, categorySelect) {
   const rotatingOption = modeSelect.querySelector('option[value=rotating]');
   if (!rotatingOption) return;
@@ -7622,197 +7623,384 @@ function renderScheduleControl({ initial, sizeWeight, onChange }) {
   };
 }
 
-// Builds the "Add a chore" form -- shared by Manage Chores (no args, pool
-// defaults to every child) and the Kids tab (presetChildUid: defaults the
-// pool to just that one child, with an explicit "apply to every kid too"
-// override, since a chore added from a specific child's panel usually means
-// "for them" but should still be one tap away from "for everyone").
-function renderChoreForm({ presetChildUid = null } = {}) {
-  const form = el('form', { class: 'booking-card' });
-  const nameInput = el('input', { type: 'text', placeholder: 'Chore name', required: true });
-  const iconInput = renderIconPicker();
-  const descInput = el('input', { type: 'text', placeholder: 'Description (optional)' });
-  const categorySelect = el('select', {}, [
-    el('option', { value: 'chore' }, 'Chore'),
-    el('option', { value: 'dailyTask' }, 'Basic'),
-  ]);
-  const modeSelect = el('select', {}, [
-    el('option', { value: 'fixed' }, 'One specific person'),
-    el('option', { value: 'rotating' }, 'Rotates fairly among a group'),
-    el('option', { value: 'sharedAny' }, 'Shared -- any one of a group'),
-    el('option', { value: 'eachMember' }, 'Everyone does their own'),
-  ]);
-  const sizeSelect = el('select', {}, [
-    el('option', { value: 'small' }, 'Small'),
-    el('option', { value: 'medium', selected: 'selected' }, 'Medium'),
-    el('option', { value: 'large' }, 'Large'),
-  ]);
-  // ADR-0057: one control for the whole schedule -- see renderScheduleControl.
-  const scheduleControl = renderScheduleControl({
-    initial: { frequency: 'custom' }, sizeWeight: SIZE_WEIGHTS[sizeSelect.value],
-    onChange: () => updateSubmitEnabled(),
-  });
-  sizeSelect.addEventListener('change', () => scheduleControl.refreshPreview(SIZE_WEIGHTS[sizeSelect.value]));
-  // One-tap default-setter for the common case (category/frequency/mode are
-  // otherwise three separate abstract choices a parent has to correctly
-  // combine to get a working daily requirement, e.g. "make your bed"). Left
-  // unhidden underneath so an admin who wants something unusual can still
-  // override any one select -- this is a convenience, not a parallel code
-  // path or a new field.
-  const dailyRequirementCb = el('input', { type: 'checkbox' });
-
-  const poolWrap = el('div', {});
-  let applyToAllCb = null;
-  function renderAssigneeControl() {
-    const children = state.members.filter((m) => m.role === 'child');
-    let checkedUids;
-    if (modeSelect.value === 'fixed') {
-      checkedUids = new Set([presetChildUid || (children[0] && children[0].uid)]);
-    } else {
-      const applyToAll = !presetChildUid || (applyToAllCb && applyToAllCb.checked);
-      checkedUids = new Set(applyToAll ? children.map((m) => m.uid) : [presetChildUid]);
-    }
-    renderPoolControl(poolWrap, modeSelect.value, checkedUids);
-    updateSubmitEnabled();
+// Short one-line summary of a schedule value for the collapsed "How often"
+// row on openChoreSheet -- renderScheduleControl's own previewEl shows the
+// fuller "next few dates" version, meant for INSIDE the frequency sheet.
+function summarizeSchedule(value) {
+  if (!value || !value.frequency) return 'Pick a schedule';
+  if (value.frequency === 'daily') return 'Every day';
+  if (value.frequency === 'custom') {
+    const days = value.scheduledDays || [];
+    if (days.length === 0) return 'Pick days';
+    if (days.length === 7) return 'Every day';
+    const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return days.slice().sort().map((d) => dayNames[d]).join(', ');
   }
-  modeSelect.addEventListener('change', () => { renderAssigneeControl(); });
-  categorySelect.addEventListener('change', () => {
-    updateModeOptionsForCategory(modeSelect, categorySelect);
-    renderAssigneeControl();
-  });
+  if (value.frequency === 'timesPerWeek') return `${value.timesPerWeekCount || 2}x a week`;
+  if (value.frequency === 'everyNDays') return `Every ${value.everyNDaysCount || 2} days`;
+  if (value.frequency === 'occasional') return 'Now and then';
+  if (value.frequency === 'once') return 'Just once';
+  return 'Pick a schedule';
+}
 
-  dailyRequirementCb.addEventListener('change', () => {
-    if (dailyRequirementCb.checked) {
-      categorySelect.value = 'dailyTask';
-      scheduleControl.setFrequency('daily');
-      modeSelect.value = 'eachMember';
-    }
-    updateModeOptionsForCategory(modeSelect, categorySelect);
-    renderAssigneeControl();
-  });
+// The "How often" sub-sheet (mockups/rebrand/choresapp-add-chore-spec.html)
+// -- wraps the existing renderScheduleControl (ADR-0057, already the single
+// source of truth for all 6 frequency modes and their "next few dates"
+// preview) in its own sheet rather than inline in the main form, per the
+// spec's own reasoning: room for a real label per option, and a preview
+// that stops "a few times a week" being confused with "certain days".
+// onDone only fires if the control is valid; tapping outside/back leaves
+// the caller's own draft value untouched.
+function openChoreFrequencySheet({ initial, sizeWeight, onDone }) {
+  const overlay = el('div', { class: 'modal-overlay', style: 'align-items:flex-end;padding:0;' });
+  const sheetCard = el('div', { class: 'ca-sheet', style: 'width:100%;max-width:480px;margin:0 auto;' });
+  overlay.appendChild(sheetCard);
+  document.body.appendChild(overlay);
 
-  if (presetChildUid) {
-    applyToAllCb = el('input', { type: 'checkbox' });
-    applyToAllCb.addEventListener('change', renderAssigneeControl);
-  }
+  const rawClose = () => overlay.remove();
+  const dismissModal = pushModalHistory(rawClose);
+  const closeSheet = () => { rawClose(); dismissModal(); };
+  overlay.addEventListener('click', (event) => { if (event.target === overlay) closeSheet(); });
 
-  // See ADR-0038: disabled until it can actually succeed -- a name and a
-  // non-empty pool, both already visible on screen, plus at least one day
-  // picked when frequency:'custom' is selected -- instead of a click-time
-  // showAppAlert/silent no-op for conditions already knowable up front.
-  // poolWrap's own children get fully rebuilt by renderAssigneeControl
-  // (mode/category changes), so this reads it fresh each call rather than
-  // caching a reference to any one checkbox/select.
-  const submitBtn = el('button', { class: 'pill primary', type: 'submit' }, 'Add chore');
-  function updateSubmitEnabled() {
-    const pool = readPoolControl(poolWrap, modeSelect.value);
-    const hasPool = pool.length > 0 && pool[0];
-    submitBtn.disabled = !nameInput.value.trim() || !hasPool || !scheduleControl.isValid();
-  }
-  nameInput.addEventListener('input', updateSubmitEnabled);
-  poolWrap.addEventListener('change', updateSubmitEnabled);
+  sheetCard.appendChild(el('div', { class: 'ca-sheet__grip' }));
+  sheetCard.appendChild(el('p', { class: 'ca-title', style: 'margin:0 0 var(--ca-space-3);' }, 'How often'));
+  const scheduleControl = renderScheduleControl({ initial, sizeWeight });
+  sheetCard.appendChild(scheduleControl.el);
+  sheetCard.appendChild(el('button', {
+    type: 'button', class: 'ca-btn ca-btn--block', style: 'margin-top:var(--ca-space-4);',
+    onclick: () => {
+      if (!scheduleControl.isValid()) return;
+      onDone(scheduleControl.getValue());
+      closeSheet();
+    },
+  }, 'Done'));
+}
 
-  updateModeOptionsForCategory(modeSelect, categorySelect);
-  renderAssigneeControl();
-  updateSubmitEnabled();
+// ---------------------------------------------------------------------
+// Add/Edit chore sheet (mockups/rebrand/choresapp-add-chore-spec.html,
+// "Design note 5") -- replaces the old renderChoreForm (creation) AND the
+// ADR-0029/0041 inline "Edit schedule"/"Edit assignment" expandables
+// (editing) with one sheet: same look and feel for both, no multi-line
+// form, no inline expandable editors.
+//
+// Chores and basics (dailyTask) are different objects -- a basic has no
+// size, no schedule, nobody assigned (ADR-0030: always eachMember, every
+// active child) -- so `category` is fixed for the sheet's whole lifetime,
+// chosen by which button opened it (add) or the chore's own stored
+// category (edit; switching categories still means deactivating one and
+// adding the other, same as before this change).
+//
+// "Who does it" deliberately collapses the app's two previously-separate
+// concepts -- the assignment pool and ADR-0041's "who can do it"
+// eligibility -- into one chip row, matching the spec's own mental model:
+// "in fair rotation the label IS 'who can do it', with everyone
+// pre-selected -- it's an exclusion list, not an assignment." This covers
+// 'fixed' (exactly one child picked) and 'rotating' (2+ picked, "Take
+// turns") without a separate eligibility step. The spec's own mockup only
+// shows a two/three-child "Tom | Sam | Take turns" example -- it doesn't
+// show 'sharedAny'/'eachMember' as chips at all, but those are real modes
+// existing chores already use, so a second chip row (only shown once 2+
+// people are picked) extends the mockup rather than silently dropping
+// "Anyone"/"Each of you" as options.
+function openChoreSheet({ mode, category, existingChore = null }) {
+  const isEdit = mode === 'edit';
+  const isBasic = category === 'dailyTask';
+  const activeUids = activeChildUids();
 
-  form.appendChild(el('label', {}, 'Add a chore'));
-  // Reported: this read as if the dropdown below was the only/required
-  // way to add a chore -- "add a chore from library" plus a few more
-  // "library" options, with no visible option to type a new one. The
-  // freehand chore-name field always worked (nameInput below is never
-  // disabled or gated by this select), but nothing distinguished it as
-  // its own primary field separate from the dropdown sitting right
-  // above it. Reworded the dropdown's own placeholder to read as
-  // clearly optional, and gave the name field its own label.
-  if (state.choreTemplates.filter((t) => t.active !== false).length > 0) {
-    const templateSelect = el('select', {});
-    templateSelect.appendChild(el('option', { value: '' }, 'Or fill in from a saved template…'));
-    state.choreTemplates.filter((t) => t.active !== false).forEach((t) => {
-      templateSelect.appendChild(el('option', { value: t.id }, t.name));
-    });
-    templateSelect.addEventListener('change', () => {
-      const t = state.choreTemplates.find((tt) => tt.id === templateSelect.value);
-      if (t) {
-        nameInput.value = t.name;
-        descInput.value = t.description || '';
-        iconInput.value = resolveIconPickerValue(t.icon);
+  const overlay = el('div', { class: 'modal-overlay', style: 'align-items:flex-end;padding:0;' });
+  const sheetCard = el('div', { class: 'ca-sheet', style: 'width:100%;max-width:480px;max-height:88vh;overflow-y:auto;margin:0 auto;' });
+  overlay.appendChild(sheetCard);
+  document.body.appendChild(overlay);
+
+  const rawClose = () => overlay.remove();
+  const dismissModal = pushModalHistory(rawClose);
+  const closeSheet = () => { rawClose(); dismissModal(); };
+  overlay.addEventListener('click', (event) => { if (event.target === overlay) closeSheet(); });
+
+  // ---- draft state ----
+  const existingMode = existingChore ? resolveAssignmentMode(existingChore) : null;
+  const existingPool = existingChore ? resolvePool(existingChore, activeUids) : [];
+  const defaultIcon = existingChore ? resolveIconPickerValue(existingChore.icon) : null;
+  const draft = {
+    name: existingChore ? existingChore.name : '',
+    iconOverride: defaultIcon,
+    note: existingChore ? (existingChore.description || '') : '',
+    size: existingChore ? resolveSize(existingChore) : 'medium',
+    schedule: existingChore
+      ? {
+        frequency: existingChore.frequency, scheduledDays: existingChore.scheduledDays,
+        timesPerWeekCount: existingChore.timesPerWeekCount, everyNDaysCount: existingChore.everyNDaysCount,
+        scheduleAnchorDateId: existingChore.scheduleAnchorDateId, bonusCents: existingChore.bonusCents,
       }
+      : { frequency: 'custom', scheduledDays: [] },
+    // Only matters once 2+ children are picked: 'rotating' | 'sharedAny' | 'eachMember'.
+    shareMode: existingMode === 'sharedAny' || existingMode === 'eachMember' ? existingMode : 'rotating',
+    pool: new Set(isBasic ? activeUids : (existingChore ? existingPool : (activeUids.length === 1 ? activeUids : []))),
+  };
+  let moreOpen = isEdit && (draft.size !== 'medium' || (defaultIcon && defaultIcon !== inferChoreIcon(draft.name)) || !!draft.note);
+
+  sheetCard.appendChild(el('div', { class: 'ca-sheet__grip' }));
+  const headerRow = el('div', { class: 'ca-row', style: 'margin-bottom:var(--ca-space-3);align-items:center;' });
+  headerRow.appendChild(el('p', { class: 'ca-title', style: 'flex:1;margin:0;' },
+    `${isEdit ? 'Edit' : 'Add'} a ${isBasic ? 'basic' : 'chore'}`));
+  sheetCard.appendChild(headerRow);
+
+  // "From library" -- a link, not a dropdown pretending to be the first
+  // field (spec: "putting it in a dropdown labelled 'Or...' as the first
+  // field inverts the relationship"). Same state.choreTemplates data the
+  // old dropdown used, revealed on tap instead of always-visible.
+  const activeTemplates = state.choreTemplates.filter((t) => t.active !== false);
+  const templateListWrap = el('div', { hidden: true, style: 'margin-bottom:var(--ca-space-2);' });
+  let templateListOpen = false;
+  function renderTemplateList() {
+    templateListWrap.innerHTML = '';
+    activeTemplates.forEach((t) => {
+      templateListWrap.appendChild(el('button', {
+        type: 'button', class: 'pill small', style: 'margin:0 6px 6px 0;',
+        onclick: () => {
+          draft.name = t.name; nameInput.value = t.name;
+          draft.note = t.description || '';
+          draft.iconOverride = resolveIconPickerValue(t.icon);
+          templateListOpen = false; templateListWrap.hidden = true;
+          refreshNameIcon(); refreshMoreOptions(); refreshDuplicateCheck();
+        },
+      }, t.name));
     });
-    form.appendChild(attachCustomSelect(templateSelect));
   }
-  form.appendChild(el('label', {}, 'Chore name'));
-  form.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:flex-start;' }, [attachCustomSelect(iconInput), nameInput]));
-  form.appendChild(descInput);
-  const dailyRequirementRow = el('label', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:10px;cursor:pointer;' }, [
-    dailyRequirementCb, el('span', {}, 'This is a daily requirement (e.g. make your bed)'),
-  ]);
-  form.appendChild(dailyRequirementRow);
-  form.appendChild(el('label', {}, 'Category'));
-  form.appendChild(attachCustomSelect(categorySelect));
-  form.appendChild(el('label', {}, 'Who does it'));
-  form.appendChild(attachCustomSelect(modeSelect));
-  form.appendChild(poolWrap);
-  if (applyToAllCb) {
-    form.appendChild(el('label', { style: 'display:flex;align-items:center;gap:6px;margin:-2px 0 10px;cursor:pointer;' }, [
-      applyToAllCb, el('span', {}, 'Apply to every kid too'),
+  if (!isEdit && !isBasic && activeTemplates.length > 0) {
+    headerRow.appendChild(el('button', {
+      type: 'button', class: 'ca-link', style: 'font-size:var(--ca-text-sm);font-weight:600;',
+      onclick: () => {
+        templateListOpen = !templateListOpen;
+        templateListWrap.hidden = !templateListOpen;
+        if (templateListOpen) renderTemplateList();
+      },
+    }, 'From library'));
+  }
+  sheetCard.appendChild(templateListWrap);
+
+  // ---- What needs doing ----
+  sheetCard.appendChild(el('p', { class: 'ca-meta', style: 'margin:0 0 4px;' }, 'What needs doing'));
+  const nameIconSlot = el('div', {
+    style: 'width:28px;height:28px;border-radius:7px;background:var(--ca-wash);color:var(--ca-green-700);'
+      + 'display:flex;align-items:center;justify-content:center;flex-shrink:0;',
+  });
+  const nameInput = el('input', {
+    type: 'text', class: 'ca-input', style: 'flex:1;margin:0;',
+    placeholder: isBasic ? 'e.g. Make your bed' : 'e.g. Take out the bins', value: draft.name,
+  });
+  const dupWarning = el('div', { hidden: true, class: 'ca-card', style: 'background:var(--ca-wash);margin:var(--ca-space-2) 0 0;' });
+  function refreshNameIcon() {
+    const iconKey = draft.iconOverride || inferChoreIcon(nameInput.value);
+    nameIconSlot.innerHTML = '';
+    nameIconSlot.appendChild(svgIcon(iconKey, { size: 15, color: 'var(--ca-green-700)' }));
+  }
+  function refreshDuplicateCheck() {
+    const pool = isBasic ? activeUids : [...draft.pool];
+    const dup = findDuplicateChoreForPool(nameInput.value, category, pool, existingChore ? existingChore.id : undefined);
+    dupWarning.innerHTML = '';
+    if (dup) {
+      dupWarning.hidden = false;
+      dupWarning.appendChild(el('p', { class: 'ca-title', style: 'font-size:var(--ca-text-sm);color:var(--amber,#8A6100);margin:0;' }, 'You already have this one'));
+      dupWarning.appendChild(el('p', { class: 'ca-meta', style: 'margin:2px 0 0;' }, `"${dup.name}" already exists for one of these children -- edit that one instead.`));
+    } else {
+      dupWarning.hidden = true;
+    }
+    refreshSubmitState();
+  }
+  nameInput.addEventListener('input', () => { draft.name = nameInput.value; refreshNameIcon(); refreshDuplicateCheck(); });
+  sheetCard.appendChild(el('div', { class: 'ca-row', style: 'gap:var(--ca-space-2);align-items:center;' }, [nameIconSlot, nameInput]));
+  sheetCard.appendChild(dupWarning);
+
+  // ---- Basic: a single info line, nothing else (spec: "no size, no
+  // schedule, no assignment -- a basic is daily and applies to everyone
+  // by definition") ----
+  if (isBasic) {
+    sheetCard.appendChild(el('div', {
+      class: 'ca-card', style: 'background:var(--ca-wash);margin-top:var(--ca-space-3);display:flex;gap:var(--ca-space-2);align-items:flex-start;',
+    }, [
+      svgIcon('flame', { size: 16, color: 'var(--ca-green-700)' }),
+      el('span', { style: 'font-size:var(--ca-text-sm);color:var(--ca-ink-3);' },
+        `Every day, for ${activeUids.map(memberLabel).join(' and ')}. Basics earn the bonus, not the allowance.`),
     ]));
   }
-  form.appendChild(el('label', {}, 'How often'));
-  form.appendChild(scheduleControl.el);
-  form.appendChild(el('label', {}, 'Size'));
-  form.appendChild(attachCustomSelect(sizeSelect));
-  form.appendChild(el('div', { class: 'muted', style: 'margin:-4px 0 10px;font-size:0.78rem;' },
-    'Bigger chores count for more -- both when we balance whose turn it is, and toward how much of the allowance they earn.'));
-  form.appendChild(submitBtn);
 
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const { addDoc, collection: fsCollection, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-    const mode = modeSelect.value;
-    let assignedTo, rotation;
-    if (mode === 'fixed') {
-      assignedTo = readPoolControl(poolWrap, mode);
-    } else {
-      const checked = readPoolControl(poolWrap, mode);
-      assignedTo = checked;
-      if (mode === 'rotating') {
-        const weekId = getIsoWeekId(new Date(), resolveFamilyPayoutDayOfWeek());
-        const first = checked[0];
-        const history = {};
-        checked.forEach((uid) => { history[uid] = { timesAssigned: uid === first ? 1 : 0, lastAssignedWeekId: uid === first ? weekId : null }; });
-        rotation = { pool: checked, history, currentAssigneeUid: first || null, currentAssigneeWeekId: first ? weekId : null };
-      }
-    }
-    const dup = findDuplicateChoreForPool(nameInput.value, categorySelect.value, assignedTo);
-    if (dup) {
-      showAppAlert(`"${dup.name}" already exists for ${dup.category === 'dailyTask' ? 'this' : 'one of these'} child(ren) -- edit that one instead of adding a second copy.`, { title: 'Already exists' });
-      return;
-    }
+  // ---- How often (chore only) ----
+  let howOftenLabel = null;
+  if (!isBasic) {
+    sheetCard.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'How often'));
+    howOftenLabel = el('span', {}, summarizeSchedule(draft.schedule));
+    sheetCard.appendChild(el('button', {
+      type: 'button', class: 'ca-card', style: 'width:100%;text-align:left;display:flex;align-items:center;justify-content:space-between;',
+      onclick: () => {
+        openChoreFrequencySheet({
+          initial: draft.schedule, sizeWeight: SIZE_WEIGHTS[draft.size],
+          onDone: (value) => { draft.schedule = value; howOftenLabel.textContent = summarizeSchedule(draft.schedule); refreshSubmitState(); },
+        });
+      },
+    }, [howOftenLabel, el('span', { style: 'color:var(--ca-ink-4);' }, '›')]));
+  }
 
-    await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
-      name: nameInput.value.trim(),
-      icon: iconInput.value.trim() || null,
-      description: descInput.value.trim(),
-      category: categorySelect.value,
-      assignmentMode: mode,
-      assignedTo,
-      ...(rotation ? { rotation } : {}),
-      ...scheduleControl.getValue(),
-      size: sizeSelect.value,
-      active: true,
-      createdBy: state.user.uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+  // ---- Who does it (chore only, skipped entirely for a single child) ----
+  let whoWrap = null;
+  if (!isBasic && activeUids.length > 1) {
+    sheetCard.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'Who does it'));
+    whoWrap = el('div', {});
+    sheetCard.appendChild(whoWrap);
+  }
+  function refreshWho() {
+    if (!whoWrap) return;
+    whoWrap.innerHTML = '';
+    const peopleChips = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;' });
+    activeUids.forEach((uid) => {
+      const on = draft.pool.has(uid);
+      peopleChips.appendChild(el('button', {
+        type: 'button', class: `pill small${on ? ' primary' : ''}`,
+        onclick: () => {
+          if (on) draft.pool.delete(uid); else draft.pool.add(uid);
+          refreshWho(); refreshDuplicateCheck(); refreshSubmitState();
+        },
+      }, memberLabel(uid)));
     });
-    nameInput.value = ''; iconInput.value = ''; descInput.value = '';
-    categorySelect.value = 'chore'; modeSelect.value = 'fixed'; dailyRequirementCb.checked = false;
-    sizeSelect.value = 'medium'; scheduleControl.reset(); scheduleControl.refreshPreview(SIZE_WEIGHTS.medium);
-    if (applyToAllCb) applyToAllCb.checked = false;
-    updateModeOptionsForCategory(modeSelect, categorySelect);
-    renderAssigneeControl();
+    whoWrap.appendChild(peopleChips);
+    if (draft.pool.size > 1) {
+      const shareChips = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' });
+      [['rotating', 'Take turns'], ['sharedAny', 'Anyone'], ['eachMember', 'Each of you']].forEach(([value, label]) => {
+        shareChips.appendChild(el('button', {
+          type: 'button', class: `pill small${draft.shareMode === value ? ' primary' : ''}`,
+          onclick: () => { draft.shareMode = value; refreshWho(); },
+        }, label));
+      });
+      whoWrap.appendChild(shareChips);
+    }
+  }
+  refreshWho();
+
+  // ---- More options (chore only) ----
+  let moreWrap = null;
+  let moreToggleBtn = null;
+  if (!isBasic) {
+    moreToggleBtn = el('button', { type: 'button', class: 'ca-btn ca-btn--secondary ca-btn--block', style: 'margin-top:var(--ca-space-3);' });
+    moreWrap = el('div', {});
+    sheetCard.appendChild(moreToggleBtn);
+    sheetCard.appendChild(moreWrap);
+  }
+  function refreshMoreOptions() {
+    if (!moreWrap) return;
+    moreToggleBtn.textContent = moreOpen ? 'Fewer options' : 'More options';
+    moreWrap.innerHTML = '';
+    moreWrap.hidden = !moreOpen;
+    if (!moreOpen) return;
+
+    moreWrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'Size'));
+    const sizeSeg = el('div', { class: 'ca-seg' });
+    ['small', 'medium', 'large'].forEach((s) => {
+      sizeSeg.appendChild(el('button', {
+        type: 'button', 'aria-selected': draft.size === s ? 'true' : 'false',
+        onclick: () => { draft.size = s; refreshMoreOptions(); },
+      }, SIZE_LABELS[s]));
+    });
+    moreWrap.appendChild(sizeSeg);
+    moreWrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:4px 0 0;' },
+      'Bigger chores count for more — both when we balance whose turn it is, and toward how much of the allowance they earn.'));
+
+    moreWrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'Icon'));
+    const iconChips = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' });
+    const currentIcon = draft.iconOverride || inferChoreIcon(draft.name);
+    CHORE_ICON_CHOICES.forEach((c) => {
+      iconChips.appendChild(el('button', {
+        type: 'button', class: `pill small${currentIcon === c.key ? ' primary' : ''}`, style: 'display:flex;align-items:center;gap:4px;',
+        onclick: () => { draft.iconOverride = c.key; refreshMoreOptions(); refreshNameIcon(); },
+      }, [svgIcon(c.key, { size: 14 }), c.label]));
+    });
+    moreWrap.appendChild(iconChips);
+
+    moreWrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'Note for the kids'));
+    const noteInput = el('input', { type: 'text', class: 'ca-input', placeholder: 'Optional', value: draft.note });
+    noteInput.addEventListener('input', () => { draft.note = noteInput.value; });
+    moreWrap.appendChild(noteInput);
+  }
+  if (moreToggleBtn) {
+    moreToggleBtn.addEventListener('click', () => { moreOpen = !moreOpen; refreshMoreOptions(); });
+  }
+  refreshMoreOptions();
+
+  // ---- Submit -- disabled state carries the reason (spec: "rather than
+  // greying out and hiding the blocker mid-form, the disabled button says
+  // what's missing and updates as each is answered") ----
+  const errorEl = el('p', { class: 'ca-error', style: 'text-align:center;margin-top:var(--ca-space-2);' });
+  errorEl.hidden = true;
+  const submitBtn = el('button', { type: 'button', class: 'ca-btn ca-btn--block', style: 'margin-top:var(--ca-space-4);' });
+  function submitReason() {
+    if (!draft.name.trim()) return 'Give it a name';
+    if (!dupWarning.hidden) return 'Already exists';
+    if (!isBasic) {
+      const s = draft.schedule;
+      if (!s || !s.frequency || (s.frequency === 'custom' && (s.scheduledDays || []).length === 0)) return 'Pick a schedule';
+      if (activeUids.length > 1 && draft.pool.size === 0) return 'Pick who does it';
+    }
+    return null;
+  }
+  function refreshSubmitState() {
+    const reason = submitReason();
+    submitBtn.disabled = !!reason;
+    submitBtn.textContent = reason || `${isEdit ? 'Save' : 'Add'} ${isBasic ? 'basic' : 'chore'}`;
+  }
+  refreshSubmitState();
+  sheetCard.appendChild(errorEl);
+  sheetCard.appendChild(submitBtn);
+
+  submitBtn.addEventListener('click', async () => {
+    errorEl.hidden = true;
+    submitBtn.disabled = true;
+    try {
+      const { addDoc, updateDoc, doc: fsDoc, collection: fsCollection, serverTimestamp, deleteField } =
+        await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
+
+      const pool = isBasic ? activeUids : [...draft.pool];
+      const newMode = isBasic ? 'eachMember' : (pool.length <= 1 ? 'fixed' : draft.shareMode);
+      const iconKey = draft.iconOverride || inferChoreIcon(draft.name);
+
+      const basePayload = {
+        name: draft.name.trim(),
+        icon: iconKey,
+        description: isBasic ? '' : draft.note.trim(),
+        size: isBasic ? 'medium' : draft.size,
+      };
+      if (!isBasic) Object.assign(basePayload, draft.schedule);
+      if (newMode === 'fixed' || newMode === 'rotating') basePayload.eligibleUids = pool;
+
+      if (isEdit) {
+        const assignmentPayload = computeAssignmentUpdatePayload(existingChore, newMode, pool);
+        if (newMode !== 'rotating' && existingMode === 'rotating') assignmentPayload.rotation = deleteField();
+        await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${existingChore.id}`), {
+          ...basePayload, ...assignmentPayload, updatedAt: serverTimestamp(),
+        });
+      } else {
+        let rotation;
+        if (newMode === 'rotating') {
+          const weekId = getIsoWeekId(new Date(), resolveFamilyPayoutDayOfWeek());
+          const first = pool[0];
+          const history = {};
+          pool.forEach((uid) => { history[uid] = { timesAssigned: uid === first ? 1 : 0, lastAssignedWeekId: uid === first ? weekId : null }; });
+          rotation = { pool, history, currentAssigneeUid: first || null, currentAssigneeWeekId: first ? weekId : null };
+        }
+        await addDoc(fsCollection(db, `families/${state.familyId}/chores`), {
+          ...basePayload,
+          category, assignmentMode: newMode, assignedTo: pool,
+          ...(rotation ? { rotation } : {}),
+          active: true, createdBy: state.user.uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        });
+      }
+      closeSheet();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    } finally {
+      submitBtn.disabled = false;
+      refreshSubmitState();
+    }
   });
-  return form;
 }
 
 // Post-creation edit UI (ADR-0029) -- size is a simple direct write;
@@ -7862,172 +8050,6 @@ function computeAssignmentUpdatePayload(chore, newMode, newAssignedTo) {
   return payload;
 }
 
-// `options.confirmRemoval`, if given, is awaited before a pool-shrinking
-// save actually commits: `async ({ chore, removedMembers, newAssignedTo }) =>
-// boolean`. Used by the "Assign chore wizard" (ADR-0030) to show a warning
-// before a single-child-scoped run drops that child out of a chore still
-// shared with others (mockups/chore-task-wizard-mockups.png, Section C.2)
-// -- plain Manage Chores editing (no options passed) has no such gate.
-function renderEditAssignmentBody(chore, options = {}) {
-  const wrap = el('div', {});
-
-  const sizeSelect = el('select', {}, [
-    el('option', { value: 'small' }, 'Small'),
-    el('option', { value: 'medium' }, 'Medium'),
-    el('option', { value: 'large' }, 'Large'),
-  ]);
-  sizeSelect.value = resolveSize(chore);
-  const saveSizeBtn = el('button', { type: 'button', class: 'pill primary small' }, 'Save');
-  saveSizeBtn.addEventListener('click', async () => {
-    saveSizeBtn.disabled = true;
-    try {
-      const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-      await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), { size: sizeSelect.value });
-    } catch (err) { showAppAlert(err.message); } finally { saveSizeBtn.disabled = false; }
-  });
-  wrap.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-bottom:14px;' }, [
-    el('label', { style: 'margin:0;' }, 'Size'), attachCustomSelect(sizeSelect), saveSizeBtn,
-  ]));
-
-  const modeSelect = el('select', {}, [
-    el('option', { value: 'fixed' }, 'One specific person'),
-    el('option', { value: 'rotating' }, 'Rotates fairly among a group'),
-    el('option', { value: 'sharedAny' }, 'Shared -- any one of a group'),
-    el('option', { value: 'eachMember' }, 'Everyone does their own'),
-  ]);
-  const currentMode = resolveAssignmentMode(chore);
-  modeSelect.value = currentMode;
-  updateModeOptionsForCategory(modeSelect, chore.category || 'chore');
-  const poolWrap = el('div', {});
-  function refreshPool() {
-    // Keep the chore's actual current pool checked while the mode select
-    // still matches what's stored; if the admin picks a DIFFERENT mode,
-    // default to everyone active (same convention as the creation form)
-    // since the old pool may not make sense under the new mode.
-    const checkedUids = modeSelect.value === currentMode
-      ? new Set(resolvePool(chore, activeChildUids()))
-      : new Set(activeChildUids());
-    renderPoolControl(poolWrap, modeSelect.value, checkedUids);
-  }
-  modeSelect.addEventListener('change', refreshPool);
-  refreshPool();
-
-  const saveAssignmentBtn = el('button', { type: 'button', class: 'pill primary small', style: 'margin-top:10px;' }, 'Save assignment');
-  const errorEl = el('p', { class: 'error-text' });
-  errorEl.hidden = true;
-  saveAssignmentBtn.addEventListener('click', async () => {
-    errorEl.hidden = true;
-    saveAssignmentBtn.disabled = true;
-    try {
-      const newMode = modeSelect.value;
-      const newAssignedTo = readPoolControl(poolWrap, newMode);
-
-      if (options.confirmRemoval) {
-        const oldPool = resolvePool(chore, activeChildUids());
-        const removedMembers = oldPool.filter((uid) => !newAssignedTo.includes(uid));
-        if (removedMembers.length > 0 && oldPool.length > 1) {
-          const proceed = await options.confirmRemoval({ chore, removedMembers, newAssignedTo, currentMode });
-          if (!proceed) { saveAssignmentBtn.disabled = false; return; }
-        }
-      }
-
-      const { updateDoc, doc: fsDoc, deleteField } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-      const wasRotating = currentMode === 'rotating';
-      const payload = computeAssignmentUpdatePayload(chore, newMode, newAssignedTo);
-
-      if (newMode !== 'rotating' && wasRotating) {
-        // Switching OUT of rotating -- rotation no longer applies.
-        payload.rotation = deleteField();
-      }
-
-      await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), payload);
-    } catch (err) {
-      errorEl.textContent = err.message;
-      errorEl.hidden = false;
-    } finally {
-      saveAssignmentBtn.disabled = false;
-    }
-  });
-
-  wrap.appendChild(el('label', { style: 'margin:0;' }, 'Who does it'));
-  wrap.appendChild(attachCustomSelect(modeSelect));
-  wrap.appendChild(poolWrap);
-  wrap.appendChild(el('div', { class: 'muted', style: 'font-size:0.75rem;margin-top:2px;' },
-    `Changes to a rotation's lineup take effect from next ${rotationDayName()}.`));
-  wrap.appendChild(errorEl);
-  wrap.appendChild(saveAssignmentBtn);
-
-  // "Who can do this" (ADR-0041) -- separate from "who does it" above:
-  // for fixed/rotating chores only (sharedAny/eachMember already mean
-  // "everyone", nothing to narrow). All in by default -- this exists to
-  // be edited in the rare case, not answered during normal setup, per
-  // mockups/rebrand/choresapp-setup-wizard-spec.html's "All in by
-  // default." Fair mode: narrows who the rotation balancer can pick.
-  // Manual mode: purely advisory here (filters nothing in this admin
-  // view, unlike the wizard's own chip row) -- editing it still updates
-  // rotation.pool immediately if the chore is rotating, so a later
-  // switch to fair mode starts from the right pool.
-  if (currentMode === 'fixed' || currentMode === 'rotating') {
-    const activeUids = activeChildUids();
-    const eligibleSet = new Set(resolveEligibleUids(chore, activeUids));
-    const eligibilityChips = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;' });
-    const eligibilityNoteEl = el('div', { class: 'muted', style: 'font-size:0.75rem;margin-bottom:4px;' });
-    const eligibilityErrorEl = el('p', { class: 'error-text' });
-    eligibilityErrorEl.hidden = true;
-    function renderEligibilityChips() {
-      eligibilityChips.innerHTML = '';
-      activeUids.forEach((uid) => {
-        const on = eligibleSet.has(uid);
-        const chip = el('button', { type: 'button', class: `pill small${on ? ' primary' : ''}` }, memberLabel(uid));
-        chip.addEventListener('click', () => {
-          if (on && eligibleSet.size === 1) return; // can't exclude everybody
-          if (on) eligibleSet.delete(uid); else eligibleSet.add(uid);
-          renderEligibilityChips();
-        });
-        eligibilityChips.appendChild(chip);
-      });
-      eligibilityNoteEl.textContent = eligibleSet.size === 1
-        ? `${memberLabel([...eligibleSet][0])} will always do it.`
-        : 'All children can do this by default.';
-    }
-    renderEligibilityChips();
-    const saveEligibilityBtn = el('button', { type: 'button', class: 'pill primary small', style: 'margin-top:8px;' }, 'Save');
-    saveEligibilityBtn.addEventListener('click', async () => {
-      eligibilityErrorEl.hidden = true;
-      saveEligibilityBtn.disabled = true;
-      try {
-        const newEligible = activeUids.filter((uid) => eligibleSet.has(uid));
-        const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-        const payload = { eligibleUids: newEligible };
-        if (currentMode === 'rotating' && chore.rotation) {
-          // Keep rotation.pool in sync -- the balancer only ever reads
-          // the pool, not eligibleUids directly (see ADR-0041).
-          const newPool = newEligible;
-          const history = {};
-          newPool.forEach((uid) => { history[uid] = (chore.rotation.history && chore.rotation.history[uid]) || { timesAssigned: 0, lastAssignedWeekId: null }; });
-          payload.rotation = {
-            ...chore.rotation, pool: newPool, history,
-            currentAssigneeUid: newPool.includes(chore.rotation.currentAssigneeUid) ? chore.rotation.currentAssigneeUid : null,
-          };
-        }
-        await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), payload);
-      } catch (err) {
-        eligibilityErrorEl.textContent = err.message;
-        eligibilityErrorEl.hidden = false;
-      } finally {
-        saveEligibilityBtn.disabled = false;
-      }
-    });
-    wrap.appendChild(el('label', { style: 'margin:14px 0 0;' }, 'Who can do this'));
-    wrap.appendChild(eligibilityChips);
-    wrap.appendChild(eligibilityNoteEl);
-    wrap.appendChild(eligibilityErrorEl);
-    wrap.appendChild(saveEligibilityBtn);
-  }
-
-  return wrap;
-}
-
 function renderActiveChores(container) {
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
 
@@ -8050,31 +8072,24 @@ function renderActiveChores(container) {
     }, needsReview.length === 2 ? 'Approve both' : `Approve all (${needsReview.length})`));
   }
 
-  let addChoreOpen = false;
-  const addChoreWrap = el('div', {});
-  function renderAddChoreWrap() {
-    addChoreWrap.innerHTML = '';
-    if (!addChoreOpen) {
-      addChoreWrap.appendChild(el('button', {
-        type: 'button', class: 'ca-btn ca-btn--secondary ca-btn--block',
-        onclick: () => { addChoreOpen = true; renderAddChoreWrap(); },
-      }, [el('i', { class: 'ti ti-plus' }), ' Add a chore']));
-      // Per mockups/rebrand/choresapp-parent-restyle.html's Screen 5 note:
-      // "Chore wizard moves to the Chores tab where a parent looking to add
-      // chores will actually be" -- was a Dashboard "Quick actions" card,
-      // now lives next to the plain add-chore button it's an alternative to.
-      addChoreWrap.appendChild(el('p', {
-        style: 'text-align:center;font-size:var(--ca-text-sm);margin:var(--ca-space-2) 0 var(--ca-space-4);',
-      }, [
-        'or ',
-        el('button', { type: 'button', class: 'ca-link', onclick: () => openChoreWizard() }, 'use the setup wizard'),
-      ]));
-      return;
-    }
-    addChoreWrap.appendChild(renderChoreForm());
-  }
-  renderAddChoreWrap();
-  container.appendChild(addChoreWrap);
+  // mockups/rebrand/choresapp-add-chore-spec.html: "Chores and basics are
+  // different objects... So the Chores tab offers Add a chore and Add a
+  // basic. Neither form ever asks which one you meant." Replaces the old
+  // single "+ Add a chore" button (which opened one form covering both,
+  // via a since-removed category dropdown + daily-requirement checkbox
+  // that could disagree with each other) and its "use the setup wizard"
+  // link -- the wizard is a separate, from-scratch-family-setup flow, not
+  // an alternative to adding one more chore later.
+  container.appendChild(el('div', { class: 'ca-btn-row', style: 'margin-bottom:var(--ca-space-4);' }, [
+    el('button', {
+      type: 'button', class: 'ca-btn ca-btn--secondary',
+      onclick: () => openChoreSheet({ mode: 'add', category: 'chore' }),
+    }, [el('i', { class: 'ti ti-plus' }), ' Add a chore']),
+    el('button', {
+      type: 'button', class: 'ca-btn ca-btn--secondary',
+      onclick: () => openChoreSheet({ mode: 'add', category: 'dailyTask' }),
+    }, [el('i', { class: 'ti ti-plus' }), ' Add a basic']),
+  ]));
 
   if (state.chores.length === 0) {
     container.appendChild(el('div', { class: 'ca-empty' }, [
@@ -8116,9 +8131,19 @@ function renderActiveChores(container) {
         assignedLabel += ` — +${formatCents(chore.bonusCents, currency)} bonus when done`;
       }
       if (mode === 'rotating') assignedLabel += ` · ${SIZE_LABELS[resolveSize(chore)]}`;
+      // Tapping the card opens the same Add/Edit sheet used to create it
+      // (mockups/rebrand/choresapp-add-chore-spec.html: "Editing: Same
+      // sheet, same layout, titled Edit chore") -- replaces the old
+      // "Edit schedule"/"Edit assignment" inline expandables (ADR-0029/
+      // 0057), each with their own separate Save button. The kebab menu
+      // is a sibling of the clickable title/meta area, not nested inside
+      // it, so tapping Deactivate/Reactivate never also opens the sheet.
       const card = el('div', { class: `ca-card${chore.active === false ? ' ca-card--muted' : ''}` }, [
         el('div', { class: 'ca-row' }, [
-          el('div', { class: 'ca-row__grow' }, [
+          el('div', {
+            class: 'ca-row__grow', style: 'cursor:pointer;',
+            onclick: () => openChoreSheet({ mode: 'edit', category: chore.category || 'chore', existingChore: chore }),
+          }, [
             el('p', { class: 'ca-title' }, [choreLabel(chore), chore.active === false ? ' (inactive)' : '']),
             el('p', { class: 'ca-meta' }, assignedLabel),
           ]),
@@ -8132,40 +8157,6 @@ function renderActiveChores(container) {
           }]),
         ]),
       ]);
-      // Per-chore streak bonus retired (ADR-0027) -- see each child's Kids
-      // tab "Daily task bonus" for the unified per-child program that
-      // replaced it.
-      // ADR-0057: one shared schedule control + ONE save, replacing what
-      // used to be up to four independent fields here (Days/Times/Every-N-
-      // days/Bonus), each with its own Save button -- the same "one save,
-      // not many" principle ADR-0053 already applied to assignment
-      // editing. Collapsed by default (makeExpandable), same as "Edit
-      // assignment" below it -- unlike the old scattered fields (only
-      // shown for chores already on a non-default frequency), this now
-      // applies to every chore, so it stays out of the way until opened.
-      const scheduleControl = renderScheduleControl({
-        initial: {
-          frequency: chore.frequency, scheduledDays: chore.scheduledDays,
-          timesPerWeekCount: chore.timesPerWeekCount, everyNDaysCount: chore.everyNDaysCount,
-          scheduleAnchorDateId: chore.scheduleAnchorDateId, bonusCents: chore.bonusCents,
-        },
-        sizeWeight: resolveSizeWeight(chore),
-      });
-      const saveScheduleBtn = el('button', {
-        type: 'button', class: 'pill primary small', style: 'margin-top:10px;',
-        onclick: async () => {
-          saveScheduleBtn.disabled = true;
-          try {
-            const { updateDoc, doc: fsDoc } = await import('https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js');
-            await updateDoc(fsDoc(db, `families/${state.familyId}/chores/${chore.id}`), scheduleControl.getValue());
-          } catch (err) { showAppAlert(err.message); } finally { saveScheduleBtn.disabled = false; }
-        },
-      }, 'Save');
-      card.appendChild(makeExpandable('Edit schedule', el('div', {}, [scheduleControl.el, saveScheduleBtn]), `editSchedule:${chore.id}`));
-      // Post-creation editing (ADR-0029) -- size, assignment mode,
-      // and the pool used to only be creation-time-only; collapsed by
-      // default (makeExpandable) since most chore cards never need this.
-      card.appendChild(makeExpandable('Edit assignment', renderEditAssignmentBody(chore), `editAssignment:${chore.id}`));
       container.appendChild(card);
     });
   });
