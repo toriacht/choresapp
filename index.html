@@ -691,7 +691,6 @@
         <p class="ca-error" id="kidPinError" hidden style="text-align:center;"></p>
         <p class="ca-meta" id="kidPinAttemptsNote" hidden style="text-align:center;"></p>
         <div id="kidPinSpinner" class="ca-spinner" hidden style="margin-bottom:var(--ca-space-2);"></div>
-        <p class="ca-meta" id="kidPinSigningIn" hidden style="text-align:center;">Signing in…</p>
         <div class="ca-keypad" id="kidKeypad" style="margin-top:var(--ca-space-4);">
           <button type="button" class="ca-key" data-digit="1">1</button><button type="button" class="ca-key" data-digit="2">2</button><button type="button" class="ca-key" data-digit="3">3</button>
           <button type="button" class="ca-key" data-digit="4">4</button><button type="button" class="ca-key" data-digit="5">5</button><button type="button" class="ca-key" data-digit="6">6</button>
@@ -956,7 +955,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.03.7';
+const APP_VERSION = '26.09.03.8';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -2677,7 +2676,6 @@ document.getElementById('kidUsernameStep').addEventListener('submit', async (eve
   renderKidPinDots();
   document.getElementById('kidPinError').hidden = true;
   document.getElementById('kidPinAttemptsNote').hidden = true;
-  document.getElementById('kidPinSigningIn').hidden = true;
   document.getElementById('kidPinSpinner').hidden = true;
   showKidStep('kidPinStep');
 });
@@ -2733,22 +2731,19 @@ document.getElementById('kidPasswordStep').addEventListener('submit', async (eve
 async function submitKidPin() {
   const errorEl = document.getElementById('kidPinError');
   const attemptsEl = document.getElementById('kidPinAttemptsNote');
-  const signingInEl = document.getElementById('kidPinSigningIn');
   const spinnerEl = document.getElementById('kidPinSpinner');
   // Reported: entering the 4th digit "hangs" for about a second -- there
   // was no visual feedback at all during the signInWithPin round trip
   // (auth lookup + Firestore reads/writes, occasionally a Cloud Functions
   // cold start), so a real-but-brief wait read as a frozen app. This
-  // doesn't make the call itself faster, just visible while it runs.
-  // Brian: cold starts are cold starts, nothing to be done about the
-  // delay itself -- but the static "Signing in..." text alone didn't
-  // read as "actively working" through a multi-second wait, so an
-  // actual animated spinner (.ca-spinner, reusing the same ca-spin
-  // keyframe as .ca-btn--loading) now sits above it.
+  // doesn't make the call itself faster, just visible while it runs. An
+  // animated spinner (.ca-spinner, reusing the same ca-spin keyframe as
+  // .ca-btn--loading) alone -- a "Signing in..." text label sat
+  // alongside it briefly but was explicitly asked to be reverted back
+  // to spinner-only.
   const keypadButtons = document.querySelectorAll('#kidKeypad .ca-key[data-digit], #kidPinBackspaceBtn');
   errorEl.hidden = true;
   attemptsEl.hidden = true;
-  signingInEl.hidden = false;
   spinnerEl.hidden = false;
   keypadButtons.forEach((btn) => { btn.disabled = true; });
   const pin = kidPinDigits.join('');
@@ -2780,7 +2775,6 @@ async function submitKidPin() {
     errorEl.textContent = describeParentAuthError(err);
     errorEl.hidden = false;
   } finally {
-    signingInEl.hidden = true;
     spinnerEl.hidden = true;
     keypadButtons.forEach((btn) => { btn.disabled = false; });
   }
@@ -3417,6 +3411,27 @@ const installBtn = document.getElementById('installBtn');
 // the worker is still 'installing', and passing that half-ready
 // registration to getToken() is exactly what produced the "no service
 // worker" / "no active Service Worker" failure Enable notifications hit.
+// Reported (twice, as apparent "regressions" that were actually already
+// fixed): a chip-tap auto-submitting the username form again, and a
+// spinner "reverting" to plain text. Root cause likely isn't either fix
+// breaking -- registration.update() (below) only ever refreshes the
+// *service worker*, never the *page*. A PWA left open/resident (never
+// force-closed, no fresh navigation) keeps running whatever JS was
+// actually loaded at its last real page load, regardless of what's been
+// deployed since; every fix in this file only reaches an open tab once
+// it reloads. Standard fix: when a new service worker actually takes
+// over (skipWaiting + clients.claim from install/activate below), force
+// this page to reload itself so it can't keep running stale JS
+// indefinitely. `reloaded` guards against a double-reload if
+// controllerchange somehow fires more than once.
+if ('serviceWorker' in navigator) {
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloaded) return;
+    reloaded = true;
+    window.location.reload();
+  });
+}
 let swRegistration = null;
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js')
