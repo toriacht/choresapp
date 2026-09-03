@@ -956,7 +956,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.03.5';
+const APP_VERSION = '26.09.03.6';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -6057,7 +6057,13 @@ function renderKids() {
         }),
         child.displayName || child.email,
       ]),
-      attentionCount > 0 ? el('div', { class: 'day-chip-label' }, `${attentionCount} to review`) : null,
+      // Reported: this read "N to review" while the Chores sub-tab's own
+      // "Waiting on you" showed nothing, looking like a stale count.
+      // Not stale -- computeChildAttentionCount deliberately sums THREE
+      // things (chores awaiting review, proposed extra jobs, a pending
+      // payout), while "Waiting on you" below only ever counted the
+      // chores portion. The label just didn't say so.
+      attentionCount > 0 ? el('div', { class: 'day-chip-label' }, `${attentionCount} needs attention`) : null,
     ]));
   });
   container.appendChild(chipRow);
