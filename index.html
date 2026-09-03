@@ -57,8 +57,12 @@
        otherwise looks swipeable but has no gesture wired to it) was
        falling through to the browser/PWA's native pull-to-refresh,
        reloading the whole app instead of doing nothing or closing a
-       sheet. */
-    overscroll-behavior-y: contain;
+       sheet. `contain` only stops scroll CHAINING to an ancestor -- it
+       still allows the native overscroll/pull-to-refresh effect on this
+       element itself, which is exactly the gesture that needs
+       suppressing here (confirmed still reloading the app after
+       shipping `contain`); `none` is the value that actually blocks it. */
+    overscroll-behavior-y: none;
   }
   .page-wrap { max-width: 720px; margin: 0 auto; }
   h1 { font-size: 1.25rem; font-weight: 700; margin: 0; }
@@ -943,6 +947,15 @@ import {
 import {
   getMessaging, getToken, onMessage, isSupported as isMessagingSupported,
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-messaging.js';
+
+// Same pattern as the sibling pitchschedule project (deploy-frontend.yml
+// substitutes this placeholder with YY.MM.DD.<push#> at deploy time, from
+// the source repo's own commit history -- see that workflow's comment for
+// why push# is computed rather than hand-maintained). Shown in the child's
+// More screen and the admin's Settings screen so it's possible to confirm
+// which build actually landed on a given phone, especially useful for a
+// PWA where a stale service-worker cache can otherwise mask a real deploy.
+const APP_VERSION = '26.09.03.2';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -2456,8 +2469,15 @@ function renderKidUsernameChips() {
       type: 'button', style: 'background:none;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;',
     }, username);
     tapBtn.addEventListener('click', () => {
+      // Reported twice as "the Next button auto-presses itself" -- this
+      // used to fill the input AND immediately requestSubmit() the form,
+      // so tapping a saved name jumped straight to the PIN screen with no
+      // deliberate Next press at all. A round-1 fix (spinner instead of a
+      // disabled-button flash) addressed the visual symptom but not this,
+      // which is the actual behavior being reported. Just fill the field
+      // now -- the user still has to tap Next themselves, same as typing
+      // a name manually.
       document.getElementById('kidUsernameInput').value = username;
-      document.getElementById('kidUsernameStep').requestSubmit();
     });
     const removeBtn = el('button', {
       type: 'button', 'aria-label': `Remove ${username}`,
@@ -5621,6 +5641,7 @@ function renderMore() {
   renderNotificationSettingsButton(container);
 
   container.appendChild(el('button', { class: 'signout-row', onclick: () => signOut(auth) }, 'Sign out'));
+  container.appendChild(el('div', { class: 'muted', style: 'text-align:center;margin-top:14px;font-size:0.75rem;' }, `App version ${APP_VERSION}`));
 }
 
 // ---------------------------------------------------------------------
@@ -8472,6 +8493,7 @@ function renderSettings() {
   container.appendChild(renderMoreLink('Change password', () => showScreen('changePassword')));
   container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; wizardDraftKids = []; wizardChoreState = null; renderWizardStep(); }));
   container.appendChild(el('button', { class: 'signout-row', onclick: () => signOut(auth) }, 'Sign out'));
+  container.appendChild(el('p', { class: 'ca-meta', style: 'text-align:center;margin-top:14px;' }, `App version ${APP_VERSION}`));
 }
 
 // ---------------------------------------------------------------------
