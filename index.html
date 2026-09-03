@@ -956,7 +956,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.03.4';
+const APP_VERSION = '26.09.03.5';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -990,6 +990,72 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
   connectFirestoreEmulator(db, 'localhost', 8080);
   connectFunctionsEmulator(functions, 'localhost', 5001);
   connectStorageEmulator(storage, 'localhost', 9199);
+}
+
+// ---------------------------------------------------------------------
+// Admin credential mirror for background notification actions -- sw.js's
+// notificationclick handler runs in a cold background context with no
+// access to this page's in-memory state, and no access AT ALL to this
+// page's own auth session: it's persisted via browserLocalPersistence
+// (see that setPersistence call's own comment for why -- a real
+// spontaneous-sign-out fix), which is main-thread-only localStorage; a
+// service worker cannot read it under any circumstances. IndexedDB is
+// the only storage a SW can reach, so this mirrors just enough into a
+// small, purpose-built IndexedDB database -- admin sessions only -- to
+// let the SW mint a fresh ID token and perform an Approve/Send back
+// write itself when a notification action button is tapped with the
+// app fully closed. Storing a refresh token outside the SDK's own
+// persistence is exactly what the SDK's own IndexedDB persistence mode
+// already does for the same reason (long-lived reauthentication without
+// re-prompting) -- this isn't a new class of exposure, just a
+// separately-managed copy of it, kept out of the mode that was
+// deliberately moved away from IndexedDB for reliability. MUST be
+// cleared on every sign-out (see the auth-state handler below) -- this
+// app is routinely tested by switching the same phone between an admin
+// and a child sign-in, and a stale mirrored credential must never
+// survive that switch.
+const SW_AUTH_DB_NAME = 'choresAppSwAuth';
+const SW_AUTH_STORE = 'credential';
+function openSwAuthDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(SW_AUTH_DB_NAME, 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(SW_AUTH_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function mirrorAdminCredentialForBackgroundActions() {
+  try {
+    const refreshToken = auth.currentUser && auth.currentUser.refreshToken;
+    if (!refreshToken) return;
+    const idb = await openSwAuthDb();
+    await new Promise((resolve, reject) => {
+      const tx = idb.transaction(SW_AUTH_STORE, 'readwrite');
+      tx.objectStore(SW_AUTH_STORE).put({ uid: state.user.uid, refreshToken }, 'admin');
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    idb.close();
+  } catch (err) {
+    // Best-effort only -- a notification action button falls back to
+    // opening the app if this mirror is ever missing/stale, same as if
+    // it had never been written at all.
+    console.error('[choresapp] mirrorAdminCredentialForBackgroundActions ERROR:', err);
+  }
+}
+async function clearAdminCredentialMirror() {
+  try {
+    const idb = await openSwAuthDb();
+    await new Promise((resolve, reject) => {
+      const tx = idb.transaction(SW_AUTH_STORE, 'readwrite');
+      tx.objectStore(SW_AUTH_STORE).delete('admin');
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    idb.close();
+  } catch (err) {
+    console.error('[choresapp] clearAdminCredentialMirror ERROR:', err);
+  }
 }
 
 const callMarkChoreDone = httpsCallable(functions, 'markChoreDone');
@@ -3625,6 +3691,7 @@ onAuthStateChanged(auth, async (user) => {
     // step (kidPinStep still visible, not hidden) landed straight back
     // on PIN entry instead of the username step on next sign-in.
     showKidStep('kidUsernameStep');
+    clearAdminCredentialMirror();
     showScreen('signIn');
     return;
   }
@@ -3678,6 +3745,8 @@ async function resolveMembership(myGen = authEventGen) {
   startFamilySubscriptions();
   updateNavForRole(role);
   maybeRefreshPushToken();
+  if (role === 'admin') mirrorAdminCredentialForBackgroundActions();
+  else clearAdminCredentialMirror();
 
   const onboardingDone = state.family && state.family.settings && state.family.settings.onboardingCompletedAt;
   if (role === 'admin' && !onboardingDone) {
