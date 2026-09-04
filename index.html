@@ -963,7 +963,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.04.5';
+const APP_VERSION = '26.09.04.6';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -7729,15 +7729,40 @@ function openChoreSheet({ mode, category, existingChore = null, forcedUid = null
   const isBasic = category === 'dailyTask';
   const activeUids = activeChildUids();
 
-  const overlay = el('div', { class: 'modal-overlay', style: 'align-items:flex-end;padding:0;' });
-  const sheetCard = el('div', { class: 'ca-sheet', style: 'width:100%;max-width:480px;max-height:88vh;overflow-y:auto;overscroll-behavior-y:none;margin:0 auto;' });
-  overlay.appendChild(sheetCard);
-  document.body.appendChild(overlay);
+  // A true full-screen page (Brian: should look like a native app page,
+  // not a bigger version of the notification tray's bottom-sheet
+  // component) -- not a modal-overlay at all, since there's no "outside"
+  // left to tap once it covers the whole viewport. Header (close button
+  // + title + wizard progress) and the Next/Back/Save footer both stay
+  // fixed; only the fields in between scroll -- same layout a real
+  // native wizard uses, and keeps the primary action thumb-reachable
+  // without scrolling.
+  // z-index matches .modal-overlay's own (100), not higher -- openChoreFrequencySheet
+  // ("How often") and showAppAlert/showAppConfirm all get opened FROM
+  // WITHIN this screen and use that same class/z-index, relying on DOM
+  // append order (later wins at equal z-index) to stack above this
+  // screen, same as before this screen became full-page.
+  const screenRoot = el('div', {
+    style: 'position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;flex-direction:column;',
+  });
+  document.body.appendChild(screenRoot);
 
-  const rawClose = () => overlay.remove();
+  const rawClose = () => screenRoot.remove();
   const dismissModal = pushModalHistory(rawClose);
   const closeSheet = () => { rawClose(); dismissModal(); };
-  overlay.addEventListener('click', (event) => { if (event.target === overlay) closeSheet(); });
+
+  // max-width/margin:auto on each matches .page-wrap's own convention for
+  // the rest of the app -- full-bleed background, but the same content
+  // column width on a wider screen (this is a phone-first PWA, but keeps
+  // look and feel consistent if ever viewed wider).
+  const headerWrap = el('div', { style: 'flex:none;width:100%;max-width:720px;margin:0 auto;padding:var(--ca-space-4) var(--ca-space-4) 0;' });
+  const sheetCard = el('div', { style: 'flex:1;width:100%;max-width:720px;margin:0 auto;overflow-y:auto;overscroll-behavior-y:none;padding:0 var(--ca-space-4);' });
+  const footerFixedWrap = el('div', {
+    style: 'flex:none;width:100%;max-width:720px;margin:0 auto;padding:var(--ca-space-3) var(--ca-space-4) calc(var(--ca-space-4) + env(safe-area-inset-bottom, 0px));',
+  });
+  screenRoot.appendChild(headerWrap);
+  screenRoot.appendChild(sheetCard);
+  screenRoot.appendChild(footerFixedWrap);
 
   // ---- draft state ----
   const existingMode = existingChore ? resolveAssignmentMode(existingChore) : null;
@@ -7766,11 +7791,29 @@ function openChoreSheet({ mode, category, existingChore = null, forcedUid = null
   // icon"), so it keeps the single-page/no-paging layout unchanged.
   let page = 1;
 
-  sheetCard.appendChild(el('div', { class: 'ca-sheet__grip' }));
   const headerRow = el('div', { class: 'ca-row', style: 'margin-bottom:var(--ca-space-3);align-items:center;' });
+  headerRow.appendChild(el('button', {
+    type: 'button', class: 'ca-btn ca-btn--quiet ca-btn--sm', style: 'flex:none;padding:6px 8px;',
+    onclick: closeSheet,
+  }, el('i', { class: 'ti ti-x', style: 'font-size:18px;' })));
   headerRow.appendChild(el('p', { class: 'ca-title', style: 'flex:1;margin:0;' },
     `${isEdit ? 'Edit' : 'Add'} a ${isBasic ? 'basic' : 'chore'}`));
-  sheetCard.appendChild(headerRow);
+  headerWrap.appendChild(headerRow);
+
+  // Wizard progress -- chore only (2 real pages now); a basic is always
+  // one page, nothing to show progress through.
+  const progressWrap = isBasic ? null : el('div', { style: 'display:flex;gap:6px;margin-bottom:var(--ca-space-3);' });
+  if (progressWrap) headerWrap.appendChild(progressWrap);
+  function renderProgress() {
+    if (!progressWrap) return;
+    progressWrap.innerHTML = '';
+    [1, 2].forEach((p) => {
+      progressWrap.appendChild(el('div', {
+        style: `flex:1;height:4px;border-radius:2px;background:${p <= page ? 'var(--ca-green-700)' : 'var(--ca-wash)'};`,
+      }));
+    });
+  }
+  renderProgress();
 
   const page1Wrap = el('div', {});
   const page2Wrap = isBasic ? null : el('div', { hidden: true });
@@ -7948,11 +7991,11 @@ function openChoreSheet({ mode, category, existingChore = null, forcedUid = null
   // greying out and hiding the blocker mid-form, the disabled button says
   // what's missing and updates as each is answered") -- same gate now also
   // guards advancing from page 1 to page 2 for a chore. ----
-  const errorEl = el('p', { class: 'ca-error', style: 'text-align:center;margin-top:var(--ca-space-2);' });
+  const errorEl = el('p', { class: 'ca-error', style: 'text-align:center;margin-top:0;' });
   errorEl.hidden = true;
-  sheetCard.appendChild(errorEl);
+  footerFixedWrap.appendChild(errorEl);
   const footerWrap = el('div', {});
-  sheetCard.appendChild(footerWrap);
+  footerFixedWrap.appendChild(footerWrap);
 
   let submitBtn = null;
   function submitReason() {
@@ -7979,6 +8022,7 @@ function openChoreSheet({ mode, category, existingChore = null, forcedUid = null
     page = next;
     page1Wrap.hidden = page !== 1;
     if (page2Wrap) page2Wrap.hidden = page !== 2;
+    renderProgress();
     renderFooter();
   }
   function renderFooter() {
