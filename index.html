@@ -49,19 +49,26 @@
     --warn-tint: #2e2417; --success-tint: #14291c;
   }
   * { box-sizing: border-box; }
+  /* A drag-down anywhere (e.g. on the notification sheet's grip, which
+     otherwise looks swipeable but has no gesture wired to it) was
+     falling through to the browser/PWA's native pull-to-refresh,
+     reloading the whole app instead of doing nothing or closing a
+     sheet. `contain` only stops scroll CHAINING to an ancestor -- it
+     still allows the native overscroll/pull-to-refresh effect on this
+     element itself, which is exactly the gesture that needs
+     suppressing here (confirmed still reloading the app after
+     shipping `contain`); `none` is the value that actually blocks it.
+     Round 2 shipped `none` on `body` only and STILL didn't hold -- in
+     standards mode (this page has a real doctype), the browser's actual
+     root scrolling box is `html`/the document element, not `body`;
+     Chrome's pull-to-refresh gesture is keyed off that root scroller,
+     so `overscroll-behavior-y` has to be set there too, not just on
+     `body`, to reliably suppress it. */
+  html { overscroll-behavior-y: none; }
   body {
     margin: 0; padding: 16px; padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
     background: var(--bg); color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    /* A drag-down anywhere (e.g. on the notification sheet's grip, which
-       otherwise looks swipeable but has no gesture wired to it) was
-       falling through to the browser/PWA's native pull-to-refresh,
-       reloading the whole app instead of doing nothing or closing a
-       sheet. `contain` only stops scroll CHAINING to an ancestor -- it
-       still allows the native overscroll/pull-to-refresh effect on this
-       element itself, which is exactly the gesture that needs
-       suppressing here (confirmed still reloading the app after
-       shipping `contain`); `none` is the value that actually blocks it. */
     overscroll-behavior-y: none;
   }
   .page-wrap { max-width: 720px; margin: 0 auto; }
@@ -956,7 +963,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.04.4';
+const APP_VERSION = '26.09.04.5';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
