@@ -965,7 +965,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.04.10';
+const APP_VERSION = '26.09.04.11';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -4663,6 +4663,27 @@ function renderDashboard() {
   const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
   const today = new Date();
   const todayDateId = getIsoDateId(today);
+
+  // ADR-0062: an advance (or any negative balance) has no other visible
+  // trace anywhere in this child-facing app -- every other money display
+  // here (this card's own money section below, the Earnings tab) is
+  // entirely "this week"-scoped by design (ADR-0055), never the lifetime
+  // balanceCents an advance actually lives in. Without this, giving an
+  // advance would be silently invisible to the child once the week it
+  // was given rolls over, defeating "carries over until paid off." Shown
+  // first, above Next Up, since it's the one thing here that isn't
+  // scoped to today/this week.
+  if ((state.member && state.member.balanceCents || 0) < 0) {
+    container.appendChild(el('div', {
+      class: 'ca-card', style: 'background:var(--ca-wash);display:flex;gap:var(--ca-space-2);align-items:flex-start;',
+    }, [
+      svgIcon('infoCircle', { size: 16, color: 'var(--ca-green-700)' }),
+      el('div', {}, [
+        el('p', { class: 'ca-title', style: 'margin:0;' }, `You owe ${formatCents(-state.member.balanceCents, currency)}`),
+        el('p', { class: 'ca-meta', style: 'margin:2px 0 0;' }, 'From an advance -- it comes off what you earn until it\'s paid back.'),
+      ]),
+    ]));
+  }
 
   const { lines: pendingLines, thisWeekLedger, alreadySettled, awaitingApproval, weekProgress } =
     computePendingPaymentLines(state.user.uid, state.member);
