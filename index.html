@@ -965,7 +965,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.04.9';
+const APP_VERSION = '26.09.04.10';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -3794,6 +3794,13 @@ onAuthStateChanged(auth, async (user) => {
     const errorEl = document.getElementById('signInError');
     errorEl.textContent = `${err.code || ''}: ${err.message}`;
     errorEl.hidden = false;
+    // This path re-shows the sign-in screen without ever having gone
+    // through the sign-out branch's reset above -- whatever Parent/Kid
+    // visibility state was left over from before auth started (possibly
+    // mid-Kid-tab-flow) is whatever displays here, unmanaged. Same class
+    // of gap as the one just fixed there; resetting here too rather than
+    // assuming this path can't also be a source of the same symptom.
+    resetSignInScreenToDefault();
     showScreen('signIn');
   }
 });
