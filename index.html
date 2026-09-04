@@ -502,7 +502,7 @@
     cursor: pointer; flex-shrink: 0; font-size: 1.1rem; line-height: 1;
   }
   .adjust-modal-title { font-weight: 800; font-size: 1.05rem; }
-  .adjust-modal-body { padding: 16px 18px; overflow-y: auto; flex: 1; }
+  .adjust-modal-body { padding: 16px 18px; overflow-y: auto; flex: 1; overscroll-behavior-y: none; }
 
   .mode-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
   .mode-tab-btn {
@@ -831,7 +831,7 @@
         <p class="ca-title" style="flex:1;">Notifications</p>
         <button type="button" class="ca-link" id="notifMarkAllReadBtn" style="font-size:var(--ca-text-sm);">Mark all read</button>
       </div>
-      <div id="notifModalBody" style="overflow-y:auto;flex:1;"></div>
+      <div id="notifModalBody" style="overflow-y:auto;flex:1;overscroll-behavior-y:none;"></div>
     </div>
   </div>
 
@@ -956,7 +956,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.04.2';
+const APP_VERSION = '26.09.04.3';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -7717,7 +7717,7 @@ function openChoreSheet({ mode, category, existingChore = null, forcedUid = null
   const activeUids = activeChildUids();
 
   const overlay = el('div', { class: 'modal-overlay', style: 'align-items:flex-end;padding:0;' });
-  const sheetCard = el('div', { class: 'ca-sheet', style: 'width:100%;max-width:480px;max-height:88vh;overflow-y:auto;margin:0 auto;' });
+  const sheetCard = el('div', { class: 'ca-sheet', style: 'width:100%;max-width:480px;max-height:88vh;overflow-y:auto;overscroll-behavior-y:none;margin:0 auto;' });
   overlay.appendChild(sheetCard);
   document.body.appendChild(overlay);
 
