@@ -965,7 +965,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.04.12';
+const APP_VERSION = '26.09.04.13';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -5290,6 +5290,31 @@ function renderChores() {
 function renderExtraJobClaimBody(container, currency) {
     const activeCatalog = state.catalog.filter((c) => c.active !== false);
 
+    // ADR-0062 round 4: a child with an outstanding advance had no way to
+    // say "put this toward what I owe" when asking for extra work at all
+    // -- that option only ever existed on the admin's approval screen.
+    // Brian: "he didn't get the option to assign money towards his debt
+    // on... job ask." One shared checkbox, read directly (by whichever
+    // "Ask a parent" path is used below) at write time, rather than a
+    // separate render-tracked state variable -- this function isn't
+    // re-rendered on every keystroke/tap the way a form step is. Stores
+    // the child's own stated preference on the job doc itself
+    // (`requestApplyToAdvance`); the admin still decides at approval
+    // time (`renderExtraJobCard` below) -- this is a request, not a
+    // directive, matching "if everyone agrees."
+    const owedCents = (state.member && state.member.advanceOwedCents) || 0;
+    let applyToAdvanceCheckbox = null;
+    if (owedCents > 0) {
+      applyToAdvanceCheckbox = el('input', { type: 'checkbox', id: 'extraJobApplyToAdvance' });
+      container.appendChild(el('label', {
+        for: 'extraJobApplyToAdvance', class: 'ca-row',
+        style: 'gap:var(--ca-space-2);align-items:center;margin-bottom:var(--ca-space-3);cursor:pointer;',
+      }, [
+        applyToAdvanceCheckbox,
+        el('span', { class: 'ca-body' }, `Put this toward what I owe (${formatCents(owedCents, currency)})`),
+      ]));
+    }
+
     if (activeCatalog.length > 0) {
       container.appendChild(el('p', { class: 'ca-body' }, 'Ask a parent for one of these, or something else.'));
       const ideasCard = el('div', { class: 'ca-card' });
@@ -5311,6 +5336,7 @@ function renderExtraJobClaimBody(container, currency) {
                 await addDoc(fsCollection(db, `families/${state.familyId}/extraJobs`), {
                   description: job.name, proposedBy: state.user.uid, amountCents: job.amountCents,
                   catalogJobId: job.id, status: 'proposed', createdAt: serverTimestamp(),
+                  requestApplyToAdvance: !!(applyToAdvanceCheckbox && applyToAdvanceCheckbox.checked),
                 });
               },
             }, 'Ask a parent'),
@@ -5359,6 +5385,7 @@ function renderExtraJobClaimBody(container, currency) {
         description: descInput.value.trim(), proposedBy: state.user.uid,
         amountCents: centsFromMajorUnits(amountInput.value), catalogJobId: null,
         status: 'proposed', createdAt: serverTimestamp(),
+        requestApplyToAdvance: !!(applyToAdvanceCheckbox && applyToAdvanceCheckbox.checked),
       });
       descInput.value = ''; amountInput.value = '';
     });
@@ -5615,6 +5642,12 @@ function renderExtraJobCard(job, currency) {
         // red -- this is context, not a warning.
         job.relatedDeductionLedgerId ? el('p', { class: 'ca-meta', style: 'color:var(--ca-wait-fg);' },
           `To earn back: ${job.relatedDeductionNote || 'a deduction'} (-${formatCents(job.relatedDeductionAmountCents || 0, currency)})`) : null,
+        // ADR-0062 round 4: the child's own stated preference from
+        // proposal time -- doesn't decide anything by itself (the admin
+        // still taps Approve vs. "Approve → advance" below), just makes
+        // sure it's not invisible/ignored once it reaches approval.
+        job.requestApplyToAdvance ? el('p', { class: 'ca-meta', style: 'color:var(--ca-wait-fg);' },
+          'Asked to put this toward their debt') : null,
       ]),
       el('span', { class: `ca-badge ${badgeClass}` }, job.status),
     ]),
