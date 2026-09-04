@@ -965,7 +965,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.04.11';
+const APP_VERSION = '26.09.04.12';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -1877,7 +1877,7 @@ function ledgerTypeLabel(tx) {
     missed_chore_reversal: 'Late completion credit',
     deduction: 'Deduction', missed_chore_deduction: 'Missed chore',
     // ADR-0062
-    advance: 'Advance', advance_forgiven: 'Advance forgiven',
+    advance: 'Advance', advance_forgiven: 'Advance forgiven', advance_repayment: 'Applied to advance',
   };
   if (LEDGER_TYPE_LABELS[tx.type]) return LEDGER_TYPE_LABELS[tx.type];
   if (tx.type === 'manual_adjustment') return tx.amountCents >= 0 ? 'Extra job' : 'Deduction';
@@ -4664,22 +4664,25 @@ function renderDashboard() {
   const today = new Date();
   const todayDateId = getIsoDateId(today);
 
-  // ADR-0062: an advance (or any negative balance) has no other visible
-  // trace anywhere in this child-facing app -- every other money display
-  // here (this card's own money section below, the Earnings tab) is
-  // entirely "this week"-scoped by design (ADR-0055), never the lifetime
-  // balanceCents an advance actually lives in. Without this, giving an
-  // advance would be silently invisible to the child once the week it
-  // was given rolls over, defeating "carries over until paid off." Shown
-  // first, above Next Up, since it's the one thing here that isn't
-  // scoped to today/this week.
-  if ((state.member && state.member.balanceCents || 0) < 0) {
+  // ADR-0062 round 2: advance debt is tracked in its own
+  // `advanceOwedCents` field now, decoupled from balanceCents (so a
+  // payout/extra job can credit the main balance without silently and
+  // automatically paying down the advance -- see balance.js's own
+  // comment for why). This card has no other visible trace anywhere in
+  // this child-facing app -- every other money display here (this card's
+  // own money section below, the Earnings tab) is entirely "this
+  // week"-scoped by design (ADR-0055), never a lifetime running total.
+  // Without this, an advance would be silently invisible to the child
+  // once the week it was given rolls over, defeating "carries over until
+  // paid off." Shown first, above Next Up, since it's the one thing here
+  // that isn't scoped to today/this week.
+  if ((state.member && state.member.advanceOwedCents || 0) > 0) {
     container.appendChild(el('div', {
       class: 'ca-card', style: 'background:var(--ca-wash);display:flex;gap:var(--ca-space-2);align-items:flex-start;',
     }, [
       svgIcon('infoCircle', { size: 16, color: 'var(--ca-green-700)' }),
       el('div', {}, [
-        el('p', { class: 'ca-title', style: 'margin:0;' }, `You owe ${formatCents(-state.member.balanceCents, currency)}`),
+        el('p', { class: 'ca-title', style: 'margin:0;' }, `You owe ${formatCents(state.member.advanceOwedCents, currency)}`),
         el('p', { class: 'ca-meta', style: 'margin:2px 0 0;' }, 'From an advance -- it comes off what you earn until it\'s paid back.'),
       ]),
     ]));
@@ -5622,6 +5625,20 @@ function renderExtraJobCard(job, currency) {
       type: 'button', class: 'ca-btn ca-btn--sm',
       onclick: () => withOptimisticStatus(job, 'status', 'approved', () => callApproveExtraJob({ jobId: job.id, approve: true })),
     }, 'Approve'));
+    // ADR-0062 round 2: "3) earn extra money and immediately put it
+    // towards the advance rather than going onto main balance." Extra-job
+    // approval is a compact one-tap card, not a form -- unlike the weekly
+    // payout modal's amount input, this is a simple either/or: the whole
+    // job payment goes to the advance, or none of it does. Only shown
+    // when the proposer actually has something outstanding.
+    const proposer = state.members.find((m) => m.uid === job.proposedBy);
+    if ((proposer && proposer.advanceOwedCents || 0) > 0) {
+      actions.appendChild(el('button', {
+        type: 'button', class: 'ca-btn ca-btn--sm ca-btn--secondary',
+        onclick: () => withOptimisticStatus(job, 'status', 'approved', () =>
+          callApproveExtraJob({ jobId: job.id, approve: true, advanceApplyCents: job.amountCents })),
+      }, 'Approve → advance'));
+    }
     actions.appendChild(el('button', {
       type: 'button', class: 'ca-btn ca-btn--sm ca-btn--secondary',
       onclick: () => withOptimisticStatus(job, 'status', 'rejected', () => callApproveExtraJob({ jobId: job.id, approve: false })),
@@ -6571,21 +6588,29 @@ function openAdjustMoneyModal(child) {
           el('div', { class: 'muted' }, 'Balance'),
         ]),
       ]),
+      // ADR-0062 round 2: advance debt is its own field now, decoupled
+      // from balanceCents -- shown as a second line whenever there's any,
+      // since it's no longer visible via the balance figure above at all.
+      (member.advanceOwedCents || 0) > 0 ? el('div', { class: 'row', style: 'margin-top:6px;padding-top:6px;border-top:1px solid var(--border);' }, [
+        el('div', { class: 'muted' }, 'Advance owed'),
+        el('div', { style: 'font-weight:700;color:var(--danger);' }, formatCents(member.advanceOwedCents, currency)),
+      ]) : null,
     ]));
 
     // ADR-0062: forgiving is a distinct one-shot action, not another
     // amount/reason mode -- deliberately no partial amount to pick (the
-    // server zeroes out whatever the current negative balance actually
-    // is), so it lives here next to the balance it acts on rather than
-    // in the mode-tabs row below. Only shown when there's something to
-    // forgive at all.
-    if ((member.balanceCents || 0) < 0) {
+    // server zeroes out whatever's currently owed), so it lives here next
+    // to the balance it acts on rather than in the mode-tabs row below.
+    // Only shown when there's something to forgive at all. Gated on
+    // advanceOwedCents (round 2), not balanceCents -- see that field's
+    // own comment for why they're separate now.
+    if ((member.advanceOwedCents || 0) > 0) {
       body.appendChild(el('button', {
         type: 'button', class: 'ca-link', style: 'font-size:var(--ca-text-sm,0.85rem);margin:-6px 0 10px;',
         disabled: forgiveBusy ? 'disabled' : null,
         onclick: async () => {
           const ok = await showAppConfirm(
-            `Forgive ${child.displayName || 'their'}'s outstanding ${formatCents(-(member.balanceCents || 0), currency)}? This can't be undone.`
+            `Forgive ${child.displayName || 'their'}'s outstanding ${formatCents(member.advanceOwedCents || 0, currency)}? This can't be undone.`
           );
           if (!ok) return;
           forgiveBusy = true; render();
@@ -6596,7 +6621,7 @@ function openAdjustMoneyModal(child) {
           }
           forgiveBusy = false; render();
         },
-      }, forgiveBusy ? 'Forgiving…' : `Forgive outstanding ${formatCents(-(member.balanceCents || 0), currency)}`));
+      }, forgiveBusy ? 'Forgiving…' : `Forgive outstanding ${formatCents(member.advanceOwedCents || 0, currency)}`));
     }
 
     body.appendChild(el('div', { class: 'mode-tabs' }, [
@@ -6884,15 +6909,24 @@ function openPayoutApprovalModal() {
 
   let busy = false;
   let errorMsg = '';
+  // ADR-0062 round 2: per-payout "how much of this to apply to the
+  // advance instead" -- keyed by payout id since each pending child can
+  // have a different amount typed at once. Major units (typed string),
+  // same pattern as openAdjustMoneyModal's own amount input -- no render()
+  // on every keystroke, so typing doesn't fight the input for focus.
+  const advanceApplyMajorByPayoutId = new Map();
 
-  async function approveOne(payoutId) {
+  async function approveOne(payoutId, advanceApplyCents = 0) {
     busy = true; errorMsg = ''; render();
-    try { await callApproveWeeklyPayout({ payoutId }); } catch (err) { errorMsg = err.message; }
+    try { await callApproveWeeklyPayout({ payoutId, advanceApplyCents }); } catch (err) { errorMsg = err.message; }
     busy = false; render();
   }
 
   async function approveAll() {
     busy = true; errorMsg = ''; render();
+    // Bulk "approve all" deliberately never redirects to an advance --
+    // per-child amounts only make sense one at a time (Approve above);
+    // this keeps every child's debt untouched, the safe/default mode.
     const pending = state.payouts.filter((p) => p.status === 'pending');
     const results = await Promise.allSettled(pending.map((p) => callApproveWeeklyPayout({ payoutId: p.id })));
     const failed = results.filter((r) => r.status === 'rejected');
@@ -6941,10 +6975,45 @@ function openPayoutApprovalModal() {
           ]),
           lines.length > 0 ? el('div', { style: 'border-top:1px solid var(--border);padding-top:9px;' }, lines) : null,
         ]);
+
+        // ADR-0062 round 2: "2) put payout towards debt/advance... use
+        // their allowance or part of it" -- only shown when this child
+        // actually has something outstanding. Defaults to empty/0 (mode
+        // 1, "keep debt") -- typing an amount here is an explicit,
+        // deliberate choice, never assumed.
+        const owedCents = child.advanceOwedCents || 0;
+        let advanceApplyInputRef = null;
+        if (owedCents > 0) {
+          const maxApplyCents = Math.min(owedCents, payout.totalAmountCents);
+          const advanceInput = el('input', {
+            type: 'text', inputmode: 'decimal', placeholder: '0.00',
+            value: advanceApplyMajorByPayoutId.get(payout.id) || '', style: 'width:80px;',
+          });
+          advanceApplyInputRef = advanceInput;
+          advanceInput.addEventListener('input', () => { advanceApplyMajorByPayoutId.set(payout.id, advanceInput.value); });
+          card.appendChild(el('div', {
+            style: 'margin-top:9px;padding-top:9px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;',
+          }, [
+            el('span', { class: 'muted', style: 'flex:1 1 auto;' },
+              `Owes ${formatCents(owedCents, currency)} — apply`),
+            el('span', { class: 'currency-sign', style: 'font-size:0.85rem;' }, currencySymbol(currency)),
+            advanceInput,
+            el('button', {
+              type: 'button', class: 'pill small', style: 'flex:none;',
+              onclick: () => { advanceApplyMajorByPayoutId.set(payout.id, String(maxApplyCents / 100)); render(); },
+            }, 'Full'),
+          ]));
+        }
+
         const actions = el('div', { class: 'row', style: 'gap:8px;margin-top:10px;' });
         actions.appendChild(el('button', {
           type: 'button', class: 'pill primary', style: 'flex:1;', disabled: busy ? 'disabled' : null,
-          onclick: () => approveOne(payout.id),
+          onclick: () => {
+            const typedMajor = advanceApplyInputRef ? advanceApplyInputRef.value : '';
+            const requestedCents = typedMajor ? centsFromMajorUnits(typedMajor) : 0;
+            const advanceApplyCents = Math.max(0, Math.min(requestedCents, owedCents, payout.totalAmountCents));
+            approveOne(payout.id, advanceApplyCents);
+          },
         }, 'Approve'));
         actions.appendChild(el('button', {
           type: 'button', class: 'pill', style: 'flex:1;', disabled: busy ? 'disabled' : null,
