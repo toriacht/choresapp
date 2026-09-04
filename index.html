@@ -965,7 +965,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.04.8';
+const APP_VERSION = '26.09.04.9';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -1070,6 +1070,8 @@ async function clearAdminCredentialMirror() {
 const callMarkChoreDone = httpsCallable(functions, 'markChoreDone');
 const callApproveExtraJob = httpsCallable(functions, 'approveExtraJob');
 const callAdjustBalance = httpsCallable(functions, 'adjustBalance');
+const callGiveAdvance = httpsCallable(functions, 'giveAdvance'); // ADR-0062
+const callForgiveAdvance = httpsCallable(functions, 'forgiveAdvance'); // ADR-0062
 const callLogDeduction = httpsCallable(functions, 'logDeduction');
 const callWarnAboutDeduction = httpsCallable(functions, 'warnAboutDeduction');
 const callApproveWeeklyPayout = httpsCallable(functions, 'approveWeeklyPayout');
@@ -1874,6 +1876,8 @@ function ledgerTypeLabel(tx) {
     extra_job_credit: 'Extra job', chore_bonus: 'Bonus',
     missed_chore_reversal: 'Late completion credit',
     deduction: 'Deduction', missed_chore_deduction: 'Missed chore',
+    // ADR-0062
+    advance: 'Advance', advance_forgiven: 'Advance forgiven',
   };
   if (LEDGER_TYPE_LABELS[tx.type]) return LEDGER_TYPE_LABELS[tx.type];
   if (tx.type === 'manual_adjustment') return tx.amountCents >= 0 ? 'Extra job' : 'Deduction';
@@ -6444,6 +6448,11 @@ function renderEditableAllowanceCard(child, currency) {
 // of ad hoc icon this app is moving away from.
 const ADD_MONEY_REASON_PRESETS = ['Helpful', 'Extra chore', 'Great attitude'];
 const DEDUCT_MONEY_FALLBACK_PRESETS = ['Bag in hall', 'Room not tidied', 'Late for school'];
+// ADR-0062 -- an advance always needs a reason (same requirement as a
+// deduction), but the reasons themselves are unrelated to the
+// deductionsCatalog (a "why we took money away" list), so this gets its
+// own small fixed set rather than reusing getDeductMoneyReasonPresets().
+const ADVANCE_REASON_PRESETS = ['School trip', 'New clothes', 'Birthday gift'];
 // Reuses the admin-curated deductionsCatalog (Extras tab) as quick-pick
 // reason chips when the family has set one up -- since this flow always
 // lets the admin pick the amount themselves via the quick-amount
@@ -6477,13 +6486,14 @@ function openAdjustMoneyModal(child) {
   overlay.addEventListener('click', (event) => { if (event.target === overlay) closeModal(); });
 
   let step = 'form'; // 'form' | 'success'
-  let mode = 'add'; // 'add' | 'deduct'
+  let mode = 'add'; // 'add' | 'deduct' | 'advance' (ADR-0062)
   let amountMajor = '';
   let selectedAmountPreset = null; // one of [1,2,5,10], 'other', or null
   let reasonText = '';
   let selectedReasonLabel = null;
   let applyToAll = false;
   let busy = false;
+  let forgiveBusy = false; // ADR-0062
   let errorMsg = '';
   let lastResult = null;
   let amountInputRef = null;
@@ -6502,6 +6512,12 @@ function openAdjustMoneyModal(child) {
 
   function renderFormStep() {
     const member = currentMember();
+    // 'advance' reuses 'deduct's existing red/negative CSS wherever a class
+    // string is built from mode -- both are money leaving the balance, and
+    // there's no dedicated 'advance' visual style yet (kept this addition
+    // small; a distinct color is a reasonable follow-up polish, not a
+    // functional gap).
+    const visualMode = mode === 'advance' ? 'deduct' : mode;
     const wrap = el('div', { style: 'display:flex;flex-direction:column;min-height:0;flex:1;' });
     wrap.appendChild(el('div', { class: 'adjust-modal-header' }, [
       el('button', { type: 'button', class: 'adjust-modal-back', onclick: closeModal }, '‹'),
@@ -6529,6 +6545,32 @@ function openAdjustMoneyModal(child) {
       ]),
     ]));
 
+    // ADR-0062: forgiving is a distinct one-shot action, not another
+    // amount/reason mode -- deliberately no partial amount to pick (the
+    // server zeroes out whatever the current negative balance actually
+    // is), so it lives here next to the balance it acts on rather than
+    // in the mode-tabs row below. Only shown when there's something to
+    // forgive at all.
+    if ((member.balanceCents || 0) < 0) {
+      body.appendChild(el('button', {
+        type: 'button', class: 'ca-link', style: 'font-size:var(--ca-text-sm,0.85rem);margin:-6px 0 10px;',
+        disabled: forgiveBusy ? 'disabled' : null,
+        onclick: async () => {
+          const ok = await showAppConfirm(
+            `Forgive ${child.displayName || 'their'}'s outstanding ${formatCents(-(member.balanceCents || 0), currency)}? This can't be undone.`
+          );
+          if (!ok) return;
+          forgiveBusy = true; render();
+          try {
+            await callForgiveAdvance({ memberUid: child.uid });
+          } catch (err) {
+            errorMsg = err.message;
+          }
+          forgiveBusy = false; render();
+        },
+      }, forgiveBusy ? 'Forgiving…' : `Forgive outstanding ${formatCents(-(member.balanceCents || 0), currency)}`));
+    }
+
     body.appendChild(el('div', { class: 'mode-tabs' }, [
       el('button', {
         type: 'button', class: `mode-tab-btn ${mode === 'add' ? 'active add' : ''}`,
@@ -6538,6 +6580,10 @@ function openAdjustMoneyModal(child) {
         type: 'button', class: `mode-tab-btn ${mode === 'deduct' ? 'active deduct' : ''}`,
         onclick: () => { mode = 'deduct'; selectedAmountPreset = null; amountMajor = ''; selectedReasonLabel = null; reasonText = ''; render(); },
       }, 'Deduct Money'),
+      el('button', {
+        type: 'button', class: `mode-tab-btn ${mode === 'advance' ? 'active deduct' : ''}`,
+        onclick: () => { mode = 'advance'; selectedAmountPreset = null; amountMajor = ''; selectedReasonLabel = null; reasonText = ''; render(); },
+      }, 'Give Advance'),
     ]));
 
     body.appendChild(el('label', {}, 'Amount'));
@@ -6561,30 +6607,30 @@ function openAdjustMoneyModal(child) {
     const amountChipRow = el('div', { class: 'chip-row' });
     [1, 2, 5, 10].forEach((v) => {
       amountChipRow.appendChild(el('button', {
-        type: 'button', class: `quick-chip ${selectedAmountPreset === v ? `selected ${mode}` : ''}`,
+        type: 'button', class: `quick-chip ${selectedAmountPreset === v ? `selected ${visualMode}` : ''}`,
         onclick: () => { selectedAmountPreset = v; amountMajor = String(v); render(); },
       }, `${mode === 'add' ? '+' : '-'}${currencySymbol(currency)}${v}`));
     });
     amountChipRow.appendChild(el('button', {
-      type: 'button', class: `quick-chip ${selectedAmountPreset === 'other' ? `selected ${mode}` : ''}`,
+      type: 'button', class: `quick-chip ${selectedAmountPreset === 'other' ? `selected ${visualMode}` : ''}`,
       onclick: () => { selectedAmountPreset = 'other'; amountMajor = ''; render(); if (amountInputRef) amountInputRef.focus(); },
     }, 'Other'));
     body.appendChild(amountChipRow);
 
-    body.appendChild(el('label', {}, mode === 'deduct' ? 'Reason (required)' : 'Reason (optional)'));
+    body.appendChild(el('label', {}, mode !== 'add' ? 'Reason (required)' : 'Reason (optional)'));
     const reasonInput = el('input', {
       type: 'text', value: reasonText,
-      placeholder: mode === 'deduct' ? 'e.g. Bag in hall' : 'e.g. Great attitude today!',
-      style: mode === 'deduct' ? 'border-color:var(--danger);' : '',
+      placeholder: mode === 'deduct' ? 'e.g. Bag in hall' : mode === 'advance' ? 'e.g. School trip' : 'e.g. Great attitude today!',
+      style: mode !== 'add' ? 'border-color:var(--danger);' : '',
     });
     reasonInput.addEventListener('input', () => { reasonText = reasonInput.value; selectedReasonLabel = null; });
     body.appendChild(reasonInput);
 
     const reasonChipRow = el('div', { class: 'chip-row' });
-    const reasonPresets = mode === 'add' ? ADD_MONEY_REASON_PRESETS : getDeductMoneyReasonPresets();
+    const reasonPresets = mode === 'add' ? ADD_MONEY_REASON_PRESETS : mode === 'deduct' ? getDeductMoneyReasonPresets() : ADVANCE_REASON_PRESETS;
     reasonPresets.forEach((presetLabel) => {
       reasonChipRow.appendChild(el('button', {
-        type: 'button', class: `quick-chip reason-chip ${selectedReasonLabel === presetLabel ? `selected ${mode}` : ''}`,
+        type: 'button', class: `quick-chip reason-chip ${selectedReasonLabel === presetLabel ? `selected ${visualMode}` : ''}`,
         onclick: () => { selectedReasonLabel = presetLabel; reasonText = presetLabel; render(); },
       }, presetLabel));
     });
@@ -6603,8 +6649,8 @@ function openAdjustMoneyModal(child) {
     }
 
     const previewCents = centsFromMajorUnits(amountMajor || '0');
-    const verb = mode === 'add' ? 'Add' : 'Deduct';
-    const prep = mode === 'add' ? 'to' : 'from';
+    const verb = mode === 'add' ? 'Add' : mode === 'advance' ? 'Give' : 'Deduct';
+    const prep = mode === 'add' ? 'to' : mode === 'advance' ? 'to' : 'from';
     body.appendChild(el('button', {
       type: 'button', class: 'pill primary', disabled: busy ? 'disabled' : null,
       style: `width:100%;background:${mode === 'add' ? 'var(--accent2-fill)' : 'var(--danger)'};`,
@@ -6632,12 +6678,25 @@ function openAdjustMoneyModal(child) {
       render();
       return;
     }
+    if (mode === 'advance' && !trimmedReason) {
+      errorMsg = 'A reason is required for an advance.';
+      render();
+      return;
+    }
     busy = true;
     render();
     const amountCents = mode === 'add' ? amountCentsAbs : -amountCentsAbs;
     const note = trimmedReason || 'Bonus';
     const targets = applyToAll ? activeChildUids() : [child.uid];
-    const results = await Promise.allSettled(targets.map((t) => callAdjustBalance({ memberUid: t, amountCents, note })));
+    // ADR-0062: an advance goes through its own callable (bypasses the
+    // deduction cap entirely, writes type:'advance' not
+    // 'manual_adjustment') -- everything else about this flow (targets,
+    // busy/error state, the success step) is shared.
+    const results = await Promise.allSettled(targets.map((t) => (
+      mode === 'advance'
+        ? callGiveAdvance({ memberUid: t, amountCents: amountCentsAbs, note })
+        : callAdjustBalance({ memberUid: t, amountCents, note })
+    )));
     const failed = results.filter((r) => r.status === 'rejected');
     busy = false;
     if (failed.length === targets.length) {
@@ -6714,9 +6773,10 @@ function openAdjustMoneyModal(child) {
         const shownAmountCents = lastResult.perChild && lastResult.perChild[0]
           ? lastResult.perChild[0].appliedAmountCents
           : lastResult.amountCentsAbs;
+        const verbPast = lastResult.mode === 'add' ? 'Added' : lastResult.mode === 'advance' ? 'Gave an advance of' : 'Deducted';
         const label = lastResult.targets.length > 1
-          ? `${positive ? 'Added' : 'Deducted'} ${formatCents(shownAmountCents, currency)} to every child`
-          : `${positive ? 'Added' : 'Deducted'} ${formatCents(shownAmountCents, currency)}`;
+          ? `${verbPast} ${formatCents(shownAmountCents, currency)} to every child`
+          : `${verbPast} ${formatCents(shownAmountCents, currency)}`;
         body.appendChild(el('div', { class: 'booking-card', style: `text-align:left;border-left-color:${positive ? 'var(--success)' : 'var(--danger)'};` }, [
           el('div', { class: 'row' }, [
             el('div', {}, [
@@ -6735,7 +6795,12 @@ function openAdjustMoneyModal(child) {
       onclick: () => { resetForNewAdjustment(); render(); },
     }, 'Add another adjustment'));
 
-    const recentAdjustments = state.ledger.filter((tx) => tx.type === 'manual_adjustment').slice(0, 3);
+    // ADR-0062: includes advance/advance_forgiven too -- otherwise an
+    // advance just given wouldn't show up in this same modal's own
+    // "Recent adjustments" preview right after giving it.
+    const recentAdjustments = state.ledger
+      .filter((tx) => tx.type === 'manual_adjustment' || tx.type === 'advance' || tx.type === 'advance_forgiven')
+      .slice(0, 3);
     if (recentAdjustments.length > 0) {
       body.appendChild(el('div', { class: 'row', style: 'margin-top:16px;align-items:center;' }, [
         el('h2', { style: 'text-align:left;' }, 'Recent adjustments'),
