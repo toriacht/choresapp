@@ -956,7 +956,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.04.3';
+const APP_VERSION = '26.09.04.4';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -4000,6 +4000,12 @@ function updatePageHeader(tab) {
     titleEl.textContent = (state.family && state.family.name) || 'Your family';
     subtitleEl.textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
     subtitleEl.hidden = false;
+  } else if (tab === 'dashboard') {
+    // Same personalization as Admin Dashboard's family name above -- a kid
+    // doesn't think of their own home screen as "Dashboard" either.
+    const name = (state.member && state.member.displayName) || (state.user && state.user.email) || 'there';
+    titleEl.textContent = `Hi ${name}`;
+    subtitleEl.hidden = true;
   } else {
     titleEl.textContent = TITLES[tab] || 'Dashboard';
     subtitleEl.hidden = true;
