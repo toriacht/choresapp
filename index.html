@@ -956,7 +956,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.04.1';
+const APP_VERSION = '26.09.04.2';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -6129,7 +6129,10 @@ function renderKidDetailBody(container, uid) {
       el('p', { class: 'ca-title' }, child.displayName || child.email),
       el('p', { class: 'ca-meta' }, `${formatCents(child.balanceCents || 0, currency)} · ${progress.done} of ${progress.total} done this week`),
     ]),
-    renderKebabMenu([{ label: `Assign chores for ${child.displayName || child.email}`, onclick: () => openRunWizard(uid) }]),
+    renderKebabMenu([
+      { label: `Add a chore for ${child.displayName || child.email}`, onclick: () => openChoreSheet({ mode: 'add', category: 'chore', forcedUid: uid }) },
+      { label: `Assign chores for ${child.displayName || child.email}`, onclick: () => openRunWizard(uid) },
+    ]),
   ])));
 
   // Sign-in controls don't fit either sub-tab below (not chore status,
@@ -7702,7 +7705,13 @@ function openChoreFrequencySheet({ initial, sizeWeight, onDone }) {
 // existing chores already use, so a second chip row (only shown once 2+
 // people are picked) extends the mockup rather than silently dropping
 // "Anyone"/"Each of you" as options.
-function openChoreSheet({ mode, category, existingChore = null }) {
+// `forcedUid`: opened from one child's own Kids-tab detail view ("Add a
+// chore for {name}") -- pool is pre-set to just that child and the "who
+// does it" step is skipped entirely, same as the existing single-child
+// family case. Basics are always eachMember/everyone by definition
+// (ADR-0030), so forcedUid only ever applies to a real chore -- the entry
+// point that sets it never offers a basic.
+function openChoreSheet({ mode, category, existingChore = null, forcedUid = null }) {
   const isEdit = mode === 'edit';
   const isBasic = category === 'dailyTask';
   const activeUids = activeChildUids();
@@ -7735,7 +7744,7 @@ function openChoreSheet({ mode, category, existingChore = null }) {
       : { frequency: 'custom', scheduledDays: [] },
     // Only matters once 2+ children are picked: 'rotating' | 'sharedAny' | 'eachMember'.
     shareMode: existingMode === 'sharedAny' || existingMode === 'eachMember' ? existingMode : 'rotating',
-    pool: new Set(isBasic ? activeUids : (existingChore ? existingPool : (activeUids.length === 1 ? activeUids : []))),
+    pool: new Set(isBasic ? activeUids : (forcedUid ? [forcedUid] : (existingChore ? existingPool : (activeUids.length === 1 ? activeUids : [])))),
   };
   // Two real wizard steps for a chore (Brian: an inline "More options"
   // disclosure gets missed -- deviates from the spec's own single-sheet
@@ -7853,7 +7862,7 @@ function openChoreSheet({ mode, category, existingChore = null }) {
 
   // ---- Who does it (chore only, skipped entirely for a single child) ----
   let whoWrap = null;
-  if (!isBasic && activeUids.length > 1) {
+  if (!isBasic && !forcedUid && activeUids.length > 1) {
     page1Wrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'Who does it'));
     whoWrap = el('div', {});
     page1Wrap.appendChild(whoWrap);
