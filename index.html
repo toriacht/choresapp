@@ -965,7 +965,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.04.7';
+const APP_VERSION = '26.09.04.8';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -2576,14 +2576,27 @@ function showKidStep(step) {
   document.getElementById('signInError').hidden = true;
   if (step === 'kidUsernameStep') renderKidUsernameChips();
 }
-document.getElementById('signInModeParentBtn').addEventListener('click', () => {
+// Shared by the Parent tab click AND onAuthStateChanged's sign-out branch
+// below -- previously each had its own reset logic, and the sign-out
+// branch's version (`showKidStep('kidUsernameStep')`) only ever reset
+// which KID_STEPS div to show NEXT, without ever hiding #parentSignIn or
+// resetting the tab toggle itself. Since #parentSignIn has no `hidden`
+// attribute in its own markup (visible by default) and a sign-out fires
+// `onAuthStateChanged` with no user on EVERY real sign-out and every
+// fresh, not-already-signed-in page load, that combination meant
+// #parentSignIn and #kidUsernameStep could both end up visible at once
+// -- reported: "sometimes child login appears below the parent login...
+// the page gets longer." One shared reset avoids the two ever drifting
+// out of sync with each other again.
+function resetSignInScreenToDefault() {
   document.getElementById('signInModeParentBtn').setAttribute('aria-selected', 'true');
   document.getElementById('signInModeKidBtn').setAttribute('aria-selected', 'false');
   document.getElementById('parentSignIn').hidden = false;
   KID_STEPS.forEach((s) => { document.getElementById(s).hidden = true; });
   document.getElementById('kidSignInHelp').hidden = true;
   document.getElementById('signInError').hidden = true;
-});
+}
+document.getElementById('signInModeParentBtn').addEventListener('click', resetSignInScreenToDefault);
 document.getElementById('signInModeKidBtn').addEventListener('click', () => {
   document.getElementById('signInModeKidBtn').setAttribute('aria-selected', 'true');
   document.getElementById('signInModeParentBtn').setAttribute('aria-selected', 'false');
@@ -3754,11 +3767,16 @@ onAuthStateChanged(auth, async (user) => {
     // signs up, later signs out -- landing back here should default to
     // returning-user intent, same as the Parent/Kid tab already does).
     setParentEmailAuthMode('signIn');
-    // Same reset on the kid side: nothing here ever cleared which
-    // KID_STEPS div was showing, so a kid who signed out from the PIN
-    // step (kidPinStep still visible, not hidden) landed straight back
-    // on PIN entry instead of the username step on next sign-in.
-    showKidStep('kidUsernameStep');
+    // Full reset (not just showKidStep('kidUsernameStep')) -- see
+    // resetSignInScreenToDefault's own comment for why the narrower fix
+    // this used to be was the actual root cause of a reported bug: a kid
+    // step could end up visible ALONGSIDE #parentSignIn, not instead of
+    // it. This still also covers the original goal that comment recorded
+    // (a kid who signed out from the PIN step landed back on PIN entry
+    // instead of username next time) -- every KID_STEPS div, including
+    // kidPinStep, gets hidden here, so there's nothing stale left to land
+    // on.
+    resetSignInScreenToDefault();
     clearAdminCredentialMirror();
     showScreen('signIn');
     return;
@@ -8281,14 +8299,27 @@ function renderActiveChores(container) {
       // 0057), each with their own separate Save button. The kebab menu
       // is a sibling of the clickable title/meta area, not nested inside
       // it, so tapping Deactivate/Reactivate never also opens the sheet.
+      // Brian: "i dont see edit a chore in chores tab?" -- this row had
+      // no visible affordance that it was tappable at all (`cursor:pointer`
+      // does nothing on a touch device), AND was a <div onclick>, the
+      // exact pattern already flagged elsewhere in this file as
+      // unreliable on Android (a synthetic click can be swallowed by any
+      // finger movement inside a scrollable list, between touchstart and
+      // touchend -- see button.booking-card's own comment). Switched to a
+      // real <button> (same fix, same reasoning) and added a trailing
+      // chevron so it visibly reads as tappable.
       const card = el('div', { class: `ca-card${chore.active === false ? ' ca-card--muted' : ''}` }, [
         el('div', { class: 'ca-row' }, [
-          el('div', {
-            class: 'ca-row__grow', style: 'cursor:pointer;',
+          el('button', {
+            type: 'button', class: 'ca-row__grow', style: 'display:flex;align-items:center;gap:var(--ca-space-2);'
+              + 'background:none;border:none;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;touch-action:manipulation;',
             onclick: () => openChoreSheet({ mode: 'edit', category: chore.category || 'chore', existingChore: chore }),
           }, [
-            el('p', { class: 'ca-title' }, [choreLabel(chore), chore.active === false ? ' (inactive)' : '']),
-            el('p', { class: 'ca-meta' }, assignedLabel),
+            el('div', { style: 'flex:1;min-width:0;' }, [
+              el('p', { class: 'ca-title' }, [choreLabel(chore), chore.active === false ? ' (inactive)' : '']),
+              el('p', { class: 'ca-meta' }, assignedLabel),
+            ]),
+            el('span', { style: 'color:var(--ca-ink-4);flex-shrink:0;' }, '›'),
           ]),
           renderKebabMenu([{
             label: chore.active === false ? 'Reactivate' : 'Deactivate',
