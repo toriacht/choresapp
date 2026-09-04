@@ -956,7 +956,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.03.11';
+const APP_VERSION = '26.09.04.1';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -7737,13 +7737,23 @@ function openChoreSheet({ mode, category, existingChore = null }) {
     shareMode: existingMode === 'sharedAny' || existingMode === 'eachMember' ? existingMode : 'rotating',
     pool: new Set(isBasic ? activeUids : (existingChore ? existingPool : (activeUids.length === 1 ? activeUids : []))),
   };
-  let moreOpen = isEdit && (draft.size !== 'medium' || (defaultIcon && defaultIcon !== inferChoreIcon(draft.name)) || !!draft.note);
+  // Two real wizard steps for a chore (Brian: an inline "More options"
+  // disclosure gets missed -- deviates from the spec's own single-sheet
+  // disclosure design on purpose). A basic has no page 2 at all (spec:
+  // "no size, no schedule, no assignment -- a basic is a name and an
+  // icon"), so it keeps the single-page/no-paging layout unchanged.
+  let page = 1;
 
   sheetCard.appendChild(el('div', { class: 'ca-sheet__grip' }));
   const headerRow = el('div', { class: 'ca-row', style: 'margin-bottom:var(--ca-space-3);align-items:center;' });
   headerRow.appendChild(el('p', { class: 'ca-title', style: 'flex:1;margin:0;' },
     `${isEdit ? 'Edit' : 'Add'} a ${isBasic ? 'basic' : 'chore'}`));
   sheetCard.appendChild(headerRow);
+
+  const page1Wrap = el('div', {});
+  const page2Wrap = isBasic ? null : el('div', { hidden: true });
+  sheetCard.appendChild(page1Wrap);
+  if (page2Wrap) sheetCard.appendChild(page2Wrap);
 
   // "From library" -- a link, not a dropdown pretending to be the first
   // field (spec: "putting it in a dropdown labelled 'Or...' as the first
@@ -7762,7 +7772,7 @@ function openChoreSheet({ mode, category, existingChore = null }) {
           draft.note = t.description || '';
           draft.iconOverride = resolveIconPickerValue(t.icon);
           templateListOpen = false; templateListWrap.hidden = true;
-          refreshNameIcon(); refreshMoreOptions(); refreshDuplicateCheck();
+          refreshNameIcon(); renderPage2(); refreshDuplicateCheck();
         },
       }, t.name));
     });
@@ -7777,10 +7787,10 @@ function openChoreSheet({ mode, category, existingChore = null }) {
       },
     }, 'From library'));
   }
-  sheetCard.appendChild(templateListWrap);
+  page1Wrap.appendChild(templateListWrap);
 
   // ---- What needs doing ----
-  sheetCard.appendChild(el('p', { class: 'ca-meta', style: 'margin:0 0 4px;' }, 'What needs doing'));
+  page1Wrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:0 0 4px;' }, 'What needs doing'));
   const nameIconSlot = el('div', {
     style: 'width:28px;height:28px;border-radius:7px;background:var(--ca-wash);color:var(--ca-green-700);'
       + 'display:flex;align-items:center;justify-content:center;flex-shrink:0;',
@@ -7809,14 +7819,14 @@ function openChoreSheet({ mode, category, existingChore = null }) {
     refreshSubmitState();
   }
   nameInput.addEventListener('input', () => { draft.name = nameInput.value; refreshNameIcon(); refreshDuplicateCheck(); });
-  sheetCard.appendChild(el('div', { class: 'ca-row', style: 'gap:var(--ca-space-2);align-items:center;' }, [nameIconSlot, nameInput]));
-  sheetCard.appendChild(dupWarning);
+  page1Wrap.appendChild(el('div', { class: 'ca-row', style: 'gap:var(--ca-space-2);align-items:center;' }, [nameIconSlot, nameInput]));
+  page1Wrap.appendChild(dupWarning);
 
   // ---- Basic: a single info line, nothing else (spec: "no size, no
   // schedule, no assignment -- a basic is daily and applies to everyone
   // by definition") ----
   if (isBasic) {
-    sheetCard.appendChild(el('div', {
+    page1Wrap.appendChild(el('div', {
       class: 'ca-card', style: 'background:var(--ca-wash);margin-top:var(--ca-space-3);display:flex;gap:var(--ca-space-2);align-items:flex-start;',
     }, [
       svgIcon('flame', { size: 16, color: 'var(--ca-green-700)' }),
@@ -7828,9 +7838,9 @@ function openChoreSheet({ mode, category, existingChore = null }) {
   // ---- How often (chore only) ----
   let howOftenLabel = null;
   if (!isBasic) {
-    sheetCard.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'How often'));
+    page1Wrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'How often'));
     howOftenLabel = el('span', {}, summarizeSchedule(draft.schedule));
-    sheetCard.appendChild(el('button', {
+    page1Wrap.appendChild(el('button', {
       type: 'button', class: 'ca-card', style: 'width:100%;text-align:left;display:flex;align-items:center;justify-content:space-between;',
       onclick: () => {
         openChoreFrequencySheet({
@@ -7844,9 +7854,9 @@ function openChoreSheet({ mode, category, existingChore = null }) {
   // ---- Who does it (chore only, skipped entirely for a single child) ----
   let whoWrap = null;
   if (!isBasic && activeUids.length > 1) {
-    sheetCard.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'Who does it'));
+    page1Wrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'Who does it'));
     whoWrap = el('div', {});
-    sheetCard.appendChild(whoWrap);
+    page1Wrap.appendChild(whoWrap);
   }
   function refreshWho() {
     if (!whoWrap) return;
@@ -7876,61 +7886,53 @@ function openChoreSheet({ mode, category, existingChore = null }) {
   }
   refreshWho();
 
-  // ---- More options (chore only) ----
-  let moreWrap = null;
-  let moreToggleBtn = null;
-  if (!isBasic) {
-    moreToggleBtn = el('button', { type: 'button', class: 'ca-btn ca-btn--secondary ca-btn--block', style: 'margin-top:var(--ca-space-3);' });
-    moreWrap = el('div', {});
-    sheetCard.appendChild(moreToggleBtn);
-    sheetCard.appendChild(moreWrap);
-  }
-  function refreshMoreOptions() {
-    if (!moreWrap) return;
-    moreToggleBtn.textContent = moreOpen ? 'Fewer options' : 'More options';
-    moreWrap.innerHTML = '';
-    moreWrap.hidden = !moreOpen;
-    if (!moreOpen) return;
+  // ---- Page 2: size/icon/note (chore only -- a wizard step now, not an
+  // inline disclosure; see the comment on `page` above) ----
+  function renderPage2() {
+    if (!page2Wrap) return;
+    page2Wrap.innerHTML = '';
 
-    moreWrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'Size'));
+    page2Wrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:0 0 4px;' }, 'Size'));
     const sizeSeg = el('div', { class: 'ca-seg' });
     ['small', 'medium', 'large'].forEach((s) => {
       sizeSeg.appendChild(el('button', {
         type: 'button', 'aria-selected': draft.size === s ? 'true' : 'false',
-        onclick: () => { draft.size = s; refreshMoreOptions(); },
+        onclick: () => { draft.size = s; renderPage2(); },
       }, SIZE_LABELS[s]));
     });
-    moreWrap.appendChild(sizeSeg);
-    moreWrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:4px 0 0;' },
+    page2Wrap.appendChild(sizeSeg);
+    page2Wrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:4px 0 0;' },
       'Bigger chores count for more — both when we balance whose turn it is, and toward how much of the allowance they earn.'));
 
-    moreWrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'Icon'));
+    page2Wrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'Icon'));
     const iconChips = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' });
     const currentIcon = draft.iconOverride || inferChoreIcon(draft.name);
     CHORE_ICON_CHOICES.forEach((c) => {
       iconChips.appendChild(el('button', {
         type: 'button', class: `pill small${currentIcon === c.key ? ' primary' : ''}`, style: 'display:flex;align-items:center;gap:4px;',
-        onclick: () => { draft.iconOverride = c.key; refreshMoreOptions(); refreshNameIcon(); },
+        onclick: () => { draft.iconOverride = c.key; renderPage2(); refreshNameIcon(); },
       }, [svgIcon(c.key, { size: 14 }), c.label]));
     });
-    moreWrap.appendChild(iconChips);
+    page2Wrap.appendChild(iconChips);
 
-    moreWrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'Note for the kids'));
+    page2Wrap.appendChild(el('p', { class: 'ca-meta', style: 'margin:var(--ca-space-3) 0 4px;' }, 'Note for the kids'));
     const noteInput = el('input', { type: 'text', class: 'ca-input', placeholder: 'Optional', value: draft.note });
     noteInput.addEventListener('input', () => { draft.note = noteInput.value; });
-    moreWrap.appendChild(noteInput);
+    page2Wrap.appendChild(noteInput);
   }
-  if (moreToggleBtn) {
-    moreToggleBtn.addEventListener('click', () => { moreOpen = !moreOpen; refreshMoreOptions(); });
-  }
-  refreshMoreOptions();
+  renderPage2();
 
   // ---- Submit -- disabled state carries the reason (spec: "rather than
   // greying out and hiding the blocker mid-form, the disabled button says
-  // what's missing and updates as each is answered") ----
+  // what's missing and updates as each is answered") -- same gate now also
+  // guards advancing from page 1 to page 2 for a chore. ----
   const errorEl = el('p', { class: 'ca-error', style: 'text-align:center;margin-top:var(--ca-space-2);' });
   errorEl.hidden = true;
-  const submitBtn = el('button', { type: 'button', class: 'ca-btn ca-btn--block', style: 'margin-top:var(--ca-space-4);' });
+  sheetCard.appendChild(errorEl);
+  const footerWrap = el('div', {});
+  sheetCard.appendChild(footerWrap);
+
+  let submitBtn = null;
   function submitReason() {
     if (!draft.name.trim()) return 'Give it a name';
     if (!dupWarning.hidden) return 'Already exists';
@@ -7941,16 +7943,46 @@ function openChoreSheet({ mode, category, existingChore = null }) {
     }
     return null;
   }
+  function primaryLabel() {
+    if (!isBasic && page === 1) return 'Next';
+    return `${isEdit ? 'Save' : 'Add'} ${isBasic ? 'basic' : 'chore'}`;
+  }
   function refreshSubmitState() {
+    if (!submitBtn) return;
     const reason = submitReason();
     submitBtn.disabled = !!reason;
-    submitBtn.textContent = reason || `${isEdit ? 'Save' : 'Add'} ${isBasic ? 'basic' : 'chore'}`;
+    submitBtn.textContent = reason || primaryLabel();
   }
-  refreshSubmitState();
-  sheetCard.appendChild(errorEl);
-  sheetCard.appendChild(submitBtn);
+  function showPage(next) {
+    page = next;
+    page1Wrap.hidden = page !== 1;
+    if (page2Wrap) page2Wrap.hidden = page !== 2;
+    renderFooter();
+  }
+  function renderFooter() {
+    footerWrap.innerHTML = '';
+    if (!isBasic && page === 1) {
+      submitBtn = el('button', {
+        type: 'button', class: 'ca-btn ca-btn--block', style: 'margin-top:var(--ca-space-4);',
+        onclick: () => { if (!submitReason()) showPage(2); },
+      });
+      footerWrap.appendChild(submitBtn);
+    } else if (!isBasic && page === 2) {
+      const backBtn = el('button', {
+        type: 'button', class: 'ca-btn ca-btn--secondary', style: 'flex:1;',
+        onclick: () => showPage(1),
+      }, 'Back');
+      submitBtn = el('button', { type: 'button', class: 'ca-btn', style: 'flex:2;', onclick: handleSubmit });
+      footerWrap.appendChild(el('div', { class: 'ca-row', style: 'gap:var(--ca-space-2);margin-top:var(--ca-space-4);' }, [backBtn, submitBtn]));
+    } else {
+      submitBtn = el('button', { type: 'button', class: 'ca-btn ca-btn--block', style: 'margin-top:var(--ca-space-4);', onclick: handleSubmit });
+      footerWrap.appendChild(submitBtn);
+    }
+    refreshSubmitState();
+  }
+  renderFooter();
 
-  submitBtn.addEventListener('click', async () => {
+  async function handleSubmit() {
     errorEl.hidden = true;
     submitBtn.disabled = true;
     try {
@@ -8000,7 +8032,7 @@ function openChoreSheet({ mode, category, existingChore = null }) {
       submitBtn.disabled = false;
       refreshSubmitState();
     }
-  });
+  }
 }
 
 // Post-creation edit UI (ADR-0029) -- size is a simple direct write;
