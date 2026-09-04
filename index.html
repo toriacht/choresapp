@@ -965,7 +965,7 @@ import {
 // More screen and the admin's Settings screen so it's possible to confirm
 // which build actually landed on a given phone, especially useful for a
 // PWA where a stale service-worker cache can otherwise mask a real deploy.
-const APP_VERSION = '26.09.04.13';
+const APP_VERSION = '26.09.04.14';
 
 // Firebase client config is meant to be public -- Firestore/Storage
 // Security Rules and Cloud Functions are what's actually private. Replace
@@ -1072,6 +1072,7 @@ const callApproveExtraJob = httpsCallable(functions, 'approveExtraJob');
 const callAdjustBalance = httpsCallable(functions, 'adjustBalance');
 const callGiveAdvance = httpsCallable(functions, 'giveAdvance'); // ADR-0062
 const callForgiveAdvance = httpsCallable(functions, 'forgiveAdvance'); // ADR-0062
+const callMigrateLegacyAdvanceBalances = httpsCallable(functions, 'migrateLegacyAdvanceBalances'); // ADR-0062, one-off
 const callLogDeduction = httpsCallable(functions, 'logDeduction');
 const callWarnAboutDeduction = httpsCallable(functions, 'warnAboutDeduction');
 const callApproveWeeklyPayout = httpsCallable(functions, 'approveWeeklyPayout');
@@ -1878,6 +1879,7 @@ function ledgerTypeLabel(tx) {
     deduction: 'Deduction', missed_chore_deduction: 'Missed chore',
     // ADR-0062
     advance: 'Advance', advance_forgiven: 'Advance forgiven', advance_repayment: 'Applied to advance',
+    advance_migration: 'Advance (reclassified)',
   };
   if (LEDGER_TYPE_LABELS[tx.type]) return LEDGER_TYPE_LABELS[tx.type];
   if (tx.type === 'manual_adjustment') return tx.amountCents >= 0 ? 'Extra job' : 'Deduction';
@@ -9071,6 +9073,33 @@ function renderSettings() {
   container.appendChild(el('p', { class: 'ca-section' }, 'Account'));
   container.appendChild(renderMoreLink('Change password', () => showScreen('changePassword')));
   container.appendChild(renderMoreLink('Run setup wizard', () => { showScreen('onboarding'); wizardStep = 0; wizardDraftKids = []; wizardChoreState = null; renderWizardStep(); }));
+
+  // ONE-OFF, meant to be deleted after use -- see migrateLegacyAdvanceBalances's
+  // own comment in functions/lib/balance.js. Reported live: a child's
+  // advance debt (given before today's advanceOwedCents redesign) wasn't
+  // showing anywhere in the new advance UI, because it was still sitting
+  // as a plain negative balanceCents that nothing migrates automatically.
+  container.appendChild(el('p', { class: 'ca-section' }, 'Maintenance'));
+  container.appendChild(renderMoreLink('Fix legacy advance data', async () => {
+    const currency = (state.family && state.family.settings && state.family.settings.currency) || 'EUR';
+    try {
+      const { data } = await callMigrateLegacyAdvanceBalances();
+      const migrated = data.results.filter((r) => r.migratedCents > 0);
+      const skipped = data.results.filter((r) => r.skipped);
+      const lines = [
+        migrated.length > 0
+          ? `Migrated: ${migrated.map((r) => `${r.displayName} (${formatCents(r.migratedCents, currency)})`).join(', ')}`
+          : 'Nothing to migrate.',
+      ];
+      if (skipped.length > 0) {
+        lines.push(`Skipped (negative balance not from a legacy advance -- check manually): ${skipped.map((r) => r.displayName).join(', ')}`);
+      }
+      showAppAlert(lines.join('\n\n'));
+    } catch (err) {
+      showAppAlert(`Migration failed: ${err.message}`);
+    }
+  }));
+
   container.appendChild(el('button', { class: 'signout-row', onclick: () => signOut(auth) }, 'Sign out'));
   container.appendChild(el('p', { class: 'ca-meta', style: 'text-align:center;margin-top:14px;' }, `App version ${APP_VERSION}`));
 }
